@@ -25,6 +25,7 @@ export const selectCompact = `block h-8 cursor-pointer py-1 pl-2.5 pr-7 text-xs 
 /** 44px inputs for the mobile-first claim form. */
 export const inputTall = 'min-h-[44px] text-base';
 export const checkboxBase = `h-4 w-4 cursor-pointer rounded border-hairline-strong bg-surface accent-brand ${focusRing}`;
+export const radioBase = `h-4 w-4 cursor-pointer border-hairline-strong bg-surface accent-brand ${focusRing}`;
 
 export const labelBase = 'block text-sm font-medium text-ink-2';
 export const eyebrow = 'text-2xs font-semibold uppercase text-ink-3';

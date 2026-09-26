@@ -4,7 +4,7 @@ import { useLocation } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import { App } from '../App';
 import { NavLinks } from '../components/NavLinks';
-import { account, systemInfo } from '../test/fixtures';
+import { account, aiSettings, systemInfo } from '../test/fixtures';
 import { fixtureConfig, jsonResponse, mockFetch, renderWithProviders, type RecordedCall } from '../test/utils';
 import { SettingsPage } from './SettingsPage';
 
@@ -28,8 +28,9 @@ describe('<SettingsPage />', () => {
 
     expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).toBeInTheDocument();
     const tabs = screen.getByRole('tablist', { name: 'Settings sections' });
-    expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Accounts', 'System']);
+    expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Accounts', 'AI', 'System']);
     expect(within(tabs).getByRole('tab', { name: 'Accounts' })).toHaveAttribute('aria-selected', 'true');
+    expect(within(tabs).getByRole('tab', { name: 'AI' })).toHaveAttribute('aria-selected', 'false');
     expect(within(tabs).getByRole('tab', { name: 'System' })).toHaveAttribute('aria-selected', 'false');
     expect(screen.getByRole('tabpanel', { name: 'Accounts' })).toBeInTheDocument();
 
@@ -56,10 +57,30 @@ describe('<SettingsPage />', () => {
     expect(urls(calls)).toEqual(['/api/system']);
   });
 
+  it('renders the AI tab from ?tab=ai', async () => {
+    const { calls } = mockFetch(({ method, url }) => (method === 'GET' && url === '/api/ai' ? jsonResponse(aiSettings()) : undefined));
+
+    renderWithProviders(<SettingsPage />, { route: '/settings?tab=ai' });
+
+    expect(screen.getByRole('tab', { name: 'AI' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Accounts' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('tabpanel', { name: 'AI' })).toBeInTheDocument();
+
+    expect(await screen.findByRole('switch', { name: 'Use AI' })).toBeChecked();
+    expect(screen.getByRole('region', { name: 'AI' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Proxy' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Which model does what' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Fine-tuning' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Accounts' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Version' })).not.toBeInTheDocument();
+    expect(urls(calls)).toEqual(['/api/ai']);
+  });
+
   it('puts the chosen tab in the URL', async () => {
     const user = userEvent.setup();
     mockFetch(({ method, url }) => {
       if (method === 'GET' && url === '/api/accounts') return jsonResponse([hsbc]);
+      if (method === 'GET' && url === '/api/ai') return jsonResponse(aiSettings());
       if (method === 'GET' && url === '/api/system') return jsonResponse(systemInfo());
       return undefined;
     });
@@ -89,9 +110,16 @@ describe('<SettingsPage />', () => {
 
     // The arrow keys move between tabs too, and select as they go.
     await user.keyboard('{ArrowRight}');
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=ai');
+    expect(screen.getByRole('tab', { name: 'AI' })).toHaveFocus();
+    expect(screen.getByRole('tab', { name: 'AI' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('switch', { name: 'Use AI' })).toBeInTheDocument();
+
+    await user.keyboard('{ArrowRight}');
     expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=system');
     expect(screen.getByRole('tab', { name: 'System' })).toHaveFocus();
     expect(screen.getByRole('tab', { name: 'System' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('region', { name: 'AI' })).not.toBeInTheDocument();
   });
 
   it('is reachable from the main navigation for the primary user', async () => {

@@ -494,6 +494,105 @@ export interface UpdateStarted {
   started_at: string;
 }
 
+/** "hash" turns merchants into vectors offline, without an AI call. */
+export type EmbeddingProvider = 'litellm' | 'hash';
+export type AiJob = 'chat' | 'extraction' | 'audit' | 'embedding';
+
+/** A model the LiteLLM proxy offers; `mode` is null when the proxy does not say what it is for. */
+export interface AiModelOption {
+  name: string;
+  mode: 'chat' | 'embedding' | null;
+  /** Human name of the provider behind it, e.g. "Anthropic"; null when unknown. */
+  provider: string | null;
+  /** The provider's own model id; null when unknown. */
+  model: string | null;
+}
+
+/** Which proxy model does each job (names from `available_models`). */
+export interface AiModels {
+  chat: string;
+  extraction: string;
+  audit: string;
+  embedding: string;
+}
+
+export interface AiThresholds {
+  /** 0.5–0.99: below this a remembered merchant is not trusted and the AI is asked. */
+  similarity_threshold: number;
+  /** 1–10 remembered merchants shown to the AI as examples. */
+  top_k: number;
+  /** 0.05–1.0 as a fraction: a regular bill is flagged when it moves more than this. */
+  deviation_threshold: number;
+  /** 1–12 months of history the summary compares against. */
+  lookback_periods: number;
+}
+
+/** "bundled": the LiteLLM container that ships with the app; "external": one the user already runs. */
+export type ProxyMode = 'bundled' | 'external';
+
+export interface AiProxy {
+  mode: ProxyMode;
+  /** The URL in use: the bundled container's, or the one saved for an external proxy. */
+  url: string;
+  bundled_url: string;
+  reachable: boolean;
+  /** Whether an API key is stored for the proxy; the key itself is never returned. */
+  has_key: boolean;
+}
+
+export interface AiSettings {
+  /** Off: only rules and the merchants already learnt are used. */
+  enabled: boolean;
+  embedding_provider: EmbeddingProvider;
+  models: AiModels;
+  thresholds: AiThresholds;
+  available_models: AiModelOption[];
+  proxy: AiProxy;
+  /** Learnt merchants in the vector memory. */
+  memory_rows: number;
+  /** False until something is saved: the values shown are the config/.env defaults. */
+  stored: boolean;
+}
+
+/** A blank or omitted `api_key` keeps the stored key; `url` must start with http:// or https://. */
+export interface AiProxyUpdate {
+  mode?: ProxyMode;
+  url?: string;
+  api_key?: string;
+}
+
+/** Any subset; inside `models`, `thresholds` and `proxy` only the fields sent change. */
+export interface AiUpdate {
+  enabled?: boolean;
+  embedding_provider?: EmbeddingProvider;
+  models?: Partial<AiModels>;
+  thresholds?: Partial<AiThresholds>;
+  proxy?: AiProxyUpdate;
+  /** Required (true) when the embedding model or provider changes while `memory_rows` > 0. */
+  clear_memory?: boolean;
+}
+
+export interface AiJobTest {
+  ok: boolean;
+  /** Round-trip time; null when the call failed before it could be timed. */
+  ms: number | null;
+  model: string;
+  error: string | null;
+}
+
+export interface AiEmbeddingTest extends AiJobTest {
+  /** The vector length the model returned; must be 1536. */
+  dimensions: number | null;
+}
+
+/** One entry per job; null for a job that is switched off. */
+export interface AiTestResult {
+  chat: AiJobTest | null;
+  extraction: AiJobTest | null;
+  audit: AiJobTest | null;
+  embedding: AiEmbeddingTest | null;
+}
+
 // ---------------------------------------------------------------------------
 // Session storage
 // ---------------------------------------------------------------------------
@@ -789,6 +888,13 @@ export const api = {
   checkForUpdates: () => request<SystemInfo>('POST', '/system/check'),
   /** 202 once started; 409 when an update is already running, 503 when the updater is unavailable. */
   startUpdate: () => request<UpdateStarted>('POST', '/system/update'),
+
+  // AI setup (primary only)
+  getAi: () => request<AiSettings>('GET', '/ai'),
+  /** 409 when the embedding change would orphan the merchant memory (send `clear_memory`); 422 for bad values or a bad proxy URL. */
+  updateAi: (body: AiUpdate) => request<AiSettings>('PUT', '/ai', { body }),
+  /** Calls each model once, through the proxy on the form (a freshly typed key included), saved or not. */
+  testAi: (body: AiUpdate) => request<AiTestResult>('POST', '/ai/test', { body }),
 };
 
 export type Api = typeof api;

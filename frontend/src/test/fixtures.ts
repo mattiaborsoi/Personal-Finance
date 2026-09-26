@@ -1,4 +1,4 @@
-import type { AccountOut, SystemInfo, TransactionOut, TransactionPart } from '../api';
+import type { AccountOut, AiSettings, SystemInfo, TransactionOut, TransactionPart } from '../api';
 
 /** Realistic UUIDs: ids on the wire are never numbers. */
 export const ID_OCADO = '3f9a2c1e-8b47-4d6a-9e21-0c5d7a1b2e33';
@@ -71,6 +71,29 @@ export function systemInfo(overrides: Partial<SystemInfo> = {}): SystemInfo {
     update_available: false,
     update_check_enabled: true,
     updater: { available: true, state: 'idle', started_at: null, finished_at: null, log: null, error: null },
+    ...overrides,
+  };
+}
+
+/**
+ * GET /api/ai with AI on, a reachable proxy that offers two chat models, one
+ * embedding model and one it says nothing about, and eight learnt merchants.
+ */
+export function aiSettings(overrides: Partial<AiSettings> = {}): AiSettings {
+  return {
+    enabled: true,
+    embedding_provider: 'litellm',
+    models: { chat: 'default-chat', extraction: 'default-chat', audit: 'default-chat', embedding: 'default-embedding' },
+    thresholds: { similarity_threshold: 0.82, top_k: 3, deviation_threshold: 0.15, lookback_periods: 3 },
+    available_models: [
+      { name: 'default-chat', mode: 'chat', provider: 'Anthropic', model: 'claude-opus-5' },
+      { name: 'cheap-chat', mode: 'chat', provider: 'Anthropic', model: 'claude-haiku-4-5' },
+      { name: 'default-embedding', mode: 'embedding', provider: 'OpenAI', model: 'text-embedding-3-small' },
+      { name: 'local-anything', mode: null, provider: null, model: null },
+    ],
+    proxy: { mode: 'bundled', url: 'http://litellm:4000', bundled_url: 'http://litellm:4000', reachable: true, has_key: true },
+    memory_rows: 8,
+    stored: true,
     ...overrides,
   };
 }
