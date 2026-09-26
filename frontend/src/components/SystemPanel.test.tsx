@@ -12,10 +12,11 @@ import {
 } from './SystemPanel';
 
 const LATEST = { commit: COMMIT_LATEST, short: 'f9e8d7c', date: '2026-09-25T09:30:00Z', message: 'Add the Settings page' };
+const MIDDLE = { commit: 'b2c3d4e5f6a70819203b4c5d6e7f8091a2b3c4d5', short: 'b2c3d4e', date: '2026-09-23T12:00:00Z', message: 'Split transactions' };
 const STARTED_AT = '2026-09-26T10:00:00Z';
 
-/** The server is one commit behind GitHub and idle. */
-const behind = systemInfo({ latest: LATEST, update_available: true });
+/** The server is two commits behind GitHub and idle. */
+const behind = systemInfo({ latest: LATEST, changes: [LATEST, MIDDLE], update_available: true });
 
 const running: SystemInfo = systemInfo({
   latest: LATEST,
@@ -68,13 +69,31 @@ describe('<SystemPanel />', () => {
 
     expect(await screen.findByText('a1b2c3d')).toBeInTheDocument();
     expect(calls[0].headers.Authorization).toBe('Bearer primary-token');
-    expect(screen.getByText('f9e8d7c')).toBeInTheDocument();
+    expect(screen.getAllByText('f9e8d7c').length).toBeGreaterThan(0);
     expect(screen.getByText(/· Add the Settings page$/)).toBeInTheDocument();
     expect(screen.getByText('Update available')).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Version' })).toHaveTextContent('Settl 0.1.0 · example/personal-finance (main)');
+    // Every commit skipped is listed, newest first, so a missed update is not lost behind the latest one.
+    expect(screen.getByText('2 commits behind')).toBeInTheDocument();
+    const rows = within(screen.getByRole('list', { name: 'Changes' })).getAllByRole('listitem');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent('f9e8d7c Add the Settings page 25 Sep 2026');
+    expect(rows[1]).toHaveTextContent('b2c3d4e Split transactions 23 Sep 2026');
+    expect(screen.queryByText(/Only the newest/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Check again' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Update now' })).toBeEnabled();
     expect(screen.getByRole('region', { name: 'Update' })).toHaveTextContent('Nothing is running now.');
+  });
+
+  it('says when the list is cut short because the running version is older than everything fetched', async () => {
+    mockFetch(({ method, url }) =>
+      method === 'GET' && url === '/api/system' ? jsonResponse({ ...behind, changes_truncated: true }) : undefined,
+    );
+
+    renderPanel();
+
+    expect(await screen.findByText('More than 2 commits behind')).toBeInTheDocument();
+    expect(screen.getByText('Only the newest 2 are listed; the running version is older than all of them.')).toBeInTheDocument();
   });
 
   it('says Up to date when the running commit is the latest', async () => {
@@ -85,9 +104,28 @@ describe('<SystemPanel />', () => {
     expect(await screen.findByText('Up to date')).toBeInTheDocument();
     expect(screen.getAllByText('a1b2c3d')).toHaveLength(2);
     expect(screen.queryByText('Update available')).not.toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Changes' })).not.toBeInTheDocument();
   });
 
-  it('says Unknown when the server cannot tell', async () => {
+  it('says Unknown when the server cannot tell, and offers the newest commits as recent changes', async () => {
+    mockFetch(({ method, url }) =>
+      method === 'GET' && url === '/api/system'
+        ? jsonResponse(
+            systemInfo({ running: { commit: null, short: null }, latest: LATEST, changes: [LATEST, MIDDLE], update_available: null }),
+          )
+        : undefined,
+    );
+
+    renderPanel();
+
+    expect(await screen.findByText('Unknown')).toBeInTheDocument();
+    expect(screen.getByText('unknown')).toBeInTheDocument();
+    expect(screen.getByText('Recent changes on GitHub')).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Changes' })).getAllByRole('listitem')).toHaveLength(2);
+    expect(screen.queryByText(/behind/)).not.toBeInTheDocument();
+  });
+
+  it('says Not checked when GitHub has not answered', async () => {
     mockFetch(({ method, url }) =>
       method === 'GET' && url === '/api/system'
         ? jsonResponse(systemInfo({ running: { commit: null, short: null }, latest: null, update_available: null }))
@@ -97,8 +135,8 @@ describe('<SystemPanel />', () => {
     renderPanel();
 
     expect(await screen.findByText('Unknown')).toBeInTheDocument();
-    expect(screen.getByText('unknown')).toBeInTheDocument();
     expect(screen.getByText('Not checked')).toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Changes' })).not.toBeInTheDocument();
   });
 
   it('does not keep asking to reload for an update that finished before the page was opened', async () => {
@@ -164,7 +202,8 @@ describe('<SystemPanel />', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true));
     expect(calls.find((c) => c.method === 'POST')?.url).toBe('/api/system/check');
     expect(await screen.findByText('Update available')).toBeInTheDocument();
-    expect(screen.getByText('f9e8d7c')).toBeInTheDocument();
+    expect(screen.getAllByText('f9e8d7c').length).toBeGreaterThan(0);
+    expect(screen.getByText('2 commits behind')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Check again' })).toBeEnabled();
     expect(systemGets(calls)).toBe(1);
   });

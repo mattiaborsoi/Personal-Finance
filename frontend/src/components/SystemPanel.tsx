@@ -1,8 +1,9 @@
 import { Cog, Download, RefreshCw, RotateCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api, errorMessage, isApiError, type SystemInfo } from '../api';
-import { formatDateTime } from '../lib/dates';
-import { btnPrimary, btnSecondary, cx } from '../lib/ui';
+import { formatDate, formatDateTime } from '../lib/dates';
+import { plural } from '../lib/format';
+import { btnPrimary, btnSecondary, cx, eyebrow } from '../lib/ui';
 import { Badge, type BadgeTone } from './Badge';
 import { Card } from './Card';
 import { ConfirmButton } from './ConfirmButton';
@@ -165,6 +166,14 @@ export function SystemPanel({ pollIntervalMs = 3000 }: Props) {
     info.update_check_enabled && info.latest ? `${formatDateTime(info.latest.date)} · ${info.latest.message}` : undefined;
   const canUpdate = updater.available && updater.state !== 'running';
   const updatedTo = info.running.short ?? info.latest?.short ?? 'the latest version';
+  const { changes } = info;
+  /** Every update skipped is listed, not only the latest; with nothing to compare against, the newest commits. */
+  const changesHeading =
+    info.update_available === true
+      ? info.changes_truncated
+        ? `More than ${changes.length} commits behind`
+        : `${plural(changes.length, 'commit')} behind`
+      : 'Recent changes on GitHub';
 
   return (
     <div className="space-y-6">
@@ -187,6 +196,25 @@ export function SystemPanel({ pollIntervalMs = 3000 }: Props) {
             hint={latestHint}
           />
         </dl>
+        {changes.length > 0 && (
+          <section className="mt-4">
+            <h3 className={eyebrow}>{changesHeading}</h3>
+            <ol aria-label="Changes" className="mt-2 divide-y divide-hairline overflow-hidden rounded-xl border border-hairline">
+              {changes.map((change) => (
+                <li key={change.commit} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2 text-sm sm:flex-nowrap">
+                  <span className="font-mono text-xs text-ink-3">{change.short}</span>{' '}
+                  <span className="min-w-0 basis-full text-ink sm:flex-1 sm:basis-auto">{change.message}</span>{' '}
+                  <span className="shrink-0 text-xs text-ink-3">{formatDate(change.date)}</span>
+                </li>
+              ))}
+            </ol>
+            {info.changes_truncated && (
+              <p className="mt-2 text-xs text-ink-3">
+                Only the newest {changes.length} are listed; the running version is older than all of them.
+              </p>
+            )}
+          </section>
+        )}
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <button
             type="button"

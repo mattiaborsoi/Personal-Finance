@@ -464,6 +464,14 @@ export interface MemoryOut {
 
 export type UpdaterState = 'idle' | 'running' | 'succeeded' | 'failed';
 
+/** One commit on GitHub; `message` is its first line. */
+export interface CommitInfo {
+  commit: string;
+  short: string;
+  date: string | null;
+  message: string;
+}
+
 export interface SystemInfo {
   app: { name: string; version: string };
   /** "owner/repo" on GitHub. */
@@ -472,7 +480,14 @@ export interface SystemInfo {
   /** The commit the server was built from; null when unknown. */
   running: { commit: string | null; short: string | null };
   /** The newest commit on GitHub; null until checked, or when checks are disabled. */
-  latest: { commit: string; short: string; date: string; message: string } | null;
+  latest: CommitInfo | null;
+  /**
+   * The commits newer than the running one, newest first: the changelog of every update skipped.
+   * When the running commit is unknown, the newest commits on the branch; empty when up to date.
+   */
+  changes: CommitInfo[];
+  /** True when the running commit is older than everything fetched, so `changes` is only the newest few. */
+  changes_truncated: boolean;
   /** null when either side is unknown. */
   update_available: boolean | null;
   /** false: the server never contacts GitHub. */

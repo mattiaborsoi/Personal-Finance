@@ -218,8 +218,10 @@ From inside the containers a proxy on the same machine is `http://host.docker.in
 
 ### Updating
 
-From the app: **Settings → System** shows the commit that is running and the latest
-one on GitHub, and **Update now** pulls the branch and rebuilds the app containers.
+From the app: **Settings → System** shows the commit that is running, the latest one
+on GitHub and, when they differ, every commit in between (the changelog of the
+updates you skipped, up to the last 30), and **Update now** pulls the branch and
+rebuilds the app containers.
 That button is served by the optional `updater` sidecar in `docker-compose.yml`, a
 small container holding `git`, the Docker CLI and the Compose plugin, with the
 host's Docker socket and the repository directory mounted (at the same path as on
@@ -234,9 +236,9 @@ recreates itself, so a change to the sidecar needs one manual
 on the host: if you would rather not, delete the `updater` service and the System
 tab shows the manual commands instead.
 
-The version check is one unauthenticated request to `api.github.com` (cached for
-ten minutes, never more than once per page load) for `UPDATE_REPO` / `UPDATE_BRANCH`;
-set `UPDATE_CHECK=false` in `.env` to never contact GitHub.
+The version check is one unauthenticated request to `api.github.com` for the last
+30 commits of `UPDATE_REPO` / `UPDATE_BRANCH` (cached for ten minutes, never more
+than once per page load); set `UPDATE_CHECK=false` in `.env` to never contact GitHub.
 
 By hand:
 

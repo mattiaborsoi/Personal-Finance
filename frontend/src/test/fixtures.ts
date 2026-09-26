@@ -68,6 +68,8 @@ export function systemInfo(overrides: Partial<SystemInfo> = {}): SystemInfo {
     branch: 'main',
     running: { commit: COMMIT_RUNNING, short: 'a1b2c3d' },
     latest: { commit: COMMIT_RUNNING, short: 'a1b2c3d', date: '2026-09-20T10:15:00Z', message: 'Tidy the dashboard' },
+    changes: [],
+    changes_truncated: false,
     update_available: false,
     update_check_enabled: true,
     updater: { available: true, state: 'idle', started_at: null, finished_at: null, log: null, error: null },

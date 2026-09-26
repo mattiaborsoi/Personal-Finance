@@ -80,13 +80,15 @@ Which proxy and models Settl uses, and the thresholds behind them. Defaults come
   "repository": "owner/repo", "branch": "main",
   "running": {"commit": "<sha>|null", "short": "<7 chars>|null"},
   "latest":  {"commit", "short", "date", "message"} | null,
+  "changes": [ {"commit", "short", "date", "message"}, ... ],
+  "changes_truncated": false,
   "update_available": true | false | null,
   "update_check_enabled": true,
   "updater": {"available", "state": "idle|running|succeeded|failed", "started_at", "finished_at", "log", "error"},
   "checked_at": "<iso>"
 }
 ```
-`running` comes from the updater sidecar (the commit checked out on disk); `latest` from GitHub, cached for ten minutes and `null` when the check is disabled (`UPDATE_CHECK=false`) or the host is offline. `update_available` is `null` whenever either side is unknown.
+`running` comes from the updater sidecar (the commit checked out on disk); `latest` from GitHub (the newest of the last 30 commits on the branch, one request cached for ten minutes) and `null` when the check is disabled (`UPDATE_CHECK=false`) or the host is offline. `changes` lists the commits newer than `running`, newest first, each `message` being the first line of the commit message: the changelog of every update skipped, empty when up to date. When `running` is older than all 30 fetched, `changes` holds those 30 and `changes_truncated` is `true`; when `running` is unknown, `changes` is simply the newest commits. `update_available` is `null` whenever either side is unknown.
 
 `POST /api/system/check` → the same body after a fresh look at GitHub.
 

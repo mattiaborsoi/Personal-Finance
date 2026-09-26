@@ -16,6 +16,17 @@ from app.services.updates import GitHubClient, UpdaterClient, system_info, updat
 
 RUNNING = "2cb7f15116ea34f432581aca12a1b500396bfe9f"
 LATEST = "9f1c0d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d"
+MIDDLE = "5e5e5e5e6f6f6f6f7a7a7a7a8b8b8b8b9c9c9c9c"
+OLDER = "1a1a1a1a2b2b2b2b3c3c3c3c4d4d4d4d5e5e5e5e"
+UNKNOWN = "0000000000000000000000000000000000000000"
+
+# What GitHub lists for the branch, newest first: the server runs the third one.
+COMMITS = [
+    (LATEST, "Split transactions into parts\n\nLonger body.", "2026-09-26T15:13:00Z"),
+    (MIDDLE, "Settings: AI tab", "2026-09-25T09:30:00Z"),
+    (RUNNING, "Editable accounts", "2026-09-24T18:00:00Z"),
+    (OLDER, "First commit", "2026-09-20T10:00:00Z"),
+]
 
 
 def _settings(**overrides) -> Settings:
@@ -34,22 +45,17 @@ def _settings(**overrides) -> Settings:
     return Settings(**base)
 
 
-def _github_transport(sha: str = LATEST, status: int = 200) -> httpx.MockTransport:
+def _github_transport(status: int = 200) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/repos/example/settl/commits/main"
+        assert request.url.path == "/repos/example/settl/commits"
+        assert request.url.params["sha"] == "main" and request.url.params["per_page"] == "30"
         assert request.headers["Accept"] == "application/vnd.github+json"
         if status != 200:
             return httpx.Response(status, json={"message": "rate limited"})
-        return httpx.Response(
-            200,
-            json={
-                "sha": sha,
-                "commit": {
-                    "message": "Split transactions into parts\n\nLonger body.",
-                    "committer": {"date": "2026-09-26T15:13:00Z"},
-                },
-            },
-        )
+        listed = [
+            {"sha": sha, "commit": {"message": message, "committer": {"date": date}}} for sha, message, date in COMMITS
+        ]
+        return httpx.Response(200, json=listed)
 
     return httpx.MockTransport(handler)
 
@@ -97,8 +103,26 @@ def test_system_info_reports_an_available_update():
     assert info["latest"]["message"] == "Split transactions into parts"
     assert info["latest"]["date"].startswith("2026-09-26T15:13:00")
     assert info["update_available"] is True
+    # Every commit newer than the running one, newest first: the changelog of the skipped updates.
+    assert [c["short"] for c in info["changes"]] == [LATEST[:7], MIDDLE[:7]]
+    assert info["changes"][1]["message"] == "Settings: AI tab"
+    assert info["changes"][1]["date"].startswith("2026-09-25T09:30:00")
+    assert info["changes_truncated"] is False
     assert info["updater"]["available"] is True and info["updater"]["state"] == "idle"
     assert info["update_check_enabled"] is True
+
+
+def test_changes_are_everything_fetched_when_the_running_commit_is_older_still():
+    settings = _settings()
+    fake = FakeUpdater(settings, commit=UNKNOWN)
+    github = GitHubClient(settings, transport=_github_transport())
+    info = system_info(settings, github, UpdaterClient(settings, transport=fake.transport))
+    assert info["update_available"] is True
+    assert [c["short"] for c in info["changes"]] == [LATEST[:7], MIDDLE[:7], RUNNING[:7], OLDER[:7]]
+    assert info["changes_truncated"] is True
+
+    assert updates.changes_since(None, RUNNING) == ([], False)
+    assert updates.changes_since([], None) == ([], False)
 
 
 def test_up_to_date_and_cached_lookup():
@@ -112,7 +136,9 @@ def test_up_to_date_and_cached_lookup():
 
     github = GitHubClient(settings, transport=httpx.MockTransport(counting))
     updater = UpdaterClient(settings, transport=fake.transport)
-    assert system_info(settings, github, updater)["update_available"] is False
+    info = system_info(settings, github, updater)
+    assert info["update_available"] is False
+    assert info["changes"] == [] and info["changes_truncated"] is False
     system_info(settings, github, updater)
     assert calls["n"] == 1  # second call served from the cache
     system_info(settings, github, updater, force_check=True)
@@ -125,6 +151,7 @@ def test_offline_or_disabled_degrades_to_unknown():
     github = GitHubClient(settings, transport=_github_transport(status=403))
     info = system_info(settings, github, UpdaterClient(settings, transport=fake.transport))
     assert info["latest"] is None and info["update_available"] is None
+    assert info["changes"] == [] and info["changes_truncated"] is False
 
     disabled = _settings(update_check=False)
     github = GitHubClient(disabled, transport=_github_transport())
@@ -140,6 +167,8 @@ def test_offline_or_disabled_degrades_to_unknown():
         "available": False, "state": "idle", "started_at": None, "finished_at": None, "log": None, "error": None
     }
     assert info["running"] == {"commit": None, "short": None} and info["update_available"] is None
+    # Nothing to compare against, so the whole fetched list is offered as "recent changes".
+    assert len(info["changes"]) == len(COMMITS) and info["changes_truncated"] is False
 
 
 def test_start_update_and_conflicts():
