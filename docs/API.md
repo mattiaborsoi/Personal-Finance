@@ -94,7 +94,7 @@ Which proxy and models Settl uses, and the thresholds behind them. Defaults come
 
 `POST /api/system/update` → **202** `{ state: "running", started_at }`. The updater runs `git pull --ff-only` and `docker compose up -d --build` for the app services; poll `GET /api/system` (expect a short outage while the backend restarts). **409** while an update is running, **503** when the updater container is not deployed or not reachable.
 
-`GET /api/health` → `{ status, database, llm_provider, embedding_provider }` (no auth)
+`GET /api/health` → `{ status, database }` (no auth; reachable through the web port, so it reports only whether the app and its database are up)
 
 ## Periods
 
@@ -110,12 +110,14 @@ While a period is closed, `PATCH`/`approve`/`approve-batch`/`DELETE`/`split` on 
 
 `POST /api/statements/upload` — `multipart/form-data` with `file` (pdf/csv/xlsx/xls) and optional `account_id` (default account for the file; card sections that resolve to another account of the same institution keep their own account). The chosen account's type also fixes the sign convention for bare "Amount" columns. →
 ```json
-{ "upload_id", "account_id", "period_key", "parser", "inserted", "skipped_duplicates",
-  "pending_review", "auto_approved", "transfers_matched", "warnings": [] }
+{ "upload_id", "account_id", "period_key", "period_from", "period_to", "parser", "inserted",
+  "skipped_duplicates", "pending_review", "auto_approved", "transfers_matched", "warnings": [] }
 ```
+`period_from` / `period_to` are the earliest and latest month (`YYYY-MM`) among the file's lines, skipped duplicates included; `period_key` is the latest month, kept for compatibility. `warnings` lists parser notes and, when the AI could not classify some lines, why: `AI unavailable (connection refused): 3 lines left uncategorised; approve them in the queue or retry the upload later` (the proxy refused, timed out or answered with an error; the rest of the file was not sent to it) or `AI gave an unusable answer for 1 line, left uncategorised; …`. No warning is raised when AI is switched off in Settings → AI.
+
 Errors: **422** when the account cannot be determined (`detail` is `{message, candidates}`), **422** when the file cannot be parsed or is too large to be a statement (more than 60 pages / 20 LLM chunks), **409** when the file (same sha256) was already ingested, **409** when new lines would land in a closed period. Lines that already exist are skipped, not refused. The uploaded file is deleted after ingestion unless `KEEP_UPLOADED_FILES=true`.
 
-`GET /api/statements` → `[ {id, account_id, period_key, filename, sha256, parser, transaction_count, created_at} ]`
+`GET /api/statements` → `[ {id, account_id, period_key, period_from, period_to, filename, sha256, parser, transaction_count, created_at} ]` (`period_from` / `period_to` are `null` on uploads recorded before they existed)
 
 ## Transactions
 
@@ -137,7 +139,7 @@ The list never contains parts: a split transaction appears once, as its parent, 
 
 `GET /api/transactions/{id}` → TransactionOut (works for a part too: `split_parent_id` is then set and `parts` is empty)
 
-`PATCH /api/transactions/{id}` body `{ category?, subcategory?, claim_type?, cleaned_merchant?, is_internal_transfer? }` → TransactionOut. Recomputes allocations; does **not** change review status. `null` clears `subcategory` and is ignored for the other fields. Correcting an already-approved transaction updates merchant memory. On a split parent only `cleaned_merchant` may change (it is copied to the parts); `category`, `subcategory`, `claim_type` and `is_internal_transfer` answer **409**. On a part, `category`, `subcategory` and `claim_type` may change; `cleaned_merchant` and `is_internal_transfer` answer **409**.
+`PATCH /api/transactions/{id}` body `{ category?, subcategory?, claim_type?, cleaned_merchant?, is_internal_transfer? }` → TransactionOut. Recomputes allocations; does **not** change review status. `null` clears `subcategory` and is ignored for the other fields. `category` must be one of the configured `categories` (matched ignoring case and stored in the configured spelling) or `Uncategorized`: anything else is **422** naming the value; `subcategory` is free text. Correcting an already-approved transaction updates merchant memory. On a split parent only `cleaned_merchant` may change (it is copied to the parts); `category`, `subcategory`, `claim_type` and `is_internal_transfer` answer **409**. On a part, `category`, `subcategory` and `claim_type` may change; `cleaned_merchant` and `is_internal_transfer` answer **409**.
 
 `POST /api/transactions/{id}/approve` body `{ ...same optional corrections..., remember: true }` → TransactionOut with `review_status = manual_approved`. When `remember` is true the confirmed classification is written to merchant memory (learning loop); transfers, `Uncategorized` answers and split transactions are never remembered.
 
@@ -151,14 +153,14 @@ The list never contains parts: a split transaction appears once, as its parent, 
 ```json
 { "parts": [
   { "amount": "-6.00", "category": "Groceries", "subcategory": null, "claim_type": "shared_proportional" },
-  { "amount": "-4.00", "category": "Household", "claim_type": "personal" }
+  { "amount": "-4.00", "category": "Shopping:Home", "claim_type": "personal" }
 ] }
 ```
 → TransactionOut (the parent, `is_split: true`, `parts` filled, `review_status: manual_approved`).
 
 Each part gets its own category, claim type and allocations; the parent keeps the cash movement, the merchant and the provenance but carries no money of its own in the settlement, the macro/micro metrics or the auditor. Splitting is a reviewed decision, so it approves the transaction; nothing is written to merchant memory. Sending the request again replaces the parts.
 
-Rules (**422** otherwise): between 2 and 20 parts; every `amount` non-zero, signed like the transaction and no larger than it; the amounts sum exactly to the transaction amount; `category` non-empty. **409** when the period is closed, when the transaction is an internal transfer, or when it is itself a part.
+Rules (**422** otherwise): between 2 and 20 parts; every `amount` non-zero, signed like the transaction and no larger than it; the amounts sum exactly to the transaction amount; every `category` one of the configured `categories` or `Uncategorized` (matched ignoring case, stored in the configured spelling; the 422 names the offending value). **409** when the period is closed, when the transaction is an internal transfer, or when it is itself a part.
 
 `DELETE /api/transactions/{id}/split` → TransactionOut (`is_split: false`, `parts: []`; the transaction stays approved). **409** in a closed period.
 
@@ -175,13 +177,13 @@ Rules (**422** otherwise): between 2 and 20 parts; every `amount` non-zero, sign
 ## Partner claims (mobile `/claim` form)
 
 `POST /api/claims` `{ claim_date, amount (>0), merchant, description?, claim_type, paid_by? }` → ClaimOut.
-A `secondary` session always records `paid_by = secondary user`. A `primary` session may set `paid_by` (defaults to secondary — i.e. logging a claim on the partner's behalf). Amounts are rounded half-up to the configured decimals; a `claim_date` in the future is **422**.
+A `secondary` session always records `paid_by = secondary user`. A `primary` session may set `paid_by` (defaults to secondary — i.e. logging a claim on the partner's behalf). Amounts are rounded half-up to the configured decimals; a `claim_date` in the future or more than 12 months ago is **422**.
 
 ClaimOut: `id, period_key, claim_date, paid_by, merchant, description, amount, claim_type, primary_owes, secondary_owes, is_settled, created_at`
 
 `GET /api/claims?period=YYYY-MM&settled=false` → `[ClaimOut]` (both roles)
 
-`DELETE /api/claims/{id}` → 204 (primary; secondary may delete their own unsettled claims)
+`DELETE /api/claims/{id}` → 204 (primary; secondary may delete their own unsettled claims). When the claim was the only thing filed under its month (no transactions, other claims, uploads, audit reports or settlement snapshot) and the period is open, the empty period is removed with it, so a claim typed with the wrong date leaves no stray month behind.
 
 ## Settlement
 
@@ -210,11 +212,13 @@ ClaimOut: `id, period_key, claim_date, paid_by, merchant, description, amount, c
 ```json
 {
   "period_key",
-  "macro": { "household_burn", "primary_accounts_burn", "partner_claims_burn", "by_category": [{category, amount}] },
+  "macro": { "household_burn", "primary_accounts_burn", "partner_claims_burn", "refunds", "by_category": [{category, amount}] },
   "micro": { "true_net_expense", "from_transactions", "from_partner_claims", "by_category": [...] },
   "liquidity": { "credits", "debits", "net_cash_flow", "by_account": [{account_id, credits, debits, net}] }
 }
 ```
+`macro.by_category` is gross debits per category plus a `Partner claims` row when the period has claims, so the rows add up exactly to `household_burn`; categories with no debit are left out. `macro.refunds` is the total of credits in spend categories for the period, reported for display and never deducted from the burn.
+
 `GET /api/metrics/trends?periods=6` → `[ {period_key, household_burn, true_net_expense, net_cash_flow} ]` (oldest first)
 
 `GET /api/metrics/investment` → `{ accounts: [{account_id, total_deposits, total_withdrawals, net_invested_capital, realized_gain}], total_deposits, total_withdrawals, net_invested_capital, realized_gain }`
@@ -223,18 +227,18 @@ ClaimOut: `id, period_key, claim_date, paid_by, merchant, description, amount, c
 
 `POST /api/audit/{period_key}/run` → AuditReportOut
 
-`GET /api/audit/{period_key}` → latest AuditReportOut, **404** if never run.
+`GET /api/audit/{period_key}` → latest AuditReportOut, or `null` (still **200**) when the period has never been audited: "not run yet" is the normal state, not an error. **422** for a malformed period.
 
 AuditReportOut:
 ```json
 {
   "period_key", "summary_sentence",
   "anomalies": [ {transaction_id, merchant, issue, current_amount, baseline_amount, baseline_stddev, deviation} ],
-  "category_comparison": [ {category, current, baseline_average, change_pct} ],
+  "category_comparison": [ {category, current, baseline_average, change_pct, baseline_periods} ],
   "created_at"
 }
 ```
-`deviation` is a signed fraction (0.28 = +28 %); `change_pct` is a percentage and `null` when there is no baseline. Macro and micro metrics exclude internal transfers and the `Transfers:*` and `Income:*` categories. Split transactions count through their parts in macro, micro and the audit; the liquidity view counts the parent (the actual cash movement) and ignores the parts.
+`deviation` is a signed fraction (0.28 = +28 %); `change_pct` is a percentage and `null` when there is no baseline. `baseline_average` is averaged over the prior look-back months that carry any approved spend, not over the whole window (a fresh install's first months are not read as zero spend); `baseline_periods` is that count, the same on every row, and `0` (reports stored before the field existed also read `0`) when no prior month has data. The summary sentence is written in the configured currency; an LLM answer quoting another currency is replaced by the deterministic sentence. Macro and micro metrics exclude internal transfers and the `Transfers:*` and `Income:*` categories. Split transactions count through their parts in macro, micro and the audit; the liquidity view counts the parent (the actual cash movement) and ignores the parts.
 
 ## Merchant memory
 

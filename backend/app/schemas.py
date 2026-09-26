@@ -199,6 +199,8 @@ class UploadResult(BaseModel):
     upload_id: uuid.UUID | None = None
     account_id: str | None
     period_key: str | None
+    period_from: str | None = None
+    period_to: str | None = None
     parser: str
     inserted: int
     skipped_duplicates: int
@@ -214,6 +216,8 @@ class StatementUploadOut(BaseModel):
     id: uuid.UUID
     account_id: str | None
     period_key: str | None
+    period_from: str | None = None
+    period_to: str | None = None
     filename: str
     sha256: str
     parser: str | None
@@ -451,7 +455,8 @@ class MemoryOut(BaseModel):
 
 
 class HealthOut(BaseModel):
+    """``GET /health`` is reachable without login through the web port: it says only whether
+    the app and its database are up, never which providers or models are configured."""
+
     status: str
     database: str
-    llm_provider: str
-    embedding_provider: str

@@ -8,7 +8,8 @@ import pytest
 
 from app.config import CLAIM_TYPES, AppConfig
 from app.services import guesser
-from app.services.guesser import Classification, build_prompt, classify
+from app.services.guesser import Classification, UploadState, build_prompt, classify
+from app.services.ingestion import ai_warnings
 from app.services.llm import FakeLLMClient, NullLLMClient
 from app.services.memory import MemoryHit, remember
 
@@ -360,3 +361,203 @@ def test_weak_memory_hits_are_not_used_as_examples(db, config, embedder, fake_ll
 def test_module_constants() -> None:
     assert guesser.INTERNAL_TRANSFER_CATEGORY == "Transfers:Internal"
     assert set(guesser.CLAIM_TYPE_MEANINGS) == set(CLAIM_TYPES)
+
+
+# --------------------------------------------------------------------------- #
+# 6. per-upload state: circuit breaker
+# --------------------------------------------------------------------------- #
+
+UNSEEN = ["SP PIMORONI LTD LONDON", "ZOOM OCADO 12", "PETS AT HOME 123"]
+
+
+@requires_db
+def test_breaker_trips_on_first_unreachable_error(db, config, embedder, amex) -> None:
+    down = FakeLLMClient(unreachable=True)
+    state = UploadState()
+    results = [classify(db, config, embedder, down, raw, amex, state=state) for raw in UNSEEN]
+
+    assert len(down.calls) == 1  # line 1 tripped it; lines 2 and 3 never reached the proxy
+    assert [c.source for c in results] == ["none", "none", "none"]
+    assert all(c.category == "Uncategorized" and c.review_status == "pending_review" for c in results)
+    assert state.llm_outage == "connection refused"
+    assert state.outage_lines == 3
+    assert state.bad_answers == 0
+
+
+@requires_db
+def test_breaker_trips_on_http_error_status(db, config, embedder, amex) -> None:
+    failing = FakeLLMClient(http_status=502)
+    state = UploadState()
+    for raw in UNSEEN:
+        classify(db, config, embedder, failing, raw, amex, state=state)
+    assert len(failing.calls) == 1
+    assert state.llm_outage == "proxy returned HTTP 502"
+    assert state.outage_lines == 3
+
+
+@requires_db
+def test_bad_answers_do_not_trip_the_breaker(db, config, embedder, amex) -> None:
+    # A per-line problem (unusable JSON, a non-object answer) must not stop the LLM
+    # being tried for the remaining lines.
+    bad = FakeLLMClient(fail=True)
+    state = UploadState()
+    for raw in UNSEEN:
+        classify(db, config, embedder, bad, raw, amex, state=state)
+    assert len(bad.calls) == 3
+    assert state.llm_outage is None
+    assert state.outage_lines == 0
+    assert state.bad_answers == 3
+
+    not_an_object = FakeLLMClient(handler=lambda system, user: ["nope"])  # type: ignore[arg-type]
+    state = UploadState()
+    for raw in UNSEEN:
+        classify(db, config, embedder, not_an_object, raw, amex, state=state)
+    assert len(not_an_object.calls) == 3 and state.llm_outage is None and state.bad_answers == 3
+
+
+@requires_db
+def test_breaker_only_exists_with_state(db, config, embedder, amex) -> None:
+    # Existing callers without a per-upload state keep the old one-call-per-line behaviour.
+    down = FakeLLMClient(unreachable=True)
+    for raw in UNSEEN:
+        assert classify(db, config, embedder, down, raw, amex).source == "none"
+    assert len(down.calls) == 3
+
+
+@requires_db
+def test_breaker_does_not_stop_rules_transfers_or_memory(db, config, embedder, amex) -> None:
+    remember(db, embedder, "WAITROSE LONDON", normalized_merchant="Waitrose", category="Groceries",
+             claim_type="shared_proportional")  # fmt: skip
+    down = FakeLLMClient(unreachable=True)
+    state = UploadState()
+    assert classify(db, config, embedder, down, "SP PIMORONI LTD LONDON", amex, state=state).source == "none"
+    assert state.llm_outage is not None
+    assert classify(db, config, embedder, down, "AQUANORTH WATER", amex, state=state).source == "rule"
+    assert classify(db, config, embedder, down, "AMEX PAYMENT", amex, state=state).source == "transfer"
+    assert classify(db, config, embedder, down, "WAITROSE 4321 LONDON", amex, state=state).source == "memory"
+    assert state.outage_lines == 1
+
+
+def test_ai_warning_wording() -> None:
+    assert ai_warnings(UploadState()) == []
+    tripped = UploadState(llm_outage="connection refused", outage_lines=3)
+    assert ai_warnings(tripped) == [
+        "AI unavailable (connection refused): 3 lines left uncategorised; "
+        "approve them in the queue or retry the upload later"
+    ]
+    one = UploadState(llm_outage="no answer within 20 s", outage_lines=1)
+    assert ai_warnings(one) == [
+        "AI unavailable (no answer within 20 s): 1 line left uncategorised; "
+        "approve it in the queue or retry the upload later"
+    ]
+    bad = UploadState(bad_answers=2)
+    assert ai_warnings(bad) == [
+        "AI gave an unusable answer for 2 lines, left uncategorised; "
+        "approve them in the queue or retry the upload later"
+    ]
+    both = UploadState(llm_outage="proxy returned HTTP 502", outage_lines=4, bad_answers=1)
+    assert len(ai_warnings(both)) == 2
+
+
+# --------------------------------------------------------------------------- #
+# 7. per-upload state: memoisation
+# --------------------------------------------------------------------------- #
+
+
+@requires_db
+def test_identical_lines_share_one_llm_call_and_confidence(db, config, embedder, amex) -> None:
+    confidences = iter([0.91, 0.42, 0.13])  # a second call would visibly change the answer
+    llm = FakeLLMClient(handler=lambda system, user: {**VALID_RESPONSE, "confidence": next(confidences)})
+    state = UploadState()
+    results = [classify(db, config, embedder, llm, "ZOOM OCADO 12", amex, amount=Decimal("-9.99"), state=state)
+               for _ in range(3)]  # fmt: skip
+    assert len(llm.calls) == 1
+    assert results[0] == results[1] == results[2]
+    assert results[0].source == "llm" and results[0].confidence == 0.91
+    assert results[0] is not results[1]  # copies: a caller mutating one cannot corrupt the memo
+
+
+@requires_db
+def test_memo_key_ignores_store_numbers_but_not_the_account(db, config, embedder, amex, amex_supp) -> None:
+    _respond_llm = FakeLLMClient(handler=lambda system, user: dict(VALID_RESPONSE))
+    state = UploadState()
+    first = classify(db, config, embedder, _respond_llm, "TESCO STORES 3021 LONDON", amex, state=state)
+    second = classify(db, config, embedder, _respond_llm, "TESCO STORES 4455 LONDON", amex, state=state)
+    assert len(_respond_llm.calls) == 1 and first == second
+
+    classify(db, config, embedder, _respond_llm, "TESCO STORES 3021 LONDON", amex_supp, state=state)
+    assert len(_respond_llm.calls) == 2  # a different account is a different question
+
+
+@requires_db
+def test_memo_covers_rules_transfers_and_memory(db, config, embedder, fake_llm, amex) -> None:
+    remember(db, embedder, "WAITROSE LONDON", normalized_merchant="Waitrose", category="Groceries",
+             claim_type="shared_proportional")  # fmt: skip
+    state = UploadState()
+    for raw in ("AQUANORTH WATER", "AMEX PAYMENT", "WAITROSE 4321 LONDON"):
+        first = classify(db, config, embedder, fake_llm, raw, amex, state=state)
+        assert classify(db, config, embedder, fake_llm, raw, amex, state=state) == first
+    assert [c.source for c in state.memo.values()] == ["rule", "transfer", "memory"]
+    assert fake_llm.calls == []
+
+
+@requires_db
+def test_memo_hits_on_outage_lines_are_counted(db, config, embedder, amex) -> None:
+    down = FakeLLMClient(unreachable=True)
+    state = UploadState()
+    for _ in range(3):
+        classify(db, config, embedder, down, "SP PIMORONI LTD LONDON", amex, state=state)
+    assert len(down.calls) == 1
+    assert state.outage_lines == 3  # three rows will sit uncategorised in the queue
+
+
+# --------------------------------------------------------------------------- #
+# 8. merchant-key memory match (before the vector search)
+# --------------------------------------------------------------------------- #
+
+
+@requires_db
+@pytest.mark.parametrize(
+    ("remembered", "seen"),
+    [
+        ("TESCO STORES 3021 LONDON", "TESCO STORES 4455 CROYDON"),  # hash similarity 0.74
+        ("WAITROSE 123 LONDON", "WAITROSE 456 CAMDEN"),  # 0.56
+        ("PRET A MANGER", "PRET A MANGER 0012 VICTORIA"),  # 0.79
+    ],
+)
+def test_same_shop_under_another_store_number_is_a_memory_hit(db, config, embedder, amex, remembered, seen) -> None:
+    remember(db, embedder, remembered, normalized_merchant="The Shop", category="Groceries",
+             claim_type="shared_equal")  # fmt: skip
+    llm = FakeLLMClient(unreachable=True)  # must not be needed
+    cls = classify(db, config, embedder, llm, seen, amex, state=UploadState())
+    assert cls == Classification(
+        cleaned_merchant="The Shop",
+        category="Groceries",
+        claim_type="shared_equal",
+        source="memory",
+        confidence=1.0,
+        review_status="pending_review",
+    )
+    assert llm.calls == []
+
+
+@requires_db
+def test_uber_trip_does_not_prefill_uber_eats(db, config, embedder, fake_llm, amex) -> None:
+    # The two embed at 0.85 under the hash provider (above the 0.82 threshold), but the
+    # merchant keys UBER EATS / UBER TRIP disagree: the memory is a hint, not the answer.
+    remember(db, embedder, "UBER *EATS HELP.UBER.COM", normalized_merchant="Uber Eats", category="Dining",
+             claim_type="personal")  # fmt: skip
+    _respond(fake_llm, merchant="Uber", category="Transport:Taxi")
+    cls = classify(db, config, embedder, fake_llm, "UBER *TRIP HELP.UBER.COM", amex, state=UploadState())
+    assert (cls.source, cls.cleaned_merchant, cls.category) == ("llm", "Uber", "Transport:Taxi")
+    assert len(fake_llm.calls) == 1
+    assert '"UBER EATS HELP UBER COM" -> Uber Eats | Dining | personal' in fake_llm.calls[0]["user"]
+
+
+@requires_db
+def test_key_match_ranks_below_rules_and_payment_patterns(db, config, embedder, fake_llm, amex) -> None:
+    remember(db, embedder, "AQUANORTH WATER 12", normalized_merchant="Aquanorth", category="Dining",
+             claim_type="personal")  # fmt: skip
+    remember(db, embedder, "AMEX PAYMENT 99", normalized_merchant="Amex", category="Dining", claim_type="personal")
+    assert classify(db, config, embedder, fake_llm, "AQUANORTH WATER 34", amex).source == "rule"
+    assert classify(db, config, embedder, fake_llm, "AMEX PAYMENT 77", amex).source == "transfer"

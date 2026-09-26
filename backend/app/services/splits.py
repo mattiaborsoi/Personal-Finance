@@ -13,11 +13,12 @@ personal item. The ledger records this as:
   transfer buffer.
 
 Invariants enforced here: at least two parts, every part non-zero and signed like
-the parent, and the parts sum exactly to the parent amount. Splitting is a human
-decision, so the parent and its parts are recorded as ``manual_approved``. A split
-is never written to merchant memory (the parent's classification was not confirmed
-as a whole) and cannot be applied to an internal transfer, to a row in a closed
-period or to a part.
+the parent, every category in the configured taxonomy (matched ignoring case and
+stored in its configured spelling) and the parts sum exactly to the parent amount.
+Splitting is a human decision, so the parent and its parts are recorded as
+``manual_approved``. A split is never written to merchant memory (the parent's
+classification was not confirmed as a whole) and cannot be applied to an internal
+transfer, to a row in a closed period or to a part.
 
 The liquidity view and the transactions list are the two places that *keep* the
 parent and drop the parts: the parent is the real cash movement, and the list
@@ -82,9 +83,12 @@ def validate_parts(txn: Transaction, parts: list[SplitPartIn], config: AppConfig
         category = part.category.strip()
         if not category:
             raise SplitError(f"part {index} needs a category")
+        canonical = config.canonical_category(category)
+        if canonical is None:
+            raise SplitError(f"part {index} category {category!r} is not in the configured taxonomy")
         subcategory = (part.subcategory or "").strip() or None
         cleaned.append(
-            SplitPartIn(amount=amount, category=category[:128], subcategory=subcategory, claim_type=part.claim_type)
+            SplitPartIn(amount=amount, category=canonical, subcategory=subcategory, claim_type=part.claim_type)
         )
         running += amount
     if running != total:

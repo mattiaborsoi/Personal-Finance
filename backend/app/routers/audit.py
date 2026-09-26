@@ -36,10 +36,12 @@ def run_audit(
     return report
 
 
-@router.get("/{period_key}", response_model=AuditReportOut)
-def get_audit(period_key: str, db: Session = Depends(get_db)) -> AuditReportOut:
+@router.get("/{period_key}", response_model=AuditReportOut | None)
+def get_audit(period_key: str, db: Session = Depends(get_db)) -> AuditReportOut | None:
+    """The latest report for the period, or ``null`` (still 200) when it has never been audited.
+
+    "Never run" is the normal state of every period until it is closed, so it is not
+    an error: the dashboard asks on every load and treats ``null`` as "not run yet".
+    """
     _validate(period_key)
-    report = auditor.latest_report(db, period_key)
-    if report is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "no audit report for this period yet")
-    return report
+    return auditor.latest_report(db, period_key)

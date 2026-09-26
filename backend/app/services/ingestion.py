@@ -10,10 +10,16 @@
 Design notes
 ------------
 * **Periods**: every transaction is filed under the calendar month of its own
-  ``transaction_date``; the newest month touched by the file is recorded on the
-  ``statement_uploads`` row for provenance. Uploading *new* lines into a closed period
-  is refused; lines that already exist (a re-upload) are simply skipped, so a
-  statement overlapping an already-closed month still goes through.
+  ``transaction_date``; the span of months the file touched is recorded on the
+  ``statement_uploads`` row (``period_from`` / ``period_to``, with ``period_key``
+  still the newest month for compatibility). Uploading *new* lines into a closed
+  period is refused; lines that already exist (a re-upload) are simply skipped, so
+  a statement overlapping an already-closed month still goes through.
+* **AI outages**: one :class:`~app.services.guesser.UploadState` is shared by the
+  file's ``classify`` calls. It memoises answers for duplicate lines and carries the
+  LLM circuit breaker; when the breaker trips (or a model answer was unusable) the
+  result says so in ``warnings`` so uncategorised lines are not a silent surprise.
+  No warning is raised when AI is switched off: that is the user's choice.
 * **Idempotency**: each line gets a fingerprint ``sha256(account|date|amount|raw|n)``
   where ``n`` is the occurrence index of identical lines within the same file, so
   re-uploading a statement inserts nothing new while two genuinely identical
@@ -47,7 +53,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import AccountConfig, AppConfig
-from app.models import LedgerPeriod, StatementUpload, Transaction
+from app.models import LedgerPeriod, StatementUpload, Transaction, TransferBuffer
 from app.schemas import UploadResult
 from app.services import guesser, settlement, transfers
 from app.services.embeddings import EmbeddingClient
@@ -92,7 +98,7 @@ def fingerprint(account_id: str, txn_date: date, amount: Decimal, raw_text: str,
 
 
 def is_mirror(txn: Transaction) -> bool:
-    """True for the inverse leg written by :func:`_create_mirror`."""
+    """True for the inverse leg written by :func:`create_mirror`."""
     return txn.classification_source == "transfer" and (txn.raw_description or "").startswith(MIRROR_PREFIX)
 
 
@@ -226,8 +232,9 @@ def ingest_statement(
         get_or_create_period(db, key)
 
     inserted = pending = auto = 0
+    state = guesser.UploadState()
     for line, acc, fp in new_lines:
-        cls = guesser.classify(db, config, embedder, llm, line.raw_text, acc, amount=line.amount)
+        cls = guesser.classify(db, config, embedder, llm, line.raw_text, acc, amount=line.amount, state=state)
         alloc_p, alloc_s = settlement.allocate(line.amount, cls.claim_type, acc.owner, config)
         txn = Transaction(
             period_key=period_key_for(line.date),
@@ -264,17 +271,20 @@ def ingest_statement(
         if is_transfer and txn.amount != 0:
             entry = transfers.register_transfer(db, txn)
             if cls.transfer_to_account:
-                _create_mirror(db, config, txn, cls.transfer_to_account, filename, entry)
+                create_mirror(db, config, txn, cls.transfer_to_account, filename, entry)
         elif is_transfer:
             warnings.append(f"{line.date}: zero-amount transfer line {line.raw_text!r} left out of the buffer")
 
     matched = transfers.match_pending(db, config)
+    warnings.extend(ai_warnings(state))
 
     all_keys = {period_key_for(line.date) for line, _, _ in resolved}
     provenance_key = max(all_keys) if all_keys else None
     upload = StatementUpload(
         account_id=default_account.id if default_account else (resolved[0][1].id if resolved else None),
         period_key=provenance_key,
+        period_from=min(all_keys) if all_keys else None,
+        period_to=provenance_key,
         filename=filename[:255],
         sha256=sha,
         parser=parsed.parser_name[:64],
@@ -289,6 +299,8 @@ def ingest_statement(
         upload_id=upload.id,
         account_id=upload.account_id,
         period_key=upload.period_key,
+        period_from=upload.period_from,
+        period_to=upload.period_to,
         parser=parsed.parser_name,
         inserted=inserted,
         skipped_duplicates=skipped,
@@ -299,15 +311,50 @@ def ingest_statement(
     )
 
 
-def _create_mirror(
+def _lines(n: int) -> tuple[str, str]:
+    """``("3 lines", "them")`` or ``("1 line", "it")`` for the warning text."""
+    return ("1 line", "it") if n == 1 else (f"{n} lines", "them")
+
+
+def ai_warnings(state: guesser.UploadState) -> list[str]:
+    """User-facing warnings about lines the AI could not classify during this upload.
+
+    An outage (the circuit breaker tripped: connection refused, timed out, HTTP error
+    from the proxy) and unusable answers are reported separately; AI being switched
+    off is not reported, since the fallback is then what the user asked for.
+    """
+    out: list[str] = []
+    if state.llm_outage is not None:
+        count, pronoun = _lines(state.outage_lines)
+        out.append(
+            f"AI unavailable ({state.llm_outage}): {count} left uncategorised; "
+            f"approve {pronoun} in the queue or retry the upload later"
+        )
+    if state.bad_answers:
+        count, pronoun = _lines(state.bad_answers)
+        out.append(
+            f"AI gave an unusable answer for {count}, left uncategorised; "
+            f"approve {pronoun} in the queue or retry the upload later"
+        )
+    return out
+
+
+def create_mirror(
     db: Session,
     config: AppConfig,
     txn: Transaction,
     target_account_id: str,
     filename: str,
-    source_entry,
+    source_entry: TransferBuffer,
 ) -> Transaction | None:
-    """Write the inverse leg of a transfer on ``target_account_id`` and link the pair."""
+    """Write the inverse leg of a transfer on ``target_account_id`` and link the pair.
+
+    Idempotent: the mirror's fingerprint derives from the source fingerprint, so a
+    second call for the same ``txn`` finds the existing row and only re-links it.
+    Ingestion calls this for every rule with ``transfer_to_account``; the transactions
+    router calls it again when a user re-flags such a line as an internal transfer
+    after un-flagging it (which deleted the mirror).
+    """
     target = config.get_account(target_account_id)
     if target is None:
         log.warning("transfer target %s not configured; skipping mirror", target_account_id)
@@ -345,3 +392,6 @@ def _create_mirror(
         mirror_entry = transfers.register_transfer(db, mirror)
         transfers.link(db, source_entry, mirror_entry)
     return mirror
+
+
+_create_mirror = create_mirror  # former name, kept for callers that still use it

@@ -2,7 +2,10 @@
 
 All external LLM traffic goes through the local LiteLLM proxy (OpenAI-compatible
 ``/v1/chat/completions``). The wrapper enforces strict JSON responses and keeps
-prompts minimal. Two additional implementations exist:
+prompts minimal. Failures are typed so callers can tell a one-off bad answer
+(:class:`LLMError`) from an outage that will recur on every call
+(:class:`LLMUnreachable` for transport errors, :class:`LLMStatusError` for HTTP
+error statuses). Two additional implementations exist:
 
 * :class:`NullLLMClient` - raises :class:`LLMUnavailable`; used when
   ``LLM_PROVIDER=none`` so the pipeline degrades to rules + vector memory.
@@ -29,6 +32,42 @@ class LLMError(RuntimeError):
 
 class LLMUnavailable(LLMError):
     """No LLM is configured (``LLM_PROVIDER=none``)."""
+
+
+class LLMUnreachable(LLMError):
+    """The proxy could not be reached or did not answer in time (an httpx transport error).
+
+    ``reason`` is a short, human-readable cause (``"connection refused"``,
+    ``"no answer within 20 s"``) for user-facing warnings. Unlike a bad answer, this
+    will recur for every call of the same upload, so callers may stop retrying.
+    """
+
+    def __init__(self, message: str, reason: str = "unreachable") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+class LLMStatusError(LLMError):
+    """The proxy answered with an HTTP error status: reachable, but failing."""
+
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+    @property
+    def reason(self) -> str:
+        return f"proxy returned HTTP {self.status_code}"
+
+
+def unreachable_reason(exc: httpx.TransportError, timeout: float | None) -> str:
+    """Short cause of a transport error, for :class:`LLMUnreachable`."""
+    if isinstance(exc, httpx.ConnectTimeout):
+        return "connection timed out"
+    if isinstance(exc, httpx.ConnectError):
+        return "connection refused" if "refused" in str(exc).lower() else "cannot connect"
+    if isinstance(exc, httpx.TimeoutException):
+        return f"no answer within {timeout:g} s" if timeout else "no answer in time"
+    return "network error"
 
 
 @dataclass
@@ -132,10 +171,12 @@ class LiteLLMClient:
             resp = self._http().post(
                 f"{self.base_url}/v1/chat/completions", json=payload, headers=self._headers()
             )
+        except httpx.TransportError as exc:
+            raise LLMUnreachable(f"LiteLLM request failed: {exc}", unreachable_reason(exc, self.timeout)) from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"LiteLLM request failed: {exc}") from exc
         if resp.status_code >= 400:
-            raise LLMError(f"LiteLLM returned {resp.status_code}: {resp.text[:300]}")
+            raise LLMStatusError(f"LiteLLM returned {resp.status_code}: {resp.text[:300]}", resp.status_code)
         try:
             data = resp.json()
         except ValueError as exc:
@@ -168,13 +209,17 @@ class FakeLLMClient:
 
     Either supply ``responses`` (consumed in order) or a ``handler`` callable that
     receives ``(system, user)`` and returns the dict to hand back. Every call is
-    recorded in ``calls``.
+    recorded in ``calls``. ``fail`` raises a plain :class:`LLMError` (a bad answer),
+    ``unreachable`` raises :class:`LLMUnreachable` (connection refused) and
+    ``http_status`` raises :class:`LLMStatusError` with that status.
     """
 
     responses: list[dict[str, Any]] = field(default_factory=list)
     handler: Callable[[str, str], dict[str, Any]] | None = None
     calls: list[dict[str, str]] = field(default_factory=list)
     fail: bool = False
+    unreachable: bool = False
+    http_status: int | None = None
 
     @property
     def available(self) -> bool:
@@ -182,6 +227,10 @@ class FakeLLMClient:
 
     def complete_json(self, *, system: str, user: str, max_tokens: int = 1024) -> dict[str, Any]:
         self.calls.append({"system": system, "user": user})
+        if self.unreachable:
+            raise LLMUnreachable("simulated unreachable proxy", "connection refused")
+        if self.http_status is not None:
+            raise LLMStatusError(f"simulated LiteLLM error {self.http_status}", self.http_status)
         if self.fail:
             raise LLMError("simulated LLM failure")
         if self.handler is not None:

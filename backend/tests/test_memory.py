@@ -11,7 +11,17 @@ from sqlalchemy.orm import Session
 from app.models import MerchantMemory
 from app.services import memory
 from app.services.embeddings import HashingEmbeddingClient
-from app.services.memory import MemoryHit, forget, list_memories, lookup, memory_key, remember
+from app.services.memory import (
+    MemoryHit,
+    forget,
+    list_memories,
+    lookup,
+    lookup_by_key,
+    memory_key,
+    merchant_key,
+    merchant_keys_conflict,
+    remember,
+)
 
 from .conftest import requires_db
 
@@ -48,6 +58,103 @@ def test_memory_key(raw: str, expected: str) -> None:
 
 def test_memory_key_tolerates_none() -> None:
     assert memory_key(None) == ""  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------------- #
+# merchant_key + lookup_by_key (exact match before the vector search)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("TESCO STORES 3021 LONDON", "TESCO STORES"),
+        ("TESCO STORES 4455 CROYDON", "TESCO STORES"),
+        ("WAITROSE 123 LONDON", "WAITROSE"),  # the store number ends the key
+        ("WAITROSE 456 CAMDEN", "WAITROSE"),
+        ("PRET A MANGER", "PRET A"),
+        ("PRET A MANGER 0012 VICTORIA", "PRET A"),
+        ("UBER *TRIP HELP.UBER.COM", "UBER TRIP"),
+        ("UBER *EATS HELP.UBER.COM", "UBER EATS"),
+        ("1234 TESCO STORES 3021", "TESCO STORES"),  # leading references are skipped
+        ("12AUG TESCO", "TESCO"),
+        ("AMZN MKTP UK*AB1CD2EF3", "AMZN MKTP"),
+        ("M&S SIMPLY FOOD", "M&S SIMPLY"),
+        ("  waitrose  ", "WAITROSE"),
+        ("1234 ***", ""),
+        ("", ""),
+    ],
+)
+def test_merchant_key(raw: str, expected: str) -> None:
+    assert merchant_key(raw) == expected
+
+
+def test_merchant_key_tolerates_none() -> None:
+    assert merchant_key(None) == ""  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "conflict"),
+    [
+        ("UBER *TRIP HELP.UBER.COM", "UBER EATS HELP UBER COM", True),
+        ("AMAZON PRIME 12", "AMAZON MKTP UK", True),
+        ("TESCO STORES 3021", "TESCO STORES CROYDON", False),  # same key
+        ("WAITROSE 123 LONDON", "WAITROSE LTD LONDON", False),  # one-word key: no second word to disagree
+        ("OCADO RETAIL", "WAITROSE LONDON", False),  # different brands altogether
+        ("", "UBER EATS", False),
+    ],
+)
+def test_merchant_keys_conflict(a: str, b: str, conflict: bool) -> None:
+    assert merchant_keys_conflict(a, b) is conflict
+
+
+@requires_db
+def test_lookup_by_key_matches_the_same_shop_under_another_store_number(
+    db: Session, embedder: HashingEmbeddingClient
+) -> None:
+    _remember(db, embedder, "TESCO STORES 3021 LONDON", normalized_merchant="Tesco")
+    hit = lookup_by_key(db, "TESCO STORES 4455 CROYDON")
+    assert hit == MemoryHit("TESCO STORES LONDON", "Tesco", "Groceries", "shared_proportional", 1.0, 1)
+
+    _remember(db, embedder, "WAITROSE 123 LONDON")
+    _remember(db, embedder, "PRET A MANGER", normalized_merchant="Pret", category="Dining")
+    assert lookup_by_key(db, "WAITROSE 456 CAMDEN").raw_pattern == "WAITROSE LONDON"
+    assert lookup_by_key(db, "PRET A MANGER 0012 VICTORIA").normalized_merchant == "Pret"
+    assert lookup_by_key(db, "WAITROSE").raw_pattern == "WAITROSE LONDON"  # the bare key matches too
+
+    # The vector search misses all three under the hash embedder (0.74 / 0.56 / 0.79 < 0.82).
+    for seen in ("TESCO STORES 4455 CROYDON", "WAITROSE 456 CAMDEN", "PRET A MANGER 0012 VICTORIA"):
+        assert lookup(db, embedder, seen, threshold=0.82) == []
+
+
+@requires_db
+def test_lookup_by_key_prefers_the_most_reviewed_row(db: Session, embedder: HashingEmbeddingClient) -> None:
+    _remember(db, embedder, "TESCO STORES 3021 LONDON", normalized_merchant="Tesco London")
+    _remember(db, embedder, "TESCO STORES 4455 CROYDON", normalized_merchant="Tesco Croydon")
+    _remember(db, embedder, "TESCO STORES 4455 CROYDON", normalized_merchant="Tesco Croydon")
+    hit = lookup_by_key(db, "TESCO STORES 9 ROMFORD")
+    assert (hit.normalized_merchant, hit.review_count, hit.similarity) == ("Tesco Croydon", 2, 1.0)
+
+
+@requires_db
+def test_lookup_by_key_misses_other_services_and_ambiguous_keys(
+    db: Session, embedder: HashingEmbeddingClient
+) -> None:
+    _remember(db, embedder, "UBER *EATS HELP.UBER.COM", normalized_merchant="Uber Eats", category="Dining")
+    assert lookup_by_key(db, "UBER *TRIP HELP.UBER.COM") is None
+    assert lookup_by_key(db, "UBERX") is None  # a prefix must end at a word boundary
+    assert lookup_by_key(db, "") is None and lookup_by_key(db, "1234 ***") is None
+
+    # A bank narrative prefix shared by unrelated purchases: the rows disagree, so no pre-fill.
+    _remember(db, embedder, "CARD PAYMENT TO WAITROSE")
+    _remember(db, embedder, "CARD PAYMENT TO NETFLIX", normalized_merchant="Netflix",
+              category="Subscriptions:Entertainment", claim_type="shared_equal")  # fmt: skip
+    assert lookup_by_key(db, "CARD PAYMENT TO TESCO") is None
+    # ...but rows that agree are trusted, whichever merchant spelling is the most reviewed.
+    _remember(db, embedder, "CARD PAYMENT TO OCADO", normalized_merchant="Ocado")
+    _remember(db, embedder, "CARD PAYMENT TO OCADO", normalized_merchant="Ocado")
+    forget(db, next(r.id for r in list_memories(db) if r.normalized_merchant == "Netflix"))
+    assert lookup_by_key(db, "CARD PAYMENT TO TESCO").normalized_merchant == "Ocado"
 
 
 # --------------------------------------------------------------------------- #

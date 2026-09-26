@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 import uuid
 from datetime import date, timedelta
 
@@ -14,12 +15,31 @@ from app.deps import get_effective_config
 from app.models import LedgerPeriod, PartnerClaim
 from app.schemas import ClaimCreate, ClaimOut
 from app.services import settlement
-from app.services.periods import PERIOD_KEY_RE, PeriodClosedError, ensure_open, period_key_for
+from app.services.periods import (
+    PERIOD_KEY_RE,
+    PeriodClosedError,
+    delete_if_unreferenced,
+    ensure_open,
+    period_key_for,
+)
 
 router = APIRouter(prefix="/claims", tags=["claims"])
 
 # Claims are for money already spent; allow a day of slack for time zones.
 FUTURE_TOLERANCE = timedelta(days=1)
+# ... and for money spent recently: a date more than a year back is a typo, not a claim.
+PAST_LIMIT_MONTHS = 12
+
+
+def earliest_claim_date(today: date) -> date:
+    """The oldest ``claim_date`` accepted on ``today``: :data:`PAST_LIMIT_MONTHS` back, same day.
+
+    The day is clamped to the length of the target month (31 March -> 28/29 February).
+    """
+    months = today.year * 12 + today.month - 1 - PAST_LIMIT_MONTHS
+    year, month = divmod(months, 12)
+    month += 1
+    return date(year, month, min(today.day, calendar.monthrange(year, month)[1]))
 
 
 @router.post("", response_model=ClaimOut, status_code=status.HTTP_201_CREATED)
@@ -35,8 +55,13 @@ def create_claim(
         paid_by = body.paid_by or config.secondary_user_id
     if paid_by not in config.user_ids:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "paid_by must be a configured user")
-    if body.claim_date > date.today() + FUTURE_TOLERANCE:
+    today = date.today()
+    if body.claim_date > today + FUTURE_TOLERANCE:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "claim_date cannot be in the future")
+    if body.claim_date < earliest_claim_date(today):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, f"claim_date is more than {PAST_LIMIT_MONTHS} months ago"
+        )
     period_key = period_key_for(body.claim_date)
     try:
         ensure_open(db, period_key)
@@ -98,5 +123,9 @@ def delete_claim(
     if period is not None and period.is_closed:
         raise HTTPException(status.HTTP_409_CONFLICT, f"period {claim.period_key} is closed; reopen it first")
     db.delete(claim)
+    db.flush()
+    # A claim typed with the wrong month created its period; do not leave the empty month behind.
+    if claim.period_key:
+        delete_if_unreferenced(db, claim.period_key)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

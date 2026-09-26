@@ -72,13 +72,18 @@ CREATE TABLE IF NOT EXISTS ledger_periods (
 CREATE TABLE IF NOT EXISTS statement_uploads (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     account_id VARCHAR(64) REFERENCES accounts(id),
-    period_key VARCHAR(7) REFERENCES ledger_periods(period_key),
+    period_key VARCHAR(7) REFERENCES ledger_periods(period_key), -- latest month touched
+    period_from VARCHAR(7), -- earliest month touched (YYYY-MM); NULL on older rows
+    period_to VARCHAR(7),   -- latest month touched (YYYY-MM); NULL on older rows
     filename VARCHAR(255) NOT NULL,
     sha256 VARCHAR(64) NOT NULL,
     parser VARCHAR(64),
     transaction_count INT DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+-- Upgrades for databases created before multi-month uploads recorded their span.
+ALTER TABLE statement_uploads ADD COLUMN IF NOT EXISTS period_from VARCHAR(7);
+ALTER TABLE statement_uploads ADD COLUMN IF NOT EXISTS period_to VARCHAR(7);
 
 -- Master Ledger Transactions -----------------------------------------------
 CREATE TABLE IF NOT EXISTS transactions (

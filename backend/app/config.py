@@ -300,6 +300,24 @@ class AppConfig(BaseModel):
     def is_primary(self, user_id: str) -> bool:
         return user_id == self.users.primary.id
 
+    # ----- taxonomy ---------------------------------------------------------
+    def canonical_category(self, value: str | None) -> str | None:
+        """The configured category spelt as in ``categories``, or ``None`` when unknown.
+
+        Matching ignores case and surrounding whitespace, so a client sending
+        ``"groceries"`` gets ``"Groceries"`` back. :data:`UNCATEGORIZED` is always
+        accepted, even for a configuration that does not list it.
+        """
+        wanted = (value or "").strip().lower()
+        if not wanted:
+            return None
+        if wanted == UNCATEGORIZED.lower():
+            return UNCATEGORIZED
+        for category in self.categories:
+            if category.lower() == wanted:
+                return category
+        return None
+
     def user(self, user_id: str) -> UserConfig:
         if user_id == self.users.primary.id:
             return self.users.primary

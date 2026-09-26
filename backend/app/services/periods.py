@@ -6,9 +6,13 @@ import calendar
 import re
 from datetime import UTC, date, datetime
 
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
-from app.models import LedgerPeriod
+from app.models import AuditReport, LedgerPeriod, PartnerClaim, SettlementSnapshot, StatementUpload, Transaction
+
+# Every table with a foreign key to ``ledger_periods`` (keep in step with schema.sql).
+_REFERENCING_MODELS = (Transaction, PartnerClaim, StatementUpload, AuditReport, SettlementSnapshot)
 
 PERIOD_KEY_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
@@ -71,3 +75,27 @@ def reopen_period(db: Session, period_key: str) -> LedgerPeriod:
     period.closed_at = None
     db.flush()
     return period
+
+
+def is_referenced(db: Session, period_key: str) -> bool:
+    """True when any transaction, claim, upload, audit report or snapshot files under ``period_key``."""
+    db.flush()
+    return any(
+        db.scalar(select(exists().where(model.period_key == period_key))) for model in _REFERENCING_MODELS
+    )
+
+
+def delete_if_unreferenced(db: Session, period_key: str) -> bool:
+    """Remove the ``ledger_periods`` row when it is open and nothing refers to it any more.
+
+    A period is created on the fly by the first claim or upload dated in it, so a
+    claim typed with the wrong month would otherwise leave an empty month behind in
+    every period list. A closed period is never removed (it records a settlement).
+    Returns ``True`` when the row was deleted.
+    """
+    period = db.get(LedgerPeriod, period_key)
+    if period is None or period.is_closed or is_referenced(db, period_key):
+        return False
+    db.delete(period)
+    db.flush()
+    return True

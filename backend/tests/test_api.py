@@ -8,13 +8,17 @@ against PostgreSQL.
 from __future__ import annotations
 
 import io
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
-from app.services import guesser
+from app.models import AuditReport, LedgerPeriod, SettlementSnapshot, StatementUpload
+from app.routers.claims import earliest_claim_date
+from app.services import guesser, periods
 from tests.conftest import requires_db
+from tests.factories import make_claim, make_transaction
 from tests.fixtures import generate
 
 pytestmark = pytest.mark.usefixtures("client")
@@ -100,6 +104,14 @@ def llm_stub(fake_llm):
 # --------------------------------------------------------------------------- #
 # Auth & roles
 # --------------------------------------------------------------------------- #
+
+
+@requires_db
+def test_health_needs_no_login_and_reveals_nothing_but_liveness(client):
+    """nginx proxies ``/api/``, so this answers on the web port: it must not name the providers."""
+    resp = client.get("/api/health")
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"status": "ok", "database": "ok"}
 
 
 @requires_db
@@ -300,6 +312,67 @@ def test_upload_validation(client, primary_headers, llm_stub, fixtures_dir):
     assert unknown.status_code == 422
 
 
+@requires_db
+def test_upload_reports_an_unreachable_ai_once_and_stops_calling_it(client, primary_headers, fake_llm, fixtures_dir):
+    fake_llm.unreachable = True  # the proxy refuses connections (or hangs until the timeout)
+    resp = upload(client, primary_headers, fixtures_dir["anon_csv"], account_id="acc_checking_hsbc")
+    assert resp.status_code == 200, resp.text
+    result = resp.json()
+    assert result["inserted"] == 2 and result["pending_review"] == 2
+    assert result["warnings"] == [
+        "AI unavailable (connection refused): 2 lines left uncategorised; "
+        "approve them in the queue or retry the upload later"
+    ]
+    assert len(fake_llm.calls) == 1  # the breaker tripped on line 1; line 2 never waited for the proxy
+    rows = list_txns(client, primary_headers, status="pending_review")
+    assert {(t["category"], t["classification_source"]) for t in rows} == {("Uncategorized", "none")}
+
+    # The proxy answering with an error status is reported the same way.
+    fake_llm.unreachable, fake_llm.http_status, fake_llm.calls = False, 503, []
+    resp = upload(client, primary_headers, fixtures_dir["checking_csv"], account_id="acc_checking_hsbc")
+    assert resp.status_code == 200, resp.text
+    outage = [w for w in resp.json()["warnings"] if w.startswith("AI unavailable")]
+    assert outage == [
+        "AI unavailable (proxy returned HTTP 503): 1 line left uncategorised; "
+        "approve it in the queue or retry the upload later"
+    ]  # only SALARY reaches the model; the other five lines are rules and transfers
+    assert len(fake_llm.calls) == 1
+
+
+@requires_db
+def test_upload_with_ai_switched_off_raises_no_warning(client, primary_headers, fixtures_dir):
+    from app.services.llm import NullLLMClient
+    from app.services.providers import get_llm
+
+    client.app.dependency_overrides[get_llm] = lambda: NullLLMClient()
+    resp = upload(client, primary_headers, fixtures_dir["anon_csv"], account_id="acc_checking_hsbc")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["warnings"] == []  # uncategorised by choice, not by outage
+    rows = list_txns(client, primary_headers, status="pending_review")
+    assert {t["classification_source"] for t in rows} == {"none"}
+
+
+@requires_db
+def test_upload_records_the_months_it_spans(client, primary_headers, llm_stub, fixtures_dir):
+    resp = upload(client, primary_headers, fixtures_dir["energy_history_csv"], account_id="acc_checking_hsbc")
+    assert resp.status_code == 200, resp.text
+    result = resp.json()
+    assert (result["period_from"], result["period_to"]) == ("2026-05", "2026-08")
+    assert result["period_key"] == "2026-08"  # unchanged: the newest month, for compatibility
+
+    uploads = client.get("/api/statements", headers=primary_headers).json()
+    assert len(uploads) == 1
+    assert (uploads[0]["period_from"], uploads[0]["period_to"], uploads[0]["period_key"]) == (
+        "2026-05",
+        "2026-08",
+        "2026-08",
+    )
+
+    # A single-month file has the same month at both ends.
+    single = upload(client, primary_headers, fixtures_dir["anon_csv"], account_id="acc_checking_hsbc").json()
+    assert (single["period_from"], single["period_to"]) == ("2026-08", "2026-08")
+
+
 # --------------------------------------------------------------------------- #
 # Review, corrections and the learning loop
 # --------------------------------------------------------------------------- #
@@ -406,6 +479,80 @@ def test_approve_corrections_and_memory_learning(
     assert client.get(f"/api/transactions/{netflix['id']}", headers=primary_headers).status_code == 404
 
 
+@requires_db
+def test_category_corrections_are_limited_to_the_taxonomy(client, primary_headers, llm_stub, fixtures_dir):
+    """A stray category would show up on every dashboard; the API holds the same line as the LLM path."""
+    assert upload(client, primary_headers, fixtures_dir["amex_pdf"]).status_code == 200
+    cineworld = find(list_txns(client, primary_headers), "CINEWORLD")
+    url = f"/api/transactions/{cineworld['id']}"
+
+    resp = client.patch(url, headers=primary_headers, json={"category": "Nonsense:Made Up"})
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "category 'Nonsense:Made Up' is not in the configured taxonomy"
+    assert client.get(url, headers=primary_headers).json()["category"] == "Entertainment"
+    # Approving with a correction goes through the same check.
+    resp = client.post(f"{url}/approve", headers=primary_headers, json={"category": "Household", "remember": False})
+    assert resp.status_code == 422 and "'Household'" in resp.json()["detail"]
+    assert client.get(url, headers=primary_headers).json()["review_status"] == "pending_review"
+
+    # Case does not matter; the configured spelling is stored. A subcategory is free text.
+    resp = client.patch(url, headers=primary_headers, json={"category": " dining ", "subcategory": "Pizza night"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["category"] == "Dining" and resp.json()["subcategory"] == "Pizza night"
+    resp = client.patch(url, headers=primary_headers, json={"category": "uncategorized"})
+    assert resp.status_code == 200 and resp.json()["category"] == "Uncategorized"
+    assert client.patch(url, headers=primary_headers, json={"category": "   "}).status_code == 422
+
+
+@requires_db
+def test_reflagging_an_investment_transfer_recreates_its_mirror(client, primary_headers, llm_stub, fixtures_dir):
+    """Un-flagging deletes the mirror leg; flagging again must write it back and re-link the pair."""
+    assert upload(client, primary_headers, fixtures_dir["hsbc_table_pdf"]).status_code == 200
+    rows = list_txns(client, primary_headers)
+    robinhood = find([t for t in rows if t["account_id"] == "acc_checking_hsbc"], "ROBINHOOD")
+    url = f"/api/transactions/{robinhood['id']}"
+    assert robinhood["is_internal_transfer"] is True and robinhood["linked_transfer_id"] is not None
+
+    resp = client.patch(url, headers=primary_headers, json={"is_internal_transfer": False})
+    assert resp.status_code == 200 and resp.json()["linked_transfer_id"] is None
+    assert [t for t in list_txns(client, primary_headers) if t["account_id"] == "acc_invest_robinhood"] == []
+    assert Decimal(client.get("/api/metrics/investment", headers=primary_headers).json()["net_invested_capital"]) == 0
+
+    resp = client.patch(url, headers=primary_headers, json={"is_internal_transfer": True})
+    assert resp.status_code == 200, resp.text
+    reflagged = resp.json()
+    assert reflagged["is_internal_transfer"] is True and reflagged["claim_type"] == "personal"
+    mirrors = [t for t in list_txns(client, primary_headers) if t["account_id"] == "acc_invest_robinhood"]
+    assert len(mirrors) == 1
+    mirror = mirrors[0]
+    assert Decimal(mirror["amount"]) == Decimal("500.00")
+    assert mirror["is_internal_transfer"] is True and mirror["classification_source"] == "transfer"
+    assert mirror["linked_transfer_id"] == robinhood["id"]
+    assert reflagged["linked_transfer_id"] == mirror["id"]
+    # The pair is matched: only the card payment (whose statement was not uploaded) still waits.
+    unmatched = client.get("/api/transfers/unmatched", headers=primary_headers).json()
+    assert [e["account_id"] for e in unmatched] == ["acc_checking_hsbc"]
+    assert all(e["transaction_id"] not in (robinhood["id"], mirror["id"]) for e in unmatched)
+    inv = client.get("/api/metrics/investment", headers=primary_headers).json()
+    assert Decimal(inv["total_deposits"]) == Decimal("500.00")
+    assert Decimal(inv["net_invested_capital"]) == Decimal("500.00")
+
+    # Doing it twice more is stable: still exactly one mirror, still linked.
+    for flag in (False, True):
+        assert client.patch(url, headers=primary_headers, json={"is_internal_transfer": flag}).status_code == 200
+    mirrors = [t for t in list_txns(client, primary_headers) if t["account_id"] == "acc_invest_robinhood"]
+    assert len(mirrors) == 1 and mirrors[0]["linked_transfer_id"] == robinhood["id"]
+    assert Decimal(client.get("/api/metrics/investment", headers=primary_headers).json()["net_invested_capital"]) == 500
+
+    # A transfer without a configured target gets no mirror when flagged.
+    energy = find(rows, "NORTHWIND")
+    flagged = client.patch(
+        f"/api/transactions/{energy['id']}", headers=primary_headers, json={"is_internal_transfer": True}
+    )
+    assert flagged.status_code == 200, flagged.text
+    assert len([t for t in list_txns(client, primary_headers) if t["account_id"] == "acc_invest_robinhood"]) == 1
+
+
 # --------------------------------------------------------------------------- #
 # Claims & settlement
 # --------------------------------------------------------------------------- #
@@ -481,6 +628,129 @@ def test_claims_and_settlement(client, primary_headers, secondary_headers, llm_s
     assert client.delete(f"/api/claims/{claim['id']}", headers=secondary_headers).status_code == 403
     assert client.delete(f"/api/claims/{claim['id']}", headers=primary_headers).status_code == 204
     assert client.get("/api/settlement/2026-08", headers=primary_headers).json()["unsettled_claim_count"] == 0
+    # The month still holds the uploaded transactions, so its period stays.
+    assert "2026-08" in {p["period_key"] for p in client.get("/api/periods", headers=primary_headers).json()}
+
+
+def _claim(client, headers, claim_date: str, **overrides):
+    body = {"claim_date": claim_date, "amount": "10.00", "merchant": "Corner Shop", "claim_type": "shared_equal"}
+    return client.post("/api/claims", headers=headers, json={**body, **overrides})
+
+
+def _period_keys(client, headers) -> set[str]:
+    return {p["period_key"] for p in client.get("/api/periods", headers=headers).json()}
+
+
+def test_earliest_claim_date_clamps_to_the_target_month():
+    assert earliest_claim_date(date(2026, 9, 26)) == date(2025, 9, 26)
+    assert earliest_claim_date(date(2028, 2, 29)) == date(2027, 2, 28)
+    assert earliest_claim_date(date(2027, 1, 31)) == date(2026, 1, 31)
+
+
+@requires_db
+def test_claims_dated_more_than_a_year_ago_are_refused(client, primary_headers, secondary_headers):
+    today = date.today()
+    resp = _claim(client, secondary_headers, (today - timedelta(days=400)).isoformat())
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "claim_date is more than 12 months ago"
+    # Nothing was written: no claim, no period for that month.
+    assert client.get("/api/claims", headers=primary_headers).json() == []
+    assert _period_keys(client, primary_headers) == set()
+
+    # Exactly a year ago is still accepted; the future check is unchanged.
+    accepted = _claim(client, secondary_headers, earliest_claim_date(today).isoformat())
+    assert accepted.status_code == 201, accepted.text
+    assert _claim(client, secondary_headers, (today + timedelta(days=2)).isoformat()).status_code == 422
+
+
+@requires_db
+def test_deleting_the_only_claim_in_a_month_removes_the_empty_period(client, primary_headers, secondary_headers):
+    """A claim typed with the wrong month creates its period; deleting the typo must take the month with it."""
+    assert _period_keys(client, primary_headers) == set()
+    first = _claim(client, secondary_headers, "2026-06-15").json()
+    second = _claim(client, secondary_headers, "2026-06-20").json()
+    assert first["period_key"] == second["period_key"] == "2026-06"
+    assert _period_keys(client, primary_headers) == {"2026-06"}
+
+    # Another claim still files under the month: the period stays.
+    assert client.delete(f"/api/claims/{first['id']}", headers=secondary_headers).status_code == 204
+    assert _period_keys(client, primary_headers) == {"2026-06"}
+    # The last one goes: so does the empty month.
+    assert client.delete(f"/api/claims/{second['id']}", headers=secondary_headers).status_code == 204
+    assert _period_keys(client, primary_headers) == set()
+    assert client.get("/api/claims", headers=primary_headers).json() == []
+
+
+@requires_db
+def test_deleting_a_claim_keeps_a_period_that_is_still_referenced(client, primary_headers, llm_stub, fixtures_dir):
+    # An audit report and a settlement snapshot (written on close) reference the period even
+    # when it holds no transactions; a closed period is never touched anyway, so reopen it first.
+    claim = _claim(client, primary_headers, "2026-06-15").json()
+    assert client.post("/api/audit/2026-06/run", headers=primary_headers).status_code == 200
+    assert client.post("/api/periods/2026-06/close", headers=primary_headers).status_code == 200
+    assert client.post("/api/periods/2026-06/reopen", headers=primary_headers).status_code == 200
+    assert client.delete(f"/api/claims/{claim['id']}", headers=primary_headers).status_code == 204
+    assert "2026-06" in _period_keys(client, primary_headers)
+
+    # A month with uploaded transactions keeps its period too.
+    assert (
+        upload(client, primary_headers, fixtures_dir["energy_history_csv"], account_id="acc_checking_hsbc").status_code
+        == 200
+    )
+    claim = _claim(client, primary_headers, "2026-05-10").json()
+    assert client.delete(f"/api/claims/{claim['id']}", headers=primary_headers).status_code == 204
+    assert "2026-05" in _period_keys(client, primary_headers)
+
+
+@requires_db
+def test_period_cleanup_checks_every_table_that_files_under_a_period(seeded_db, config):
+    """Each foreign key to ``ledger_periods`` in schema.sql keeps the period alive on its own."""
+    key = "2026-03"
+
+    def fresh_period() -> None:
+        periods.get_or_create_period(seeded_db, key)
+        seeded_db.flush()
+
+    fresh_period()
+    assert periods.delete_if_unreferenced(seeded_db, key) is True
+    assert seeded_db.get(LedgerPeriod, key) is None
+
+    fresh_period()
+    txn = make_transaction(seeded_db, config, transaction_date=date(2026, 3, 5))
+    assert periods.delete_if_unreferenced(seeded_db, key) is False
+    seeded_db.delete(txn)
+
+    claim = make_claim(seeded_db, config, claim_date=date(2026, 3, 6))
+    assert periods.delete_if_unreferenced(seeded_db, key) is False
+    seeded_db.delete(claim)
+
+    upload_row = StatementUpload(period_key=key, filename="march.csv", sha256="0" * 64, parser="csv")
+    seeded_db.add(upload_row)
+    assert periods.delete_if_unreferenced(seeded_db, key) is False
+    seeded_db.delete(upload_row)
+
+    report = AuditReport(period_key=key, summary_sentence="Nothing to report.")
+    seeded_db.add(report)
+    assert periods.delete_if_unreferenced(seeded_db, key) is False
+    seeded_db.delete(report)
+
+    snapshot = SettlementSnapshot(
+        period_key=key,
+        net_owed_by_secondary=0,
+        secondary_share_of_primary_paid_shared=0,
+        primary_share_of_secondary_paid_shared=0,
+        secondary_personal_on_primary_paid=0,
+        primary_personal_on_secondary_paid=0,
+    )
+    seeded_db.add(snapshot)
+    assert periods.delete_if_unreferenced(seeded_db, key) is False
+    seeded_db.delete(snapshot)
+
+    # A closed period is a settlement record: never removed, however empty.
+    periods.close_period(seeded_db, key)
+    assert periods.delete_if_unreferenced(seeded_db, key) is False
+    periods.reopen_period(seeded_db, key)
+    assert periods.delete_if_unreferenced(seeded_db, key) is True
 
 
 # --------------------------------------------------------------------------- #
@@ -514,8 +784,11 @@ def test_metrics_audit_and_period_close(client, primary_headers, llm_stub, fixtu
     assert [t["period_key"] for t in trends] == ["2026-05", "2026-06", "2026-07", "2026-08"]
     assert Decimal(trends[0]["household_burn"]) == Decimal("68.20")
 
-    # Audit flags the Northwind jump (68.20 x3 -> 87.27).
-    assert client.get("/api/audit/2026-08", headers=primary_headers).status_code == 404
+    # Audit flags the Northwind jump (68.20 x3 -> 87.27). "Never run" is the normal
+    # state, not an error: the dashboard asks on every load and gets null back.
+    not_yet = client.get("/api/audit/2026-08", headers=primary_headers)
+    assert not_yet.status_code == 200 and not_yet.json() is None
+    assert client.get("/api/audit/2026-8", headers=primary_headers).status_code == 422
     report = client.post("/api/audit/2026-08/run", headers=primary_headers).json()
     assert report["summary_sentence"] == "Stub audit summary."
     assert any("northwind" in a["merchant"].lower() for a in report["anomalies"])

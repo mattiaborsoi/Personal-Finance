@@ -21,9 +21,8 @@ from app.schemas import (
     TransactionOut,
     TransactionUpdate,
 )
-from app.services import memory, settlement, splits, transfers
+from app.services import ingestion, memory, rules, settlement, splits, transfers
 from app.services.embeddings import EmbeddingClient
-from app.services.ingestion import is_mirror
 from app.services.periods import PERIOD_KEY_RE
 from app.services.providers import get_embedder
 
@@ -81,7 +80,7 @@ def _unlink(db: Session, txn: Transaction) -> None:
         if other is not None and other.linked_transfer_id == txn.id:
             other.linked_transfer_id = None
             db.flush()
-            if is_mirror(other):
+            if ingestion.is_mirror(other):
                 _delete_buffer_entries(db, other)
                 db.delete(other)
             else:
@@ -113,10 +112,29 @@ def _split_guard(txn: Transaction, data: dict) -> None:
         raise HTTPException(status.HTTP_409_CONFLICT, "rename the merchant on the parent transaction")
 
 
+def _flag_as_transfer(db: Session, txn: Transaction, config: AppConfig) -> None:
+    """Register ``txn`` in the buffer and, for a configured transfer target, restore its mirror.
+
+    Un-flagging deletes the mirror leg of an investment transfer (see :func:`_unlink`),
+    so flagging the line again must write it back or the transfer stays unmatched and
+    the investment position loses the deposit. The rule that names the target is
+    looked up afresh from the description, exactly as ingestion did.
+    """
+    entry = transfers.register_transfer(db, txn)
+    if txn.claim_type != "personal":
+        txn.claim_type = "personal"
+    rule = rules.match_rule(txn.raw_description, config)
+    if rule is not None and rule.transfer_to_account:
+        ingestion.create_mirror(db, config, txn, rule.transfer_to_account, txn.source_file or "", entry)
+    transfers.match_pending(db, config)
+
+
 def apply_update(db: Session, txn: Transaction, update: TransactionUpdate, config: AppConfig) -> Transaction:
     """Apply user corrections and recompute allocations (no status change).
 
     ``null`` clears ``subcategory``; for every other field ``null`` means "leave as is".
+    A ``category`` must be one of ``config.categories`` (matched ignoring case and
+    stored in its configured spelling) or ``Uncategorized``; ``subcategory`` is free text.
     """
     data = update.model_dump(exclude_unset=True)
     _split_guard(txn, data)
@@ -124,7 +142,12 @@ def apply_update(db: Session, txn: Transaction, update: TransactionUpdate, confi
         cat = data["category"].strip()
         if not cat:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "category must not be empty")
-        txn.category = cat[:128]
+        canonical = config.canonical_category(cat)
+        if canonical is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, f"category {cat!r} is not in the configured taxonomy"
+            )
+        txn.category = canonical
     if "subcategory" in data:
         txn.subcategory = (data["subcategory"] or "").strip()[:128] or None
     if data.get("cleaned_merchant") is not None:
@@ -140,10 +163,7 @@ def apply_update(db: Session, txn: Transaction, update: TransactionUpdate, confi
     if data.get("is_internal_transfer") is not None:
         wanted = bool(data["is_internal_transfer"])
         if wanted and not txn.is_internal_transfer:
-            transfers.register_transfer(db, txn)
-            if txn.claim_type != "personal":
-                txn.claim_type = "personal"
-            transfers.match_pending(db, config)
+            _flag_as_transfer(db, txn, config)
         elif not wanted and txn.is_internal_transfer:
             _unlink(db, txn)
             txn.is_internal_transfer = False

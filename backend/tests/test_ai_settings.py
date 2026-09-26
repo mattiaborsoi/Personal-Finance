@@ -202,6 +202,22 @@ def test_providers_follow_the_ai_settings(config):
     assert isinstance(providers.get_llm(settings, effective, disabled), NullLLMClient)
 
 
+def test_each_job_waits_only_as_long_as_its_answer_is_worth(config):
+    settings = _settings()  # LLM_TIMEOUT_SECONDS at its 90 s default
+    providers.reset_caches()
+    ai = ai_settings.defaults(settings, config)
+    effective = ai_settings.apply(config, ai)
+    assert providers.get_llm(settings, effective, ai).timeout == 20.0  # one call per unseen merchant
+    assert providers.get_audit_llm(settings, effective, ai).timeout == 60.0
+    assert providers.get_extraction_llm(settings, effective, ai).timeout == 90.0
+    assert providers.get_llm(settings, effective, ai) is providers.get_llm(settings, effective, ai)
+
+    # The environment ceiling caps every job, so a lower value still shortens all three.
+    capped = _settings(llm_timeout_seconds=15)
+    assert providers.get_llm(capped, effective, ai).timeout == 15.0
+    assert providers.get_extraction_llm(capped, effective, ai).timeout == 15.0
+
+
 # --------------------------------------------------------------------------- #
 # Persistence and the API
 # --------------------------------------------------------------------------- #

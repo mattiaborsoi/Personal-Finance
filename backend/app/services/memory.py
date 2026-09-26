@@ -1,6 +1,10 @@
 """pgvector merchant memory store (few-shot retrieval for Agent 2).
 
-Lookup uses cosine distance::
+Two lookups exist. :func:`lookup_by_key` is an exact match on the coarse
+:func:`merchant_key` (the first two words before any store number), which is how a
+shop seen once under one store number is recognised under another; the offline
+hashing embedder rarely gets such pairs over the similarity threshold. Only when
+that finds nothing does the vector :func:`lookup` run. It uses cosine distance::
 
     SELECT normalized_merchant, category, default_claim_type,
            1 - (embedding <=> :query_embedding) AS similarity
@@ -24,7 +28,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.config import CLAIM_TYPES
@@ -56,6 +60,85 @@ def memory_key(raw_description: str) -> str:
     """
     raw = raw_description or ""
     return normalise_merchant_text(raw) or raw.strip().upper()
+
+
+MERCHANT_KEY_WORDS = 2
+
+
+def merchant_key(raw_description: str) -> str:
+    """Coarse merchant identity: the first two words printed before any store number.
+
+    Leading tokens carrying digits (references, dates) are skipped; the first token
+    with a digit *after* the name starts ends it, so the store number and whatever
+    follows (branch, town) never enter the key. Each kept token goes through
+    :func:`normalise_merchant_text`, so ``'UBER *TRIP HELP.UBER.COM'`` gives
+    ``'UBER TRIP'``, ``'TESCO STORES 3021 LONDON'`` ``'TESCO STORES'``,
+    ``'WAITROSE 123 LONDON'`` ``'WAITROSE'`` and ``'PRET A MANGER 0012'`` ``'PRET A'``.
+    A description with no alphabetic token yields ``''``.
+    """
+    words: list[str] = []
+    for token in (raw_description or "").upper().split():
+        if any(ch.isdigit() for ch in token):
+            if words:
+                break
+            continue
+        for word in normalise_merchant_text(token).split():
+            if any("A" <= ch <= "Z" for ch in word):
+                words.append(word)
+            if len(words) == MERCHANT_KEY_WORDS:
+                return " ".join(words)
+    return " ".join(words)
+
+
+def merchant_keys_conflict(raw_a: str, raw_b: str) -> bool:
+    """True when the two descriptions are the same brand's different services.
+
+    Both keys have two words, the first word is shared and the second differs:
+    ``'UBER TRIP'`` against ``'UBER EATS'``, ``'AMAZON PRIME'`` against
+    ``'AMAZON MKTP'``. Their embeddings sit close together because of the shared
+    brand and boilerplate, so a vector hit between them is not to be trusted.
+    """
+    words_a, words_b = merchant_key(raw_a).split(), merchant_key(raw_b).split()
+    if len(words_a) != MERCHANT_KEY_WORDS or len(words_b) != MERCHANT_KEY_WORDS:
+        return False
+    return words_a[0] == words_b[0] and words_a[1] != words_b[1]
+
+
+def lookup_by_key(db: Session, raw_description: str) -> MemoryHit | None:
+    """Exact match on :func:`merchant_key` before any vector search.
+
+    Returns the most reviewed row whose ``raw_pattern`` is the key or starts with the
+    key followed by a space (``raw_pattern`` is the normalised description, so
+    ``'TESCO STORES LONDON'`` matches the key ``'TESCO STORES'``), as a
+    :class:`MemoryHit` with similarity 1.0. When the matching rows disagree on the
+    category or claim type the key is too coarse to trust (``'CARD PAYMENT'`` in a
+    bank narrative would otherwise pre-fill every card purchase alike) and ``None``
+    is returned so the caller falls through to the vector search.
+    """
+    key = merchant_key(raw_description)
+    if not key:
+        return None
+    same_key = or_(
+        MerchantMemory.raw_pattern == key,
+        MerchantMemory.raw_pattern.startswith(key + " ", autoescape=True),
+    )
+    stmt = (
+        select(MerchantMemory)
+        .where(same_key)
+        .order_by(MerchantMemory.review_count.desc(), MerchantMemory.last_updated.desc(), MerchantMemory.raw_pattern)
+    )
+    rows = list(db.scalars(stmt))
+    if not rows or len({(r.category, r.default_claim_type) for r in rows}) > 1:
+        return None
+    best = rows[0]
+    return MemoryHit(
+        raw_pattern=best.raw_pattern,
+        normalized_merchant=best.normalized_merchant,
+        category=best.category,
+        default_claim_type=best.default_claim_type,
+        similarity=1.0,
+        review_count=best.review_count or 0,
+    )
 
 
 def lookup(

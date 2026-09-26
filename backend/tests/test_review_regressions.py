@@ -98,12 +98,15 @@ def test_removing_the_checking_leg_removes_its_mirror(client, primary_headers, l
     assert all(e["transaction_id"] != robinhood["id"] for e in unmatched)
     assert Decimal(client.get("/api/metrics/investment", headers=primary_headers).json()["net_invested_capital"]) == 0
 
-    # Re-flagging registers it again without a mirror (rules do not re-run); deleting is clean.
+    # Re-flagging looks the rule up again and writes the mirror back; deleting the checking
+    # leg then takes the mirror with it and leaves nothing of either in the buffer.
     client.patch(f"/api/transactions/{robinhood['id']}", headers=primary_headers, json={"is_internal_transfer": True})
+    mirrors = [t for t in list_txns(client, primary_headers) if t["account_id"] == "acc_invest_robinhood"]
+    assert len(mirrors) == 1 and mirrors[0]["linked_transfer_id"] == robinhood["id"]
     assert client.delete(f"/api/transactions/{robinhood['id']}", headers=primary_headers).status_code == 204
-    assert seeded_db.scalars(TransferBuffer.__table__.select()).all() == [] or all(
-        e.transaction_id != robinhood["id"] for e in seeded_db.query(TransferBuffer).all()
-    )
+    assert [t for t in list_txns(client, primary_headers) if t["account_id"] == "acc_invest_robinhood"] == []
+    gone = {robinhood["id"], mirrors[0]["id"]}
+    assert all(str(e.transaction_id) not in gone for e in seeded_db.query(TransferBuffer).all())
 
 
 @requires_db

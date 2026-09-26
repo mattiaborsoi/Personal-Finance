@@ -5,17 +5,26 @@ Order of precedence for classifying a raw description:
 1. Deterministic config rule (``rules.match_rule``) -> source ``rule``, auto-approved.
 2. Credit-card payment pattern (``config.transfers.is_payment``) -> source
    ``transfer``: ``Transfers:Internal``, ``is_internal_transfer=True``, auto-approved.
-3. Vector memory hit with similarity at or above ``llm.similarity_threshold`` ->
+3. Exact merchant-key memory hit (``memory.lookup_by_key``: the same shop under
+   another store number) -> source ``memory``, confidence 1.0.
+4. Vector memory hit with similarity at or above ``llm.similarity_threshold`` ->
    source ``memory`` (no LLM call); the best hit's merchant, category and claim
-   type are used and the similarity becomes the confidence.
-4. LLM call through LiteLLM with a minimal payload: the merchant string, the
+   type are used and the similarity becomes the confidence. A hit on the same
+   brand's other service (``memory.merchant_keys_conflict``) is not used directly.
+5. LLM call through LiteLLM with a minimal payload: the merchant string, the
    optional signed amount, the account context, the allowed category and claim
    type lists and the top-k nearest memories as few-shot examples -> source
    ``llm``. The response is validated field by field (see :func:`classify`).
-5. If the LLM is unavailable or fails -> ``Uncategorized`` with the account's
+6. If the LLM is unavailable or fails -> ``Uncategorized`` with the account's
    default claim type, source ``none``.
 
 Everything but (1) and (2) is inserted as ``pending_review``.
+
+Within one upload the caller passes an :class:`UploadState`: answers are memoised
+per (normalised description, account) so duplicate lines cost one lookup or LLM
+call, and a proxy that is unreachable or answering with errors trips a circuit
+breaker so the rest of the file skips the LLM instead of waiting out the timeout
+line after line. A single unusable answer is a per-line problem and never trips it.
 
 The account's ``default_claim_type`` is presented to the model as part of the
 account context and is the fallback whenever the model returns an unknown claim
@@ -28,7 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from sqlalchemy.orm import Session
@@ -36,7 +45,7 @@ from sqlalchemy.orm import Session
 from app.config import CLAIM_TYPES, UNCATEGORIZED, AccountConfig, AppConfig
 from app.services import memory, rules
 from app.services.embeddings import EmbeddingClient
-from app.services.llm import LLMClient, LLMError
+from app.services.llm import LLMClient, LLMError, LLMStatusError, LLMUnreachable
 
 log = logging.getLogger(__name__)
 
@@ -69,6 +78,46 @@ class Classification:
     review_status: str = "pending_review"
 
 
+MemoKey = tuple[str, str]  # (memory.memory_key(raw_description), account id)
+
+
+@dataclass(slots=True)
+class UploadState:
+    """Scratch state shared by every :func:`classify` call of one upload.
+
+    * ``memo`` caches the answer per (normalised description, account) so identical
+      lines come back with the same classification and confidence at the cost of one
+      lookup / LLM call. Nothing the answer depends on changes mid-upload.
+    * ``llm_outage`` is the circuit breaker: set to a short reason the first time the
+      proxy is unreachable (:class:`LLMUnreachable`) or answers with an HTTP error
+      status (:class:`LLMStatusError`), after which the rest of the file skips the
+      LLM and goes straight to the ``Uncategorized`` fallback.
+    * ``outage_lines`` counts the lines left uncategorised because of the outage
+      (including memo hits on them); ``bad_answers`` counts lines whose answer was
+      unusable, a per-line problem that never trips the breaker.
+    """
+
+    memo: dict[MemoKey, Classification] = field(default_factory=dict)
+    llm_outage: str | None = None
+    outage_lines: int = 0
+    bad_answers: int = 0
+    outage_keys: set[MemoKey] = field(default_factory=set)
+
+    def remember(self, key: MemoKey, cls: Classification, *, outage: bool = False) -> Classification:
+        self.memo[key] = replace(cls)  # a private copy: callers may mutate what they get back
+        if outage:
+            self.outage_keys.add(key)
+        return cls
+
+    def recall(self, key: MemoKey) -> Classification | None:
+        cached = self.memo.get(key)
+        if cached is None:
+            return None
+        if key in self.outage_keys:
+            self.outage_lines += 1
+        return replace(cached)
+
+
 def classify(
     db: Session,
     config: AppConfig,
@@ -77,13 +126,20 @@ def classify(
     raw_description: str,
     account: AccountConfig,
     amount=None,
+    *,
+    state: UploadState | None = None,
 ) -> Classification:
     """Classify one raw statement line for ``account``.
 
     ``amount`` (optional, ledger sign: negative = money out) is only shown to the
-    model as context. Memory is queried once with ``threshold=0`` and
-    ``k=llm.top_k``: if the best hit reaches ``llm.similarity_threshold`` it is
-    used directly, otherwise the hits become the few-shot examples for the LLM.
+    model as context. After rules and payment patterns the merchant key is tried
+    (:func:`memory.lookup_by_key`); failing that, vector memory is queried once
+    with ``threshold=0`` and ``k=llm.top_k``: if the best hit reaches
+    ``llm.similarity_threshold`` it is used directly, otherwise the hits become the
+    few-shot examples for the LLM.
+
+    ``state`` (one :class:`UploadState` per upload) memoises answers and carries the
+    LLM circuit breaker; without it every call stands alone, as before.
 
     LLM response validation:
 
@@ -97,57 +153,109 @@ def classify(
     :class:`LLMUnavailable`) degrades to source ``none``.
     """
     raw = raw_description or ""
+    if state is None:
+        return _classify(db, config, embedder, llm, raw, account, amount, None)
+    key: MemoKey = (memory.memory_key(raw), account.id)
+    cached = state.recall(key)
+    if cached is not None:
+        return cached
+    return _classify(db, config, embedder, llm, raw, account, amount, (state, key))
+
+
+def _classify(
+    db: Session,
+    config: AppConfig,
+    embedder: EmbeddingClient,
+    llm: LLMClient,
+    raw: str,
+    account: AccountConfig,
+    amount,
+    memo: tuple[UploadState, MemoKey] | None,
+) -> Classification:
+    def keep(cls: Classification, *, outage: bool = False) -> Classification:
+        if memo is None:
+            return cls
+        state, key = memo
+        return state.remember(key, cls, outage=outage)
 
     match = rules.match_rule(raw, config)
     if match is not None:
-        return Classification(
-            cleaned_merchant=match.merchant,
-            category=match.category,
-            claim_type=match.claim_type,
-            source="rule",
-            confidence=1.0,
-            subcategory=match.subcategory,
-            is_internal_transfer=match.is_internal_transfer,
-            transfer_to_account=match.transfer_to_account,
-            review_status="auto_approved",
+        return keep(
+            Classification(
+                cleaned_merchant=match.merchant,
+                category=match.category,
+                claim_type=match.claim_type,
+                source="rule",
+                confidence=1.0,
+                subcategory=match.subcategory,
+                is_internal_transfer=match.is_internal_transfer,
+                transfer_to_account=match.transfer_to_account,
+                review_status="auto_approved",
+            )
         )
 
     if config.transfers.is_payment(raw):
-        return Classification(
-            cleaned_merchant=rules.clean_merchant_name(raw),
-            category=INTERNAL_TRANSFER_CATEGORY,
-            claim_type="personal",
-            source="transfer",
-            confidence=1.0,
-            is_internal_transfer=True,
-            review_status="auto_approved",
+        return keep(
+            Classification(
+                cleaned_merchant=rules.clean_merchant_name(raw),
+                category=INTERNAL_TRANSFER_CATEGORY,
+                claim_type="personal",
+                source="transfer",
+                confidence=1.0,
+                is_internal_transfer=True,
+                review_status="auto_approved",
+            )
         )
 
-    hits = memory.lookup(db, embedder, raw, threshold=0.0, k=config.llm.top_k)
-    if hits and hits[0].similarity >= config.llm.similarity_threshold:
+    best = memory.lookup_by_key(db, raw)
+    hits = [] if best is not None else memory.lookup(db, embedder, raw, threshold=0.0, k=config.llm.top_k)
+    if (
+        best is None
+        and hits
+        and hits[0].similarity >= config.llm.similarity_threshold
+        # The same brand's other service (UBER TRIP vs UBER EATS) embeds close but is
+        # not the same merchant: keep it as a few-shot hint, do not pre-fill from it.
+        and not memory.merchant_keys_conflict(raw, hits[0].raw_pattern)
+    ):
         best = hits[0]
-        return Classification(
-            cleaned_merchant=best.normalized_merchant,
-            category=best.category,
-            claim_type=best.default_claim_type,
-            source="memory",
-            confidence=best.similarity,
-            review_status="pending_review",
+    if best is not None:
+        return keep(
+            Classification(
+                cleaned_merchant=best.normalized_merchant,
+                category=best.category,
+                claim_type=best.default_claim_type,
+                source="memory",
+                confidence=best.similarity,
+                review_status="pending_review",
+            )
         )
 
     if llm.available:
+        state = memo[0] if memo is not None else None
+        if state is not None and state.llm_outage is not None:
+            state.outage_lines += 1
+            return keep(_unclassified(raw, account), outage=True)
         examples = [h for h in hits if getattr(h, "similarity", 1.0) >= EXAMPLE_MIN_SIMILARITY]
         system, user = build_prompt(raw, account, config, examples, amount)
         try:
             payload = llm.complete_json(system=system, user=user, max_tokens=LLM_MAX_TOKENS)
             if not isinstance(payload, dict):
                 raise LLMError(f"model returned {type(payload).__name__}, expected a JSON object")
+        except (LLMUnreachable, LLMStatusError) as exc:
+            # This will recur for every line of the file: trip the breaker.
+            log.warning("guesser: LLM %s; skipping the LLM for the rest of this upload (%s)", exc.reason, exc)
+            if state is not None:
+                state.llm_outage = exc.reason
+                state.outage_lines += 1
+                return keep(_unclassified(raw, account), outage=True)
         except LLMError as exc:
             log.warning("guesser: LLM classification failed for %r: %s", raw, exc)
+            if state is not None:
+                state.bad_answers += 1
         else:
-            return _from_llm_payload(payload, raw, account, config)
+            return keep(_from_llm_payload(payload, raw, account, config))
 
-    return _unclassified(raw, account)
+    return keep(_unclassified(raw, account))
 
 
 def build_prompt(

@@ -309,7 +309,20 @@ parse (Agent 1) → per-line account resolution → fingerprint / dedupe
   a 422 listing the candidates.
 * **Periods:** a transaction is filed under the calendar month of its own date. New
   lines that would land in a closed period are refused (409); already-known lines are
-  skipped, so a statement overlapping a closed month still goes through.
+  skipped, so a statement overlapping a closed month still goes through. The upload
+  record keeps the span of months the file touched (`period_from` / `period_to`,
+  counting skipped lines too); `period_key` stays the newest month for compatibility.
+* **AI outage:** one `guesser.UploadState` is shared by the file's `classify` calls.
+  It memoises answers per (normalised description, account), so duplicate lines cost
+  one lookup or LLM call, and it carries a circuit breaker: the first time the proxy
+  is unreachable (connection refused, timeout) or answers with an HTTP error status,
+  the rest of the file skips the LLM and lands `Uncategorized` instead of waiting out
+  the timeout line after line. The result then carries a warning such as
+  `AI unavailable (connection refused): 3 lines left uncategorised; approve them in
+  the queue or retry the upload later` (an unusable model answer is a per-line
+  problem: it never trips the breaker and is reported separately). AI switched off
+  raises no warning. Classification is still synchronous; classifying in the
+  background is a possible follow-up.
 * **Limits:** `.pdf`, `.csv`, `.xlsx`, `.xls`; 25 MB; PDFs of more than 60 pages are
   refused before parsing.
 
@@ -339,21 +352,35 @@ Precedence for each raw description:
    `auto_approved`; may carry `is_internal_transfer` / `transfer_to_account`.
 2. **Card-payment pattern** (`transfers.payment_patterns`) → `Transfers:Internal`,
    `is_internal_transfer`, `source=transfer`, `auto_approved`.
-3. **Merchant memory** (`app/services/memory.py`, pgvector): the description is
+3. **Merchant-key memory match** (`memory.lookup_by_key`): the *merchant key* is the
+   first two words printed before any store number (`TESCO STORES 3021 LONDON` →
+   `TESCO STORES`, `WAITROSE 123 LONDON` → `WAITROSE`, `UBER *TRIP HELP.UBER.COM` →
+   `UBER TRIP`). A memory row whose normalised pattern is the key or starts with it is
+   used directly → `source=memory`, confidence 1.0, `pending_review`, most reviewed
+   row first. This is how the same shop is recognised under another store number: the
+   offline hash embedder scores such pairs at 0.56–0.79, under the threshold. Rows that
+   disagree on category or claim type (a shared bank prefix such as `CARD PAYMENT`)
+   are not trusted and the vector search runs instead.
+4. **Merchant memory** (`app/services/memory.py`, pgvector): the description is
    normalised (upper-case, digits and punctuation stripped), embedded, and the top-k
    (`llm.top_k`, default 3) nearest rows are fetched by cosine distance using the HNSW
    index. If the best hit's similarity is **at or above `llm.similarity_threshold`
    (0.82)** its merchant, category and claim type are used → `source=memory`,
-   confidence = similarity, `pending_review`.
-4. **One LLM call** with a minimal payload: the quoted description, the signed amount,
+   confidence = similarity, `pending_review`. A hit on the same brand's other service
+   (`UBER TRIP` against `UBER EATS`, which embed at 0.85) is demoted to a few-shot
+   example rather than pre-filled.
+5. **One LLM call** with a minimal payload: the quoted description, the signed amount,
    the account context (institution, type, owner role, default claim type), the allowed
    categories and claim types, and the memory hits with **similarity ≥ 0.5** as
    few-shot examples (weaker hits are noise and an injection surface). The JSON answer
    is validated field by field: an unknown category becomes `Uncategorized` and halves
    the confidence, an unknown claim type falls back to the account default, a blank
    merchant falls back to the heuristic cleaner → `source=llm`, `pending_review`.
-5. **No answer** (no LLM, or the call failed) → `Uncategorized`, the account's default
-   claim type, `source=none`, `pending_review`.
+   The classification client waits **20 s** per call (PDF extraction 90 s, the audit
+   60 s; `LLM_TIMEOUT_SECONDS` caps all three), and within one upload the circuit
+   breaker described in section 3 stops calling a dead proxy after the first failure.
+6. **No answer** (no LLM, the call failed, or the breaker is open) → `Uncategorized`,
+   the account's default claim type, `source=none`, `pending_review`.
 
 **Learning loop.** Approving a transaction (`POST /approve`, `approve-batch`, with
 `remember=true`, the default) and correcting an already-approved one (`PATCH`) upsert
@@ -503,7 +530,8 @@ positive costs and are included whether or not they are settled.
 
 * **Macro / household burn:** `primary_accounts_burn` = Σ |debits| across all accounts
   (gross, refunds not netted) + `partner_claims_burn` = Σ claim amounts. `by_category`
-  nets refunds per category (a category can go negative).
+  is the same gross figure per category plus a `Partner claims` row, so it adds up to
+  the headline; `refunds` = Σ credits in spend categories, shown but never deducted.
 * **Micro / true net expense:** Σ `−allocated_primary_amount` (refunds and credits
   reduce it) + Σ `partner_claims.primary_owes`; claims appear under the
   pseudo-category `Partner claims`.
@@ -532,12 +560,19 @@ transactions.
    `baseline_stddev` for context, not used as a second trigger. Each anomaly points at
    the merchant's largest current-period transaction.
 2. **Category comparison.** Per-category spend against the average of the prior
-   periods (missing periods count as zero).
+   periods that carry any approved spend (`baseline_periods`): a month before the
+   first statement is not a month of zero spend, so a fresh install's first audits
+   are not inflated. A category absent from a month that has data still counts as
+   zero for that month. With no prior data the baseline is 0 and `change_pct` null.
 3. **Narrative.** The LLM receives **aggregates only**: category totals, baseline
-   averages, percentage changes and the anomaly list, never line items, and must
-   answer `{"summary_sentence": ...}` in at most 60 words. If no LLM is configured, the
-   call fails or the answer is off-contract, a deterministic sentence is built from
-   the same numbers, so an audit always succeeds.
+   averages, percentage changes, `baseline_periods` and the anomaly list, never line
+   items, together with the configured currency (in the payload and in the prompt),
+   and must answer `{"summary_sentence": ...}` in at most 60 words. If no LLM is
+   configured, the call fails, the answer is off-contract or it quotes another
+   currency (`$212.00` on a GBP ledger), a deterministic sentence is built from the
+   same numbers, so an audit always succeeds. That sentence names the months it
+   compares against ("up 1.5% on the average of the previous 2 months with data")
+   when fewer than the look-back carried spend.
 
 Reports are appended to `audit_reports`; closing a period runs one automatically and
 `POST /api/audit/{key}/run` re-runs it at any time, including on a closed period.
@@ -569,9 +604,10 @@ Reports are appended to `audit_reports`; closing a period runs one automatically
   validated against the configured taxonomy. The Auditor never sees line items.
 * **Network.** Only the frontend's port 80 is published to the network; `db`,
   `litellm` and `backend` are bound to `127.0.0.1` on the host. Provider keys reach
-  the LiteLLM container only. The OpenAPI docs and `/api/health` are unauthenticated
-  but reachable only from the host. Everything is plain HTTP: keep it on the LAN or
-  behind TLS.
+  the LiteLLM container only. The OpenAPI docs are unauthenticated but reachable only
+  from the host; `/api/health` is reachable without login through the web port (nginx
+  proxies `/api/`) and reports only whether the app and its database are up. Everything
+  is plain HTTP: keep it on the LAN or behind TLS.
 * **Browser.** nginx sends `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
   `Referrer-Policy: no-referrer` and a strict CSP (`default-src 'self'`; no external
   scripts, fonts or images; `frame-ancestors 'none'`). The SPA loads nothing from
@@ -623,8 +659,9 @@ compile, and `salary_proportional` needs a positive combined income.
 
 The backend also reads (set by `docker-compose.yml`, or defaults for local
 development): `DATABASE_URL`, `LITELLM_URL`, `LITELLM_API_KEY`, `CONFIG_PATH`,
-`UPLOAD_DIR`, `SESSION_TTL_SECONDS`, `LLM_TIMEOUT_SECONDS`, `EMBEDDING_DIMENSIONS`
-(must be 1536) and `CORS_ORIGINS`.
+`UPLOAD_DIR`, `SESSION_TTL_SECONDS`, `LLM_TIMEOUT_SECONDS` (default 90: the PDF
+extraction timeout and the ceiling for the 20 s classification and 60 s audit
+timeouts), `EMBEDDING_DIMENSIONS` (must be 1536) and `CORS_ORIGINS`.
 
 ## 12. Database schema (`backend/app/schema.sql`)
 
@@ -632,7 +669,7 @@ development): `DATABASE_URL`, `LITELLM_URL`, `LITELLM_API_KEY`, `CONFIG_PATH`,
 |-------------------------|---------------------------------------------------------------------------------------------|
 | `accounts`              | the accounts (seeded once from `config.yaml`, then edited in the app): `label`, `default_claim_type`, `billed_to`, `is_active` (archived keeps history), `sort_order` |
 | `ledger_periods`        | one row per `YYYY-MM`, `is_closed`, `closed_at`                                             |
-| `statement_uploads`     | file provenance and sha256 for duplicate detection                                          |
+| `statement_uploads`     | file provenance and sha256 for duplicate detection; `period_from` / `period_to` (the months the file spans, NULL on older rows) beside the legacy `period_key` |
 | `transactions`          | the master ledger: amounts, category, `claim_type`, generated `is_claimable`, the two allocations, `review_status`, transfer flag and link, `classification_source` / `_confidence`, `fingerprint`, and the split columns `is_split`, `split_parent_id`, `split_index` |
 | `merchant_memory`       | `raw_pattern` (normalised key, unique), merchant, category, claim type, `vector(1536)` embedding with an HNSW cosine index, `review_count` |
 | `partner_claims`        | claims logged at `/claim`: positive `amount`, `paid_by`, `primary_owes` / `secondary_owes`, `is_settled` |
@@ -654,9 +691,10 @@ The file is re-run on every start; new columns are added with
   share is the exact remainder, so allocations always sum to the amount and no penny is
   lost. The blueprint rounds both sides independently.
 * **Periods are calendar months** keyed by each transaction's own date, so a card
-  statement closing on the 28th spills its late-July lines into July. The newest month
-  a file touched is kept on the upload record for provenance. This keeps the Auditor's
-  rolling windows and the settlement month intuitive for both users.
+  statement closing on the 28th spills its late-July lines into July. The span of
+  months a file touched is kept on the upload record for provenance (`period_from` /
+  `period_to`; `period_key` still names the newest). This keeps the Auditor's rolling
+  windows and the settlement month intuitive for both users.
 * **Closed periods are locked:** edits, approvals, splits and deletions in a closed
   period return 409 (reopen first); the transfer buffer keeps matching across closes
   as the blueprint requires. The settlement figure at close is stored in
@@ -664,8 +702,9 @@ The file is re-run on every start; new columns are added with
   figure.
 * **Expense views exclude income:** Macro and Micro leave out `Income:*` categories as
   well as transfers, so a salary credit cannot shrink "household burn" or "true net
-  expense"; refunds still net off within their spend category. The Macro headline is
-  gross debits; its category breakdown nets refunds.
+  expense"; refunds still net off in the Micro view. The Macro headline is gross
+  debits and so is its category breakdown (plus a `Partner claims` row), so the rows
+  reconcile with the headline; refunds are reported separately as `refunds`.
 * **Memory threshold is "at or above" 0.82**, the learning loop runs on approve *and*
   on corrections to already-approved transactions, transfers and `Uncategorized`
   answers are never remembered, and few-shot examples below 0.5 similarity are not
@@ -673,6 +712,8 @@ The file is re-run on every start; new columns are added with
 * **Auditor:** the flag uses the rolling median as specified; the standard deviation of
   the prior periods is reported alongside (`baseline_stddev`) rather than used as a
   second trigger. Recurring means seen in at least two of the prior three periods.
+  The category baseline averages only the prior periods with data, and the narrative
+  states the currency and rejects an LLM answer in any other.
 * **Transfer buffer** has an extra `ignored` state for entries that will never match.
   Unmatched transfers are already excluded from spend (they are transfers whether or
   not the other statement has arrived).

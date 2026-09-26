@@ -94,6 +94,10 @@ class StatementUpload(Base):
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     account_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("accounts.id"))
     period_key: Mapped[str | None] = mapped_column(String(7), ForeignKey("ledger_periods.period_key"))
+    # Earliest and latest month the file's lines fall in (YYYY-MM); ``period_key`` keeps
+    # the latest for compatibility. NULL on rows written before the span was recorded.
+    period_from: Mapped[str | None] = mapped_column(String(7))
+    period_to: Mapped[str | None] = mapped_column(String(7))
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     parser: Mapped[str | None] = mapped_column(String(64))

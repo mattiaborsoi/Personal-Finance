@@ -36,11 +36,11 @@ def _parts(*specs: tuple[str, str, str]) -> list[SplitPartIn]:
 
 def _shared_and_personal() -> list[SplitPartIn]:
     """£6 groceries shared by income plus £4 of a personal item."""
-    return _parts(("-6.00", "Groceries", "shared_proportional"), ("-4.00", "Household", "personal"))
+    return _parts(("-6.00", "Groceries", "shared_proportional"), ("-4.00", "Shopping:Home", "personal"))
 
 
 def _two_personal() -> list[SplitPartIn]:
-    return _parts(("-6.00", "A", "personal"), ("-4.00", "B", "personal"))
+    return _parts(("-6.00", "Dining", "personal"), ("-4.00", "Coffee", "personal"))
 
 
 def _waitrose(db, config, **kw) -> Transaction:
@@ -69,7 +69,7 @@ class TestValidation:
     def test_two_parts_that_sum_are_accepted_and_quantised(self, seeded_db, config):
         txn = _waitrose(seeded_db, config)
         parts = splits.validate_parts(
-            txn, _parts(("-6.004", "Groceries", "shared_proportional"), ("-3.996", "Household", "personal")), config
+            txn, _parts(("-6.004", "Groceries", "shared_proportional"), ("-3.996", "Shopping:Home", "personal")), config
         )
         assert [p.amount for p in parts] == [D("-6.00"), D("-4.00")]
 
@@ -77,10 +77,10 @@ class TestValidation:
         ("specs", "message"),
         [
             ([("-10.00", "Groceries", "personal")], "between 2 and 20 parts"),
-            ([("-6.00", "Groceries", "personal"), ("0.00", "Household", "personal")], "zero amount"),
-            ([("-6.00", "Groceries", "personal"), ("4.00", "Household", "personal")], "same sign"),
-            ([("-6.00", "Groceries", "personal"), ("-3.00", "Household", "personal")], "parts sum to -9.00"),
-            ([("-11.00", "Groceries", "personal"), ("-1.00", "Household", "personal")], "larger than the transaction"),
+            ([("-6.00", "Groceries", "personal"), ("0.00", "Shopping:Home", "personal")], "zero amount"),
+            ([("-6.00", "Groceries", "personal"), ("4.00", "Shopping:Home", "personal")], "same sign"),
+            ([("-6.00", "Groceries", "personal"), ("-3.00", "Shopping:Home", "personal")], "parts sum to -9.00"),
+            ([("-11.00", "Groceries", "personal"), ("-1.00", "Dining", "personal")], "larger than the transaction"),
         ],
     )
     def test_invalid_parts_are_refused(self, seeded_db, config, specs, message):
@@ -95,10 +95,24 @@ class TestValidation:
                 txn,
                 [
                     SplitPartIn(amount=D("-6"), category="   ", claim_type="personal"),
-                    SplitPartIn(amount=D("-4"), category="Household", claim_type="personal"),
+                    SplitPartIn(amount=D("-4"), category="Shopping:Home", claim_type="personal"),
                 ],
                 config,
             )
+
+    def test_category_outside_the_taxonomy_is_refused(self, seeded_db, config):
+        txn = _waitrose(seeded_db, config)
+        with pytest.raises(splits.SplitError, match="part 2 category 'Household' is not in the configured taxonomy"):
+            splits.validate_parts(
+                txn, _parts(("-6.00", "Groceries", "shared_proportional"), ("-4.00", "Household", "personal")), config
+            )
+
+    def test_category_is_matched_ignoring_case_and_stored_canonically(self, seeded_db, config):
+        txn = _waitrose(seeded_db, config)
+        parts = splits.validate_parts(
+            txn, _parts(("-6.00", " groceries ", "shared_proportional"), ("-4.00", "UNCATEGORIZED", "personal")), config
+        )
+        assert [p.category for p in parts] == ["Groceries", "Uncategorized"]
 
     def test_transfers_and_parts_cannot_be_split(self, seeded_db, config):
         transfer = _waitrose(seeded_db, config, is_internal_transfer=True, review_status="auto_approved")
@@ -107,7 +121,7 @@ class TestValidation:
         parent = make_transaction(seeded_db, config, amount="-10.00", raw_description="TESCO")
         splits.split_transaction(seeded_db, parent, _two_personal(), config)
         with pytest.raises(splits.SplitRefused, match="already part of a split"):
-            halves = _parts(("-3.00", "A", "personal"), ("-3.00", "B", "personal"))
+            halves = _parts(("-3.00", "Dining", "personal"), ("-3.00", "Coffee", "personal"))
             splits.split_transaction(seeded_db, parent.parts[0], halves, config)
 
 
@@ -142,7 +156,9 @@ class TestSplitService:
         txn = _waitrose(seeded_db, config)
         splits.split_transaction(seeded_db, txn, _two_personal(), config)
         old_ids = {p.id for p in txn.parts}
-        thirds = _parts(("-2.00", "A", "personal"), ("-3.00", "B", "personal"), ("-5.00", "C", "personal"))
+        thirds = _parts(
+            ("-2.00", "Dining", "personal"), ("-3.00", "Coffee", "personal"), ("-5.00", "Entertainment", "personal")
+        )
         splits.split_transaction(seeded_db, txn, thirds, config)
         assert len(txn.parts) == 3
         remaining = set(seeded_db.scalars(select(Transaction.id).where(Transaction.split_parent_id == txn.id)))
@@ -187,11 +203,11 @@ class TestAggregations:
         out = metrics.period_metrics(seeded_db, config, PERIOD)
         assert out.macro.primary_accounts_burn == D("10.00")
         macro = {(c.category, c.amount) for c in out.macro.by_category}
-        assert macro == {("Groceries", D("6.00")), ("Household", D("4.00"))}
+        assert macro == {("Groceries", D("6.00")), ("Shopping:Home", D("4.00"))}
         primary_groceries = -q2(D("-6.00") * config.primary_ratio)
         assert {(c.category, c.amount) for c in out.micro.by_category} == {
             ("Groceries", primary_groceries),
-            ("Household", D("4.00")),
+            ("Shopping:Home", D("4.00")),
         }
         assert out.micro.true_net_expense == primary_groceries + D("4.00")
         # One cash movement of £10, not £20.
@@ -202,7 +218,7 @@ class TestAggregations:
         txn = _waitrose(seeded_db, config, review_status="manual_approved")
         splits.split_transaction(seeded_db, txn, _shared_and_personal(), config)
         rows = {r.category: r.current for r in auditor.category_comparison(seeded_db, config, PERIOD)}
-        assert rows == {"Groceries": D("6.00"), "Household": D("4.00")}
+        assert rows == {"Groceries": D("6.00"), "Shopping:Home": D("4.00")}
 
 
 # --------------------------------------------------------------------------- #
@@ -212,7 +228,7 @@ class TestAggregations:
 SPLIT_BODY = {
     "parts": [
         {"amount": "-6.00", "category": "Groceries", "claim_type": "shared_proportional"},
-        {"amount": "-4.00", "category": "Household", "subcategory": "Cleaning", "claim_type": "personal"},
+        {"amount": "-4.00", "category": "Shopping:Home", "subcategory": "Cleaning", "claim_type": "personal"},
     ]
 }
 
@@ -238,7 +254,7 @@ class TestSplitApi:
         assert body["amount"] == "-10.00"
         assert [(p["amount"], p["category"], p["claim_type"], p["split_index"]) for p in body["parts"]] == [
             ("-6.00", "Groceries", "shared_proportional", 0),
-            ("-4.00", "Household", "personal", 1),
+            ("-4.00", "Shopping:Home", "personal", 1),
         ]
         assert body["parts"][1]["subcategory"] == "Cleaning"
         part_ids = [p["id"] for p in body["parts"]]
@@ -249,7 +265,7 @@ class TestSplitApi:
         assert listed["items"][0]["id"] == str(txn.id)
         assert [p["id"] for p in listed["items"][0]["parts"]] == part_ids
         # A category filter reaches into the parts.
-        by_part_params = {"period": PERIOD, "category": "Household"}
+        by_part_params = {"period": PERIOD, "category": "Shopping:Home"}
         by_part = client.get("/api/transactions", params=by_part_params, headers=primary_headers).json()
         assert [i["id"] for i in by_part["items"]] == [str(txn.id)]
         # The queue is empty: a split is an approval.
@@ -281,7 +297,7 @@ class TestSplitApi:
         wrong_sum = {
             "parts": [
                 {"amount": "-6.00", "category": "Groceries", "claim_type": "personal"},
-                {"amount": "-3.50", "category": "Household", "claim_type": "personal"},
+                {"amount": "-3.50", "category": "Shopping:Home", "claim_type": "personal"},
             ]
         }
         resp = _put_split(client, primary_headers, txn.id, wrong_sum)
@@ -289,10 +305,20 @@ class TestSplitApi:
         bad_claim = {
             "parts": [
                 {"amount": "-6.00", "category": "Groceries", "claim_type": "personal"},
-                {"amount": "-4.00", "category": "Household", "claim_type": "split_three_ways"},
+                {"amount": "-4.00", "category": "Shopping:Home", "claim_type": "split_three_ways"},
             ]
         }
         assert _put_split(client, primary_headers, txn.id, bad_claim).status_code == 422
+        made_up = {
+            "parts": [
+                {"amount": "-6.00", "category": "Groceries", "claim_type": "personal"},
+                {"amount": "-4.00", "category": "Nonsense:Made Up", "claim_type": "personal"},
+            ]
+        }
+        resp = _put_split(client, primary_headers, txn.id, made_up)
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == "part 2 category 'Nonsense:Made Up' is not in the configured taxonomy"
+        assert client.get(f"/api/transactions/{txn.id}", headers=primary_headers).json()["is_split"] is False
 
         assert _put_split(client, primary_headers, transfer.id).status_code == 409
 
