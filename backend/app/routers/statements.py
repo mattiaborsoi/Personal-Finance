@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.auth import require_primary
 from app.config import AppConfig, Settings
 from app.database import get_db
-from app.deps import get_config, get_settings
+from app.deps import get_effective_config, get_settings
 from app.models import StatementUpload
 from app.schemas import StatementUploadOut, UploadResult
 from app.services.embeddings import EmbeddingClient
@@ -38,7 +38,7 @@ def upload_statement(
     file: UploadFile = File(...),
     account_id: str | None = Form(default=None),
     db: Session = Depends(get_db),
-    config: AppConfig = Depends(get_config),
+    config: AppConfig = Depends(get_effective_config),
     settings: Settings = Depends(get_settings),
     embedder: EmbeddingClient = Depends(get_embedder),
     llm: LLMClient = Depends(get_llm),

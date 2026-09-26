@@ -1,7 +1,7 @@
 """Statement metadata detection (institution, account last-4, period, closing date).
 
 Works on the document text for PDFs and on the file name for CSV/XLSX uploads
-(``hsbc_8589_aug.csv``). Institutions are recognised from the configured accounts
+(``hsbc_4471_aug.csv``). Institutions are recognised from the configured accounts
 plus a list of common UK banks; the account last-4 must be one of the configured
 identifiers and is preferred when it sits next to words such as ``ending``,
 ``Account`` or ``Card``.

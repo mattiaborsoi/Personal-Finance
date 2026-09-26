@@ -37,6 +37,10 @@ export const chip =
 export const chipSoft =
   'inline-flex max-w-full items-center gap-1 truncate rounded-md bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium leading-4 text-ink-2';
 
+/** Inside `<Modal>`: the scrolling middle of a dialog form, and its pinned footer of buttons. */
+export const dialogBody = 'min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6';
+export const dialogFooter = 'flex flex-wrap items-center justify-end gap-2 border-t border-hairline px-5 py-4 sm:px-6';
+
 export const tableBase = 'min-w-full divide-y divide-hairline text-sm';
 /** Inside `<Card flush>`: first/last cells pick up the card's horizontal padding so columns align with the header. */
 export const tableFlush =

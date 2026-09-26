@@ -5,6 +5,7 @@ import {
   HandCoins,
   LayoutDashboard,
   Receipt,
+  Settings,
   Upload,
   type LucideIcon,
 } from 'lucide-react';
@@ -27,6 +28,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/claims', label: 'Claims', roles: ['primary'], icon: HandCoins },
   { to: '/claim', label: 'Log a claim', roles: ['primary', 'secondary'], icon: CirclePlus },
   { to: '/memory', label: 'Merchant memory', roles: ['primary'], icon: Brain },
+  { to: '/settings', label: 'Settings', roles: ['primary'], icon: Settings },
 ];
 
 interface Props {

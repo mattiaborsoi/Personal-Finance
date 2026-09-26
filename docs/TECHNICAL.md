@@ -46,7 +46,11 @@ The backend never sees provider API keys: it talks to LiteLLM with
 Startup (`app/main.py` lifespan): load `config.yaml` (fail fast with a `ConfigError`),
 run the security guard on the secrets, check `EMBEDDING_DIMENSIONS` matches the
 `vector(1536)` column, execute `schema.sql` (every statement idempotent, so it doubles
-as the migration mechanism) and upsert the configured accounts into `accounts`.
+as the migration mechanism) and, only when the `accounts` table is empty, seed it from
+the accounts in `config.yaml`. From then on the table is the source of truth: accounts
+are added, edited, archived and deleted under Settings → Accounts, and every request
+overlays the rows on the file configuration (`app/deps.py: get_effective_config`), so
+users, rules and categories still come from the file while accounts come from the app.
 
 ## 2. Deployment
 
@@ -83,7 +87,9 @@ reference is in section 11. Working through `config.example.yaml` from the top:
   never shown to the secondary login: `GET /api/config` strips them.
 * **`settlement`**: `salary_proportional` or `equal_50_50`, the rounding, and the day
   of the following month by which you settle (`settlement_day_of_month`).
-* **`accounts`**: one entry per account or card. `institution` and `identifier_last4`
+* **`accounts`**: one entry per account or card, imported the first time Settl starts
+  and managed in the app afterwards (Settings → Accounts; edits to this section are
+  not applied again). `institution` and `identifier_last4`
   are how uploaded statements are mapped to accounts, so use exactly what the
   statement prints; `owner` is the person who spends on it; the optional `label` is
   the friendlier name shown in the app. The example set is a typical spread for a
@@ -149,8 +155,8 @@ in section 11.
 docker compose up -d --build
 ```
 
-builds and starts the four containers; on first start the backend creates the schema
-and syncs the configured accounts (section 1). Open <http://localhost> (or the
+builds and starts the containers; on first start the backend creates the schema
+and seeds the accounts from `config.yaml` (section 1). Open <http://localhost> (or the
 machine's LAN address) and log in with `PRIMARY_PASSWORD`. Your partner opens
 <http://localhost/claim> on their phone and logs in with `SECONDARY_PASSWORD`; that
 login can log claims and read the settlement, and nothing else. To check everything
@@ -170,6 +176,28 @@ alone. Do not switch the embedding provider once the memory has rows in it: the 
 vector spaces are not compatible, so clear the memory first.
 
 ### Updating
+
+From the app: **Settings → System** shows the commit that is running and the latest
+one on GitHub, and **Update now** pulls the branch and rebuilds the app containers.
+That button is served by the optional `updater` sidecar in `docker-compose.yml`, a
+small container holding `git`, the Docker CLI and the Compose plugin, with the
+host's Docker socket and the repository directory mounted (at the same path as on
+the host, so Compose's relative bind mounts keep resolving). The backend talks to it
+over the Compose network only, authenticated with a token derived from
+`SECRET_KEY` (`sha256("settl-updater:" + SECRET_KEY)`); nothing else can trigger a
+rebuild, and the sidecar publishes no port. An update is
+`git pull --ff-only origin <branch>` followed by
+`docker compose up -d --build --remove-orphans backend frontend`; the updater never
+recreates itself, so a change to the sidecar needs one manual
+`docker compose up -d --build updater`. Mounting the Docker socket is root-equivalent
+on the host: if you would rather not, delete the `updater` service and the System
+tab shows the manual commands instead.
+
+The version check is one unauthenticated request to `api.github.com` (cached for
+ten minutes, never more than once per page load) for `UPDATE_REPO` / `UPDATE_BRANCH`;
+set `UPDATE_CHECK=false` in `.env` to never contact GitHub.
+
+By hand:
 
 ```bash
 git pull && docker compose up -d --build
@@ -554,7 +582,7 @@ development): `DATABASE_URL`, `LITELLM_URL`, `LITELLM_API_KEY`, `CONFIG_PATH`,
 
 | object                  | purpose                                                                                     |
 |-------------------------|---------------------------------------------------------------------------------------------|
-| `accounts`              | registry synced from `config.yaml` at start (removed accounts are kept, not offered)        |
+| `accounts`              | the accounts (seeded once from `config.yaml`, then edited in the app): `label`, `default_claim_type`, `billed_to`, `is_active` (archived keeps history), `sort_order` |
 | `ledger_periods`        | one row per `YYYY-MM`, `is_closed`, `closed_at`                                             |
 | `statement_uploads`     | file provenance and sha256 for duplicate detection                                          |
 | `transactions`          | the master ledger: amounts, category, `claim_type`, generated `is_claimable`, the two allocations, `review_status`, transfer flag and link, `classification_source` / `_confidence`, `fingerprint`, and the split columns `is_split`, `split_parent_id`, `split_index` |

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.auth import require_primary
 from app.config import CLAIM_TYPES, UNCATEGORIZED, AppConfig
 from app.database import get_db
-from app.deps import get_config
+from app.deps import get_effective_config
 from app.models import LedgerPeriod, Transaction, TransferBuffer
 from app.schemas import (
     ApproveRequest,
@@ -244,7 +244,7 @@ def update_transaction(
     txn_id: uuid.UUID,
     body: TransactionUpdate,
     db: Session = Depends(get_db),
-    config: AppConfig = Depends(get_config),
+    config: AppConfig = Depends(get_effective_config),
     embedder: EmbeddingClient = Depends(get_embedder),
 ) -> Transaction:
     txn = _get_or_404(db, txn_id)
@@ -262,7 +262,7 @@ def update_transaction(
 def approve_batch(
     body: BatchApproveRequest,
     db: Session = Depends(get_db),
-    config: AppConfig = Depends(get_config),
+    config: AppConfig = Depends(get_effective_config),
     embedder: EmbeddingClient = Depends(get_embedder),
 ) -> BatchApproveOut:
     rows = db.scalars(select(Transaction).where(Transaction.id.in_(body.ids))).all()
@@ -285,7 +285,7 @@ def approve_transaction(
     txn_id: uuid.UUID,
     body: ApproveRequest | None = None,
     db: Session = Depends(get_db),
-    config: AppConfig = Depends(get_config),
+    config: AppConfig = Depends(get_effective_config),
     embedder: EmbeddingClient = Depends(get_embedder),
 ) -> Transaction:
     body = body or ApproveRequest()
@@ -315,7 +315,7 @@ def split_transaction(
     txn_id: uuid.UUID,
     body: SplitRequest,
     db: Session = Depends(get_db),
-    config: AppConfig = Depends(get_config),
+    config: AppConfig = Depends(get_effective_config),
 ) -> Transaction:
     """Split a transaction into parts with their own category and claim type.
 

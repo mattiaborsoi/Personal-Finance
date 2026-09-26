@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.auth import require_any_role, require_primary
+from app.auth import require_any_role
 from app.config import AppConfig, Settings
 from app.database import get_db
-from app.deps import get_config, get_settings
-from app.models import Account
-from app.schemas import AccountOut, HealthOut
+from app.deps import get_effective_config, get_settings
+from app.schemas import HealthOut
 
 router = APIRouter(tags=["reference"])
 
@@ -30,10 +29,5 @@ def health(db: Session = Depends(get_db), settings: Settings = Depends(get_setti
 
 
 @router.get("/config", dependencies=[Depends(require_any_role)])
-def public_config(config: AppConfig = Depends(get_config)) -> dict:
+def public_config(config: AppConfig = Depends(get_effective_config)) -> dict:
     return config.public_dict()
-
-
-@router.get("/accounts", response_model=list[AccountOut], dependencies=[Depends(require_primary)])
-def list_accounts(db: Session = Depends(get_db)) -> list[Account]:
-    return list(db.scalars(select(Account).order_by(Account.id)).all())

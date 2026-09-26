@@ -10,6 +10,7 @@ import { TransfersPage } from './pages/TransfersPage';
 import { ClaimsPage } from './pages/ClaimsPage';
 import { ClaimPage } from './pages/ClaimPage';
 import { MemoryPage } from './pages/MemoryPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
 function AuthenticatedShell() {
@@ -34,6 +35,7 @@ export function App() {
             <Route path="/transfers" element={<TransfersPage />} />
             <Route path="/claims" element={<ClaimsPage />} />
             <Route path="/memory" element={<MemoryPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
           </Route>
           <Route path="*" element={<NotFoundPage />} />
         </Route>

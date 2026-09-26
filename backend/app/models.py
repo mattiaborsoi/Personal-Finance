@@ -48,10 +48,20 @@ class Account(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     institution: Mapped[str] = mapped_column(String(64), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(128))
     account_type: Mapped[str] = mapped_column(account_type_enum, nullable=False)
     owner_user_id: Mapped[str] = mapped_column(String(64), nullable=False)
     identifier_last4: Mapped[str] = mapped_column(String(8), nullable=False)
+    default_claim_type: Mapped[str] = mapped_column(
+        claim_type_enum, nullable=False, default="personal", server_default="personal"
+    )
+    billed_to: Mapped[str | None] = mapped_column(String(64))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     transactions: Mapped[list[Transaction]] = relationship(back_populates="account")
 

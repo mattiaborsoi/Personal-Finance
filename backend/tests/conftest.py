@@ -139,14 +139,19 @@ def seeded_db(db: Session, config: AppConfig) -> Session:
     transaction) so that a router's ``rollback()`` after a failed request cannot
     discard the accounts along with the request's own writes.
     """
-    for acc in config.accounts:
+    for position, acc in enumerate(config.accounts):
         db.add(
             Account(
                 id=acc.id,
+                sort_order=position,
                 institution=acc.institution,
+                label=acc.label,
                 account_type=acc.account_type,
                 owner_user_id=acc.owner,
                 identifier_last4=acc.identifier_last4,
+                default_claim_type=acc.default_claim_type,
+                billed_to=acc.billed_to,
+                is_active=acc.is_active,
             )
         )
     db.commit()

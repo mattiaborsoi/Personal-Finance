@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from app.auth import Role, authenticate_password, create_token, get_current_role
 from app.config import AppConfig, Settings
-from app.deps import get_config, get_settings
+from app.deps import get_effective_config, get_settings
 from app.schemas import LoginRequest, LoginResponse, SessionInfo
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -89,7 +89,7 @@ def login(
     request: Request,
     response: Response,
     settings: Settings = Depends(get_settings),
-    config: AppConfig = Depends(get_config),
+    config: AppConfig = Depends(get_effective_config),
 ) -> LoginResponse:
     ip = _client_ip(request)
     now = time.monotonic()
@@ -111,5 +111,5 @@ def login(
 
 
 @router.get("/me", response_model=SessionInfo)
-def me(role: Role = Depends(get_current_role), config: AppConfig = Depends(get_config)) -> SessionInfo:
+def me(role: Role = Depends(get_current_role), config: AppConfig = Depends(get_effective_config)) -> SessionInfo:
     return _session_info(role, config)

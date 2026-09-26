@@ -61,6 +61,11 @@ services:
       - SECONDARY_PASSWORD=${SECONDARY_PASSWORD:?set SECONDARY_PASSWORD in .env}
       - LLM_PROVIDER=${LLM_PROVIDER:-litellm}
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-litellm}
+      # Settings -> System: compare the running code with GitHub and talk to the updater.
+      - UPDATER_URL=http://updater:9000
+      - UPDATE_CHECK=${UPDATE_CHECK:-true}
+      - UPDATE_REPO=${UPDATE_REPO:-mattiaborsoi/personal-finance}
+      - UPDATE_BRANCH=${UPDATE_BRANCH:-main}
     volumes:
       - ./config.yaml:/app/config/config.yaml:ro
       - ./uploads:/app/uploads
@@ -82,6 +87,25 @@ services:
       # Bind to a specific LAN / VPN address instead of all interfaces if the host
       # has a public interface, e.g. "192.168.1.10:80:80".
       - "80:80"
+
+  # Optional self-update sidecar (Settings -> System -> "Update now"). It pulls the
+  # branch from GitHub and rebuilds the app containers through the host's Docker
+  # socket, which is root-equivalent on the host: remove this service if you would
+  # rather update by hand with `git pull && docker compose up -d --build`.
+  # The repository is mounted at its host path so Compose's relative bind mounts
+  # still resolve when the updater runs `docker compose` on your behalf.
+  updater:
+    build: ./updater
+    restart: always
+    logging: *default-logging
+    environment:
+      - SECRET_KEY=${SECRET_KEY:?set SECRET_KEY in .env (openssl rand -hex 32)}
+      - REPO_DIR=${PWD:?run docker compose from a shell inside the repository}
+      - UPDATE_BRANCH=${UPDATE_BRANCH:-main}
+      - COMPOSE_SERVICES=backend frontend
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${PWD:?run docker compose from a shell inside the repository}:${PWD}
 
 volumes:
   pgdata:

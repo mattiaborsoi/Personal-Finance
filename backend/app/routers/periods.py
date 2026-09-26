@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.auth import require_primary
 from app.config import AppConfig
 from app.database import get_db
-from app.deps import get_config
+from app.deps import get_effective_config
 from app.models import LedgerPeriod, Transaction
 from app.schemas import PeriodOut
 from app.services import auditor, settlement_snapshots
@@ -62,7 +62,7 @@ def close(
     period_key: str,
     force: bool = Query(default=False),
     db: Session = Depends(get_db),
-    config: AppConfig = Depends(get_config),
+    config: AppConfig = Depends(get_effective_config),
     llm: LLMClient = Depends(get_llm),
 ) -> PeriodOut:
     _validate_key(period_key)

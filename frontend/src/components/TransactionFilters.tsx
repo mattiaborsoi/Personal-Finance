@@ -87,6 +87,7 @@ export function TransactionFilters({ periods, values, onChange }: Props) {
           {config.accounts.map((a) => (
             <option key={a.id} value={a.id}>
               {accountLabel(config.accounts, a.id)}
+              {a.is_active === false ? ' (archived)' : ''}
             </option>
           ))}
         </select>

@@ -65,7 +65,7 @@ def test_ambiguous_export_without_account_warns_about_sign_convention(client, pr
 @requires_db
 def test_identical_same_day_investment_transfers_each_get_a_mirror(client, primary_headers, llm_stub, tmp_path):
     csv = _write(
-        tmp_path / "hsbc_8589_aug.csv",
+        tmp_path / "hsbc_4471_aug.csv",
         "Date,Description,Paid Out,Paid In,Balance\n"
         "05/08/2026,ROBINHOOD,500.00,,1000.00\n05/08/2026,ROBINHOOD,500.00,,500.00\n",
     )

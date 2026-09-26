@@ -52,6 +52,8 @@ function toUploadError(err: unknown): UploadError {
 
 export function UploadPage() {
   const config = useConfig();
+  // Archived accounts stay in the config for history but take no new statements.
+  const activeAccounts = config.accounts.filter((a) => a.is_active !== false);
   const history = useAsync(() => api.listStatements(), 'statements');
   const [file, setFile] = useState<File | null>(null);
   const [accountId, setAccountId] = useState('');
@@ -104,7 +106,7 @@ export function UploadPage() {
               disabled={busy}
             >
               <option value="">Detect automatically</option>
-              {config.accounts.map((a) => (
+              {activeAccounts.map((a) => (
                 <option key={a.id} value={a.id}>
                   {accountLabel(config.accounts, a.id)}
                 </option>

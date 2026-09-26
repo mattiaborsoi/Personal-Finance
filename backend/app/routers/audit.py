@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.auth import require_primary
 from app.config import AppConfig
 from app.database import get_db
-from app.deps import get_config
+from app.deps import get_effective_config
 from app.schemas import AuditReportOut
 from app.services import auditor
 from app.services.llm import LLMClient
@@ -26,7 +26,7 @@ def _validate(period_key: str) -> str:
 def run_audit(
     period_key: str,
     db: Session = Depends(get_db),
-    config: AppConfig = Depends(get_config),
+    config: AppConfig = Depends(get_effective_config),
     llm: LLMClient = Depends(get_llm),
 ) -> AuditReportOut:
     _validate(period_key)

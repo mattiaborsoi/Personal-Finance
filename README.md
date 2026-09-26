@@ -22,6 +22,8 @@ each with their own accounts and cards, who would rather not keep a spreadsheet.
 * **One figure, settled.** Your partner logs the cash they paid from their phone, card
   payments and transfers cancel themselves out, and at month end Settl shows who owes
   whom, by when, with every line behind it.
+* **Looks after itself.** Add or change your accounts and cards in Settings, and
+  update Settl to the latest version from GitHub with one click.
 
 ## See it
 
@@ -47,6 +49,10 @@ stay and British Airways flight on the Amex Platinum.*
 ![The partner's claim form on a phone](docs/images/claim-mobile.png)
 *Your partner's phone: the Uber they paid for, logged in three taps and shared the way
 they choose.*
+
+![Settings: the list of accounts and cards, with add, edit and archive](docs/images/settings.png)
+*Settings: your accounts and cards live here, not in a config file, and the System tab
+updates Settl from GitHub with one click.*
 
 ## Run it in five minutes
 

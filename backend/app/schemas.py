@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.config import ClaimType, TransferState
+from app.config import AccountType, ClaimType, TransferState
 
 Role = Literal["primary", "secondary"]
 
@@ -43,9 +43,41 @@ class AccountOut(BaseModel):
 
     id: str
     institution: str
+    label: str | None = None
     account_type: str
     owner_user_id: str
     identifier_last4: str
+    default_claim_type: str = "personal"
+    billed_to: str | None = None
+    is_active: bool = True
+    transaction_count: int = 0
+    created_at: datetime | None = None
+
+
+class AccountCreate(BaseModel):
+    """``POST /accounts``: ``id`` is generated from institution, type and digits when omitted."""
+
+    id: str | None = Field(default=None, max_length=64)
+    institution: str = Field(min_length=1, max_length=64)
+    label: str | None = Field(default=None, max_length=128)
+    account_type: AccountType
+    owner: str = Field(min_length=1, max_length=64)
+    identifier_last4: str = Field(min_length=1, max_length=8)
+    default_claim_type: ClaimType = "personal"
+    billed_to: str | None = Field(default=None, max_length=64)
+
+
+class AccountUpdate(BaseModel):
+    """``PATCH /accounts/{id}``: omitted fields are untouched; ``null`` clears ``label`` / ``billed_to``."""
+
+    institution: str | None = Field(default=None, max_length=64)
+    label: str | None = Field(default=None, max_length=128)
+    account_type: AccountType | None = None
+    owner: str | None = Field(default=None, max_length=64)
+    identifier_last4: str | None = Field(default=None, max_length=8)
+    default_claim_type: ClaimType | None = None
+    billed_to: str | None = Field(default=None, max_length=64)
+    is_active: bool | None = None
 
 
 class PeriodOut(BaseModel):

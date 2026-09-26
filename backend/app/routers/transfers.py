@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.auth import require_primary
 from app.config import AppConfig
 from app.database import get_db
-from app.deps import get_config
+from app.deps import get_effective_config
 from app.models import Transaction, TransferBuffer
 from app.schemas import ManualMatchRequest, RematchOut, TransferBufferOut
 from app.services import transfers
@@ -34,7 +34,7 @@ def list_unmatched(db: Session = Depends(get_db)) -> list[TransferBufferOut]:
 
 
 @router.post("/rematch", response_model=RematchOut)
-def rematch(db: Session = Depends(get_db), config: AppConfig = Depends(get_config)) -> RematchOut:
+def rematch(db: Session = Depends(get_db), config: AppConfig = Depends(get_effective_config)) -> RematchOut:
     matched = transfers.match_pending(db, config)
     db.commit()
     return RematchOut(matched=matched)

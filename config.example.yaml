@@ -29,6 +29,9 @@ settlement:
   settlement_day_of_month: 1
 
 # accounts
+#   The accounts below are imported the FIRST time Settl starts (when its database
+#   has none). After that, add, edit, archive or remove accounts under
+#   Settings -> Accounts in the app; changes made here are not applied again.
 #   id               stable identifier used everywhere else in this file
 #   institution      the bank as it appears on statements (used to map uploads)
 #   label            (optional) friendlier name shown in the app, e.g. "HSBC Premier"

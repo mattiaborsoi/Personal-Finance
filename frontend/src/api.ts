@@ -61,16 +61,20 @@ export interface SplitConfig {
   settlement_day_of_month: number;
 }
 
+export type AccountType = 'checking' | 'savings' | 'credit' | 'credit_supplementary' | 'investment_cash';
+
 export interface AccountConfig {
   id: string;
   institution: string;
-  /** Optional friendlier display name from config.yaml, e.g. "HSBC Premier". */
+  /** Optional friendlier display name, e.g. "HSBC Premier". */
   label?: string | null;
   account_type: string;
   owner: string;
   identifier_last4: string;
   default_claim_type?: ClaimType | null;
   billed_to?: string | null;
+  /** False once archived: kept for history, not offered for uploads. Absent means active. */
+  is_active?: boolean;
 }
 
 export interface AppConfig {
@@ -84,11 +88,50 @@ export interface AppConfig {
 }
 
 export interface AccountOut {
+  /** Stable identifier, e.g. "acc_checking_hsbc"; immutable and referenced by rules. */
   id: string;
+  /** The bank as printed on statements, e.g. "HSBC"; used to map uploads. */
   institution: string;
-  account_type: string;
+  /** Friendlier display name, e.g. "HSBC Premier". */
+  label: string | null;
+  account_type: AccountType;
+  /** Who spends on it (a user id from `config.users`). */
   owner_user_id: string;
+  /** The digits printed on the statement (1–8 characters). */
   identifier_last4: string;
+  /** Starting claim type for unclassified lines. */
+  default_claim_type: ClaimType;
+  /** Who pays the bill; null means the owner (supplementary cards default to the primary user). */
+  billed_to: string | null;
+  /** False once archived: kept for history, not offered for uploads. */
+  is_active: boolean;
+  /** How many ledger rows sit on it; a non-zero count blocks deletion. */
+  transaction_count: number;
+  created_at: string | null;
+}
+
+/** `id` is only sent when the user typed one; the server otherwise derives it from institution, type and last four. */
+export interface AccountCreate {
+  id?: string;
+  institution: string;
+  label?: string | null;
+  account_type: AccountType;
+  owner: string;
+  identifier_last4: string;
+  default_claim_type?: ClaimType;
+  billed_to?: string | null;
+}
+
+/** Omitted fields are untouched; null clears `label` or `billed_to`. */
+export interface AccountUpdate {
+  institution?: string;
+  label?: string | null;
+  account_type?: AccountType;
+  owner?: string;
+  identifier_last4?: string;
+  default_claim_type?: ClaimType;
+  billed_to?: string | null;
+  is_active?: boolean;
 }
 
 export interface HealthOut {
@@ -419,6 +462,38 @@ export interface MemoryOut {
   last_updated: string;
 }
 
+export type UpdaterState = 'idle' | 'running' | 'succeeded' | 'failed';
+
+export interface SystemInfo {
+  app: { name: string; version: string };
+  /** "owner/repo" on GitHub. */
+  repository: string;
+  branch: string;
+  /** The commit the server was built from; null when unknown. */
+  running: { commit: string | null; short: string | null };
+  /** The newest commit on GitHub; null until checked, or when checks are disabled. */
+  latest: { commit: string; short: string; date: string; message: string } | null;
+  /** null when either side is unknown. */
+  update_available: boolean | null;
+  /** false: the server never contacts GitHub. */
+  update_check_enabled: boolean;
+  updater: {
+    /** false: the updater container is not reachable, so self-update is off. */
+    available: boolean;
+    state: UpdaterState;
+    started_at: string | null;
+    finished_at: string | null;
+    /** The last few thousand characters of the updater's output. */
+    log: string | null;
+    error: string | null;
+  };
+}
+
+export interface UpdateStarted {
+  state: 'running';
+  started_at: string;
+}
+
 // ---------------------------------------------------------------------------
 // Session storage
 // ---------------------------------------------------------------------------
@@ -631,8 +706,15 @@ export const api = {
 
   // Reference
   getConfig: () => request<AppConfig>('GET', '/config'),
-  listAccounts: () => request<AccountOut[]>('GET', '/accounts'),
   health: () => request<HealthOut>('GET', '/health'),
+
+  // Accounts (every account, archived included)
+  listAccounts: () => request<AccountOut[]>('GET', '/accounts'),
+  createAccount: (body: AccountCreate) => request<AccountOut>('POST', '/accounts', { body }),
+  updateAccount: (id: string, body: AccountUpdate) =>
+    request<AccountOut>('PATCH', `/accounts/${enc(id)}`, { body }),
+  /** 409 when the account has transactions or uploads, or a rule references it: archive it instead. */
+  deleteAccount: (id: string) => request<void>('DELETE', `/accounts/${enc(id)}`),
 
   // Periods
   listPeriods: () => request<PeriodOut[]>('GET', '/periods'),
@@ -700,6 +782,13 @@ export const api = {
   // Merchant memory
   listMemory: (limit = 200) => request<MemoryOut[]>('GET', '/memory', { query: { limit } }),
   deleteMemory: (id: string) => request<void>('DELETE', `/memory/${enc(id)}`),
+
+  // System (version and self-update)
+  getSystem: () => request<SystemInfo>('GET', '/system'),
+  /** Same body as `getSystem`, after a fresh look at GitHub (bypasses the server's cache). */
+  checkForUpdates: () => request<SystemInfo>('POST', '/system/check'),
+  /** 202 once started; 409 when an update is already running, 503 when the updater is unavailable. */
+  startUpdate: () => request<UpdateStarted>('POST', '/system/update'),
 };
 
 export type Api = typeof api;

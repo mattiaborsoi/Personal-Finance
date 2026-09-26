@@ -1,4 +1,4 @@
-import { UNCATEGORIZED, type AccountConfig, type ClaimType } from '../api';
+import { UNCATEGORIZED, type AccountConfig, type AccountType, type ClaimType } from '../api';
 
 /**
  * Options for a category dropdown: the configured list, guaranteed to contain
@@ -64,6 +64,10 @@ export function formatConfidence(value: number | string | null | undefined): str
   return `${Math.round(pct)}%`;
 }
 
+/** Every account type the backend accepts, in the order the type picker offers them. */
+export const ACCOUNT_TYPES: AccountType[] = ['checking', 'savings', 'credit', 'credit_supplementary', 'investment_cash'];
+
+/** Short form, used after the institution inside row chips ("HSBC Current ··4471"). */
 const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   checking: 'Current',
   credit: 'Credit card',
@@ -72,8 +76,23 @@ const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   savings: 'Savings',
 };
 
+/** Full form, used on its own in the Accounts table and the type picker. */
+const ACCOUNT_TYPE_NAMES: Record<string, string> = {
+  ...ACCOUNT_TYPE_LABELS,
+  checking: 'Current account',
+};
+
 export function accountTypeLabel(type: string): string {
   return ACCOUNT_TYPE_LABELS[type] ?? type.replace(/_/g, ' ');
+}
+
+export function accountTypeName(type: string): string {
+  return ACCOUNT_TYPE_NAMES[type] ?? type.replace(/_/g, ' ');
+}
+
+/** The account's `label` when there is one, otherwise institution and account type ("HSBC Current"). */
+export function accountName(account: { label?: string | null; institution: string; account_type: string }): string {
+  return account.label?.trim() || `${account.institution} ${accountTypeLabel(account.account_type)}`;
 }
 
 /**
@@ -85,8 +104,7 @@ export function accountLabel(accounts: AccountConfig[], accountId: string | null
   if (!accountId) return '—';
   const account = accounts.find((a) => a.id === accountId);
   if (!account) return accountId;
-  const name = account.label?.trim() || `${account.institution} ${accountTypeLabel(account.account_type)}`;
-  return `${name} ··${account.identifier_last4}`;
+  return `${accountName(account)} ··${account.identifier_last4}`;
 }
 
 export function claimTypeLabel(

@@ -1,6 +1,6 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { api, errorMessage, type AppConfig } from '../api';
-import { ConfigContext } from './ConfigContext';
+import { ConfigContext, ReloadConfigContext } from './ConfigContext';
 import { LoadingState } from '../components/LoadingState';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { btnSecondary } from '../lib/ui';
@@ -14,10 +14,22 @@ interface State {
   error: string | null;
 }
 
-/** Loads GET /api/config once after login and blocks rendering until it is available. */
+/**
+ * Loads GET /api/config once after login and blocks rendering until it is
+ * available. `useReloadConfig()` re-fetches it quietly later on: the current
+ * config stays in place until the new one arrives.
+ */
 export function ConfigProvider({ children }: Props) {
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<State>({ config: null, error: null });
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,6 +45,11 @@ export function ConfigProvider({ children }: Props) {
       cancelled = true;
     };
   }, [attempt]);
+
+  const reload = useCallback(async () => {
+    const config = await api.getConfig();
+    if (mounted.current) setState({ config, error: null });
+  }, []);
 
   if (state.error) {
     return (
@@ -56,5 +73,9 @@ export function ConfigProvider({ children }: Props) {
     return <LoadingState label="Loading configuration" fullPage />;
   }
 
-  return <ConfigContext.Provider value={state.config}>{children}</ConfigContext.Provider>;
+  return (
+    <ReloadConfigContext.Provider value={reload}>
+      <ConfigContext.Provider value={state.config}>{children}</ConfigContext.Provider>
+    </ReloadConfigContext.Provider>
+  );
 }

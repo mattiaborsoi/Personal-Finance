@@ -29,6 +29,7 @@ export const fixtureConfig: AppConfig = {
       account_type: 'checking',
       owner: 'user_primary',
       identifier_last4: '4471',
+      is_active: true,
     },
     {
       id: 'acc_checking_barclays',
@@ -37,6 +38,7 @@ export const fixtureConfig: AppConfig = {
       account_type: 'checking',
       owner: 'user_secondary',
       identifier_last4: '2093',
+      is_active: true,
     },
     {
       id: 'acc_cc_amex',
@@ -45,6 +47,7 @@ export const fixtureConfig: AppConfig = {
       account_type: 'credit',
       owner: 'user_primary',
       identifier_last4: '7715',
+      is_active: true,
     },
     {
       id: 'acc_cc_amex_supp',
@@ -55,6 +58,7 @@ export const fixtureConfig: AppConfig = {
       identifier_last4: '3348',
       default_claim_type: 'shared_proportional',
       billed_to: 'user_primary',
+      is_active: true,
     },
     {
       id: 'acc_cc_virgin',
@@ -63,6 +67,7 @@ export const fixtureConfig: AppConfig = {
       account_type: 'credit',
       owner: 'user_primary',
       identifier_last4: '5502',
+      is_active: true,
     },
     {
       id: 'acc_invest_robinhood',
@@ -71,6 +76,7 @@ export const fixtureConfig: AppConfig = {
       account_type: 'investment_cash',
       owner: 'user_primary',
       identifier_last4: 'INVEST',
+      is_active: true,
     },
   ],
   categories: ['Groceries', 'Dining', 'Bills:Water', 'Transport:Taxi', 'Uncategorized'],

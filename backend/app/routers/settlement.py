@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.auth import require_any_role, require_primary
 from app.config import AppConfig
 from app.database import get_db
-from app.deps import get_config
+from app.deps import get_effective_config
 from app.models import PartnerClaim
 from app.schemas import SettlementSnapshotOut, SettlementSummary
 from app.services import settlement, settlement_snapshots
@@ -24,7 +24,7 @@ def _validate(period_key: str) -> str:
 
 @router.get("/{period_key}", response_model=SettlementSummary, dependencies=[Depends(require_any_role)])
 def get_settlement(
-    period_key: str, db: Session = Depends(get_db), config: AppConfig = Depends(get_config)
+    period_key: str, db: Session = Depends(get_db), config: AppConfig = Depends(get_effective_config)
 ) -> SettlementSummary:
     _validate(period_key)
     summary = settlement.compute_settlement(db, period_key, config)

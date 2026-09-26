@@ -27,14 +27,29 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- Accounts Registry ---------------------------------------------------------
+-- The database is the source of truth for accounts: config.yaml only seeds this
+-- table on first start, after that accounts are managed in the app.
 CREATE TABLE IF NOT EXISTS accounts (
     id VARCHAR(64) PRIMARY KEY,
     institution VARCHAR(64) NOT NULL,
+    label VARCHAR(128),
     account_type account_type_enum NOT NULL,
     owner_user_id VARCHAR(64) NOT NULL,
     identifier_last4 VARCHAR(8) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    default_claim_type claim_type_enum NOT NULL DEFAULT 'personal',
+    billed_to VARCHAR(64),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+-- Upgrades for databases created before accounts became editable in the app.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS label VARCHAR(128);
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS default_claim_type claim_type_enum NOT NULL DEFAULT 'personal';
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS billed_to VARCHAR(64);
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
 
 -- Ledger Periods (Statement Batches) ---------------------------------------
 CREATE TABLE IF NOT EXISTS ledger_periods (

@@ -138,6 +138,9 @@ class AccountConfig(BaseModel):
     """User who ultimately pays this account. Defaults to the primary user for
     supplementary credit cards (they are billed to the main cardholder) and to
     ``owner`` otherwise."""
+    is_active: bool = True
+    """Archived accounts (``False``) keep their history but are not offered for
+    uploads. Only meaningful for accounts loaded from the database."""
 
     @field_validator("identifier_last4")
     @classmethod
@@ -329,6 +332,18 @@ class AppConfig(BaseModel):
     def investment_account_ids(self) -> list[str]:
         return [a.id for a in self.accounts if a.account_type == "investment_cash"]
 
+    def active_accounts(self) -> list[AccountConfig]:
+        return [a for a in self.accounts if a.is_active]
+
+    def with_accounts(self, accounts: list[AccountConfig]) -> AppConfig:
+        """A copy of this configuration whose accounts are ``accounts``.
+
+        Used to overlay the database rows (the source of truth once the app is
+        running) on the file configuration. No cross-validation is re-run: an
+        account that a rule refers to may legitimately have been archived.
+        """
+        return self.model_copy(update={"accounts": list(accounts)})
+
     # ----- serialisation for the UI ----------------------------------------
     def public_dict(self) -> dict:
         """Configuration safe to expose to the browser (no salaries, no rules)."""
@@ -359,6 +374,7 @@ class AppConfig(BaseModel):
                     "identifier_last4": a.identifier_last4,
                     "default_claim_type": a.default_claim_type,
                     "billed_to": self.payer_for_account(a.id),
+                    "is_active": a.is_active,
                 }
                 for a in self.accounts
             ],
@@ -423,6 +439,16 @@ class Settings(BaseSettings):
     embedding_dimensions: int = 1536
 
     cors_origins: str = "http://localhost:5173,http://localhost"
+
+    # Self-update (Settings -> System). The updater is an optional sidecar container
+    # (see docker-compose.yml); when it is unreachable the UI shows manual steps.
+    updater_url: str = "http://updater:9000"
+    update_repo: str = "mattiaborsoi/personal-finance"
+    """GitHub ``owner/repo`` whose default branch is compared with the running code."""
+    update_branch: str = "main"
+    update_check: bool = True
+    """Set to false to never contact GitHub (the System tab then only shows the running commit)."""
+    github_api_url: str = "https://api.github.com"
 
     @property
     def sqlalchemy_url(self) -> str:

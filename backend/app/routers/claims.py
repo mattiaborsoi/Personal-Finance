@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.auth import Role, require_any_role
 from app.config import AppConfig
 from app.database import get_db
-from app.deps import get_config
+from app.deps import get_effective_config
 from app.models import LedgerPeriod, PartnerClaim
 from app.schemas import ClaimCreate, ClaimOut
 from app.services import settlement
@@ -27,7 +27,7 @@ def create_claim(
     body: ClaimCreate,
     role: Role = Depends(require_any_role),
     db: Session = Depends(get_db),
-    config: AppConfig = Depends(get_config),
+    config: AppConfig = Depends(get_effective_config),
 ) -> PartnerClaim:
     if role == "secondary":
         paid_by = config.secondary_user_id
@@ -87,7 +87,7 @@ def delete_claim(
     claim_id: uuid.UUID,
     role: Role = Depends(require_any_role),
     db: Session = Depends(get_db),
-    config: AppConfig = Depends(get_config),
+    config: AppConfig = Depends(get_effective_config),
 ) -> Response:
     claim = db.get(PartnerClaim, claim_id)
     if claim is None:

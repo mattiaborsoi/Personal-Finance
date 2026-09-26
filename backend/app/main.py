@@ -16,6 +16,7 @@ from app.database import get_engine, get_session_factory, init_db
 from app.deps import get_config, get_settings
 from app.models import EMBEDDING_DIMENSIONS
 from app.routers import (
+    accounts,
     audit,
     auth,
     claims,
@@ -25,10 +26,11 @@ from app.routers import (
     reference,
     settlement,
     statements,
+    system,
     transactions,
     transfers,
 )
-from app.services.accounts import sync_accounts
+from app.services.accounts import seed_accounts
 from app.services.periods import PeriodClosedError
 
 log = logging.getLogger(__name__)
@@ -36,6 +38,7 @@ log = logging.getLogger(__name__)
 ROUTERS = (
     auth.router,
     reference.router,
+    accounts.router,
     periods.router,
     statements.router,
     transactions.router,
@@ -45,6 +48,7 @@ ROUTERS = (
     metrics.router,
     audit.router,
     memory.router,
+    system.router,
 )
 
 
@@ -61,10 +65,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     init_db(get_engine())
     with get_session_factory()() as db:
-        changed = sync_accounts(db, config)
+        changed = seed_accounts(db, config)
         db.commit()
     log.info(
-        "startup complete: %d account(s) synced, llm_provider=%s embedding_provider=%s",
+        "startup complete: %d account(s) seeded or upgraded from config.yaml, llm_provider=%s embedding_provider=%s",
         changed,
         settings.llm_provider,
         settings.embedding_provider,

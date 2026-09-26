@@ -16,6 +16,8 @@ interface Props {
   icon?: LucideIcon;
   /** Render the initial button as a 32px icon button (needs a string label in `children`). */
   iconOnly?: boolean;
+  /** Tooltip on the initial button, e.g. why it is disabled; defaults to the label when `iconOnly`. */
+  title?: string;
 }
 
 /**
@@ -32,6 +34,7 @@ export function ConfirmButton({
   className = '',
   icon: Icon,
   iconOnly = false,
+  title,
 }: Props) {
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -58,14 +61,20 @@ export function ConfirmButton({
           disabled={disabled}
           onClick={() => setArmed(true)}
           aria-label={label}
-          title={label}
+          title={title ?? label}
         >
           <Icon className="h-4 w-4" aria-hidden="true" />
         </button>
       );
     }
     return (
-      <button type="button" className={cx(toneClass, size, className)} disabled={disabled} onClick={() => setArmed(true)}>
+      <button
+        type="button"
+        className={cx(toneClass, size, className)}
+        disabled={disabled}
+        onClick={() => setArmed(true)}
+        title={title}
+      >
         {Icon && <Icon className="h-4 w-4" aria-hidden="true" />}
         {children}
       </button>

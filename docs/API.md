@@ -34,7 +34,40 @@ the login endpoint answers **429** (with `Retry-After`) for 1 minute, doubling o
 ```
 `label` is the optional display name from `config.yaml` (`null` when unset; the UI then shows institution and account type).
 
-`GET /api/accounts` → `[ {id, institution, account_type, owner_user_id, identifier_last4} ]`
+## Accounts (Settings → Accounts)
+
+Accounts live in the database. `config.yaml` seeds them the first time Settl starts with an empty `accounts` table; after that these endpoints are the only way they change. Every other endpoint sees the current rows (the "effective" configuration), so a card added here is mapped by its digits on the next upload and its `billed_to` rule is used by the settlement.
+
+AccountOut: `id, institution, label, account_type, owner_user_id, identifier_last4, default_claim_type, billed_to, is_active, transaction_count, created_at`
+
+`GET /api/accounts` → `[AccountOut]` (archived included; active first, then in creation order)
+
+`POST /api/accounts` `{ id?, institution, label?, account_type, owner, identifier_last4, default_claim_type?, billed_to? }` → **201** AccountOut. `id` is generated (`acc_<institution>_<type>_<last4>`) when omitted; if given it must be 2–64 lowercase letters, digits, `_` or `-`. **422** for an unknown `owner`/`billed_to`, blank fields, or another active account at the same institution with the same digits (a main card and its supplementary card are allowed to share digits); **409** when the `id` exists.
+
+`PATCH /api/accounts/{id}` `{ institution?, label?, account_type?, owner?, identifier_last4?, default_claim_type?, billed_to?, is_active? }` → AccountOut. Omitted fields are untouched; `null` clears `label` / `billed_to`. `is_active: false` archives the account: it keeps its history but is no longer offered for uploads.
+
+`DELETE /api/accounts/{id}` → 204. **409** when the account has transactions or uploads, or a `config.yaml` rule sends transfers to it (archive it instead).
+
+## System (Settings → System)
+
+`GET /api/system` →
+```json
+{
+  "app": {"name": "Settl", "version": "0.1.0"},
+  "repository": "owner/repo", "branch": "main",
+  "running": {"commit": "<sha>|null", "short": "<7 chars>|null"},
+  "latest":  {"commit", "short", "date", "message"} | null,
+  "update_available": true | false | null,
+  "update_check_enabled": true,
+  "updater": {"available", "state": "idle|running|succeeded|failed", "started_at", "finished_at", "log", "error"},
+  "checked_at": "<iso>"
+}
+```
+`running` comes from the updater sidecar (the commit checked out on disk); `latest` from GitHub, cached for ten minutes and `null` when the check is disabled (`UPDATE_CHECK=false`) or the host is offline. `update_available` is `null` whenever either side is unknown.
+
+`POST /api/system/check` → the same body after a fresh look at GitHub.
+
+`POST /api/system/update` → **202** `{ state: "running", started_at }`. The updater runs `git pull --ff-only` and `docker compose up -d --build` for the app services; poll `GET /api/system` (expect a short outage while the backend restarts). **409** while an update is running, **503** when the updater container is not deployed or not reachable.
 
 `GET /api/health` → `{ status, database, llm_provider, embedding_provider }` (no auth)
 
