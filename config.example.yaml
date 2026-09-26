@@ -1,0 +1,201 @@
+# Sanitised example configuration.
+# Copy to config.yaml (git-ignored) and replace every value with your own.
+# All identities, incomes, account mappings, split formulas and classification
+# rules live here. The codebase itself contains no personal data.
+
+app:
+  base_currency: "GBP"
+  currency_symbol: "£"
+  data_dir: "./data"
+
+users:
+  primary:
+    id: "user_primary"
+    display_name: "Primary User"
+    base_salary_pa: 100000
+    additional_income_pa: 0
+  secondary:
+    id: "user_secondary"
+    display_name: "Secondary User"
+    base_salary_pa: 80000
+    additional_income_pa: 0
+
+# Dynamic calculation (salary_proportional):
+# Primary   = 100,000 / 180,000 = 55.5556%
+# Secondary =  80,000 / 180,000 = 44.4444%
+settlement:
+  split_strategy: "salary_proportional" # Options: salary_proportional, equal_50_50
+  rounding_decimals: 2
+  settlement_day_of_month: 1
+
+# accounts
+#   id               stable identifier used everywhere else in this file
+#   institution      the bank as it appears on statements (used to map uploads)
+#   label            (optional) friendlier name shown in the app, e.g. "HSBC Premier"
+#   account_type     checking | savings | credit | credit_supplementary | investment_cash
+#   owner            the person who spends on it
+#   identifier_last4 the digits printed on the statement (how uploads are mapped)
+#   default_claim_type  (optional) starting claim type for unclassified lines
+#   billed_to        (optional) who pays the bill; supplementary cards default to the primary user
+accounts:
+  - id: "acc_checking_hsbc"
+    institution: "HSBC"
+    label: "HSBC Premier"
+    account_type: "checking"
+    owner: "user_primary"
+    identifier_last4: "4471"
+  - id: "acc_checking_barclays"
+    institution: "Barclays"
+    label: "Barclays Premier"
+    account_type: "checking"
+    owner: "user_secondary"
+    identifier_last4: "2093"
+  - id: "acc_cc_amex"
+    institution: "Amex"
+    label: "Amex Platinum"
+    account_type: "credit"
+    owner: "user_primary"
+    identifier_last4: "7715"
+  - id: "acc_cc_amex_supp"
+    institution: "Amex"
+    label: "Amex Platinum (supplementary)"
+    account_type: "credit_supplementary"
+    owner: "user_secondary"          # the spender
+    identifier_last4: "3348"
+    default_claim_type: "shared_proportional"
+    # billed_to: "user_primary"      # optional; supplementary cards default to the primary user
+  - id: "acc_cc_virgin"
+    institution: "Virgin"
+    label: "Virgin Money credit card"
+    account_type: "credit"
+    owner: "user_primary"
+    identifier_last4: "5502"
+  - id: "acc_invest_robinhood"
+    institution: "Robinhood"
+    label: "Robinhood"
+    account_type: "investment_cash"
+    owner: "user_primary"
+    identifier_last4: "INVEST"
+
+# Deterministic rules are tried first (in order). A match skips the LLM entirely
+# and the transaction is auto-approved.
+#   pattern              Python regex matched against the raw statement description
+#   category             "Group:Sub" category to assign
+#   claim_type           personal | shared_proportional | shared_equal | secondary_personal | primary_personal
+#   merchant             (optional) cleaned merchant name to store
+#   is_internal_transfer (optional) mark as a transfer and feed the transfer buffer
+#   transfer_to_account  (optional) account id that receives the money; a mirror
+#                        transaction is created there (used for investment tracking)
+# The supplier names below are placeholders: replace them with what your own
+# statements print.
+deterministic_rules:
+  - pattern: "(?i)AQUANORTH\\s*WATER"
+    category: "Bills:Water"
+    claim_type: "shared_proportional"
+  - pattern: "(?i)NORTHWIND\\s*ENERGY"
+    category: "Bills:Energy"
+    claim_type: "shared_proportional"
+  - pattern: "(?i)FIBRELINE\\s*BROADBAND"
+    category: "Bills:Internet"
+    claim_type: "shared_proportional"
+  - pattern: "(?i)COUNCIL\\s*TAX"
+    category: "Bills:CouncilTax"
+    claim_type: "shared_proportional"
+  - pattern: "(?i)SERVICE\\s*CHARGES"
+    category: "Housing:ServiceCharges"
+    claim_type: "shared_proportional"
+  - pattern: "(?i)EVERGREEN\\s*LIFE"
+    category: "Insurance:Life"
+    claim_type: "shared_equal"
+  - pattern: "(?i)ICLOUD"
+    category: "Subscriptions:Cloud"
+    claim_type: "shared_proportional"
+  - pattern: "(?i)THIRD\\s*SPACE"
+    category: "Health:Gym"
+    claim_type: "personal"
+  # Settlement money received from the partner: not spend, not income.
+  - pattern: "(?i)PARTNER\\s*TRANSFER"
+    category: "Transfers:Settlement"
+    claim_type: "personal"
+    merchant: "Partner settlement"
+  # Cash moved to the investment account. A mirror entry is written to the
+  # investment account so net invested capital can be tracked.
+  - pattern: "(?i)ROBINHOOD"
+    category: "Transfers:Investment"
+    claim_type: "personal"
+    merchant: "Robinhood"
+    is_internal_transfer: true
+    transfer_to_account: "acc_invest_robinhood"
+
+# Cross-ledger transfer buffer: card payments that appear on both a checking
+# statement and a card statement.
+transfers:
+  payment_patterns:
+    - "(?i)PAYMENT\\s+RECEIVED\\s*-?\\s*THANK\\s*YOU"
+    - "(?i)PAYMENT\\s+DD\\s+THANK\\s*YOU"
+    - "(?i)DIRECT\\s*DEBIT.*THANK\\s*YOU"
+    - "(?i)HSBC\\s*CARD\\s*PYMT"
+    - "(?i)BARCLAYS\\s*CARD\\s*PYMT"
+    - "(?i)AMERICAN\\s*EXPRESS\\s*(DD|PAYMENT|DIRECT\\s*DEBIT)?"
+    - "(?i)AMEX\\s*(DD|PAYMENT)"
+    - "(?i)VIRGIN\\s*MONEY\\s*(CARD|CC|DD)"
+  match_window_days: 7
+  amount_tolerance: 0.01
+
+# LLM routing (model names refer to entries in litellm/config.yaml)
+llm:
+  chat_model: "default-chat"
+  embedding_model: "default-embedding"
+  similarity_threshold: 0.82   # a vector match at or above this skips the LLM
+  top_k: 3                     # few-shot examples sent to the LLM
+
+# Auditor thresholds
+auditor:
+  deviation_threshold: 0.15    # |current - median| / median above this is flagged
+  lookback_periods: 3
+
+# Category taxonomy offered to the classifier and the approval UI.
+categories:
+  - "Bills:Water"
+  - "Bills:Energy"
+  - "Bills:Internet"
+  - "Bills:CouncilTax"
+  - "Bills:Phone"
+  - "Housing:Rent"
+  - "Housing:Mortgage"
+  - "Housing:ServiceCharges"
+  - "Housing:Maintenance"
+  - "Insurance:Life"
+  - "Insurance:Home"
+  - "Insurance:Travel"
+  - "Groceries"
+  - "Dining"
+  - "Coffee"
+  - "Entertainment"
+  - "Subscriptions:Software"
+  - "Subscriptions:Entertainment"
+  - "Subscriptions:Cloud"
+  - "Health:Gym"
+  - "Health:Medical"
+  - "Health:Pharmacy"
+  - "Transport:Public"
+  - "Transport:Taxi"
+  - "Transport:Fuel"
+  - "Travel:Flights"
+  - "Travel:Hotels"
+  - "Travel"
+  - "Shopping:Clothing"
+  - "Shopping:Home"
+  - "Shopping:Electronics"
+  - "Shopping:Gifts"
+  - "Personal:Care"
+  - "Education"
+  - "Income:Salary"
+  - "Income:Other"
+  - "Fees:Bank"
+  - "Fees:Interest"
+  - "Cash:Withdrawal"
+  - "Transfers:Internal"
+  - "Transfers:Settlement"
+  - "Transfers:Investment"
+  - "Uncategorized"

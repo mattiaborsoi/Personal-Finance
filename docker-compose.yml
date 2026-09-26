@@ -1,0 +1,87 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: always
+    logging: *default-logging
+    environment:
+      POSTGRES_DB: financemaster
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d financemaster"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  litellm:
+    # Pin a release tag (e.g. main-v1.x.y) for reproducible deployments.
+    image: ghcr.io/berriai/litellm:main-latest
+    restart: always
+    logging: *default-logging
+    ports:
+      - "127.0.0.1:4000:4000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: always
+    logging: *default-logging
+    depends_on:
+      db:
+        condition: service_healthy
+      litellm:
+        condition: service_started
+    environment:
+      - DATABASE_URL=postgresql://postgres:${DB_PASSWORD:?set DB_PASSWORD in .env}@db:5432/financemaster
+      - LITELLM_URL=http://litellm:4000
+      - LITELLM_API_KEY=${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
+      - CONFIG_PATH=/app/config/config.yaml
+      - UPLOAD_DIR=/app/uploads
+      - KEEP_UPLOADED_FILES=${KEEP_UPLOADED_FILES:-false}
+      - SECRET_KEY=${SECRET_KEY:?set SECRET_KEY in .env (openssl rand -hex 32)}
+      - PRIMARY_PASSWORD=${PRIMARY_PASSWORD:?set PRIMARY_PASSWORD in .env}
+      - SECONDARY_PASSWORD=${SECONDARY_PASSWORD:?set SECONDARY_PASSWORD in .env}
+      - LLM_PROVIDER=${LLM_PROVIDER:-litellm}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-litellm}
+    volumes:
+      - ./config.yaml:/app/config/config.yaml:ro
+      - ./uploads:/app/uploads
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  frontend:
+    build: ./frontend
+    restart: always
+    logging: *default-logging
+    depends_on:
+      - backend
+    ports:
+      # Bind to a specific LAN / VPN address instead of all interfaces if the host
+      # has a public interface, e.g. "192.168.1.10:80:80".
+      - "80:80"
+
+volumes:
+  pgdata:

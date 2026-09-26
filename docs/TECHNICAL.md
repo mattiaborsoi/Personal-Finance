@@ -1,0 +1,712 @@
+# Settl: technical reference
+
+Everything under the bonnet of Settl, for people running, extending or auditing it.
+The [README](../README.md) explains what the product does; [`API.md`](API.md) is the
+REST contract; [`BLUEPRINT.md`](BLUEPRINT.md) is the original specification that the
+"Design decisions" section at the end deviates from.
+
+Sign convention everywhere: **negative = money out, positive = money in**. Money is
+`Decimal`, quantised to two places with `ROUND_HALF_UP`.
+
+## 1. Architecture
+
+```
+                 ┌──────────────────────────────────────────────────────────────┐
+  LAN            │  frontend  (nginx 1.27 + React/Vite/Tailwind SPA)   :80      │
+  ──────────────▶│    /        static bundle, SPA fallback, security headers    │
+                 │    /api/    proxied to backend:8000                          │
+                 └───────────────────────────┬──────────────────────────────────┘
+                                             │ compose network
+                 ┌───────────────────────────▼──────────────────────────────────┐
+                 │  backend   (FastAPI, uvicorn, Python 3.11)   127.0.0.1:8000  │
+                 │    config engine · auth · routers · services (agents)        │
+                 └──────────┬─────────────────────────────────────┬─────────────┘
+                            │ SQL (psycopg 3)                      │ HTTP (OpenAI-compatible)
+                 ┌──────────▼───────────────┐          ┌──────────▼─────────────┐
+                 │  db  pgvector/pgvector:  │          │  litellm  proxy        │
+                 │  pg16   127.0.0.1:5432   │          │  127.0.0.1:4000        │
+                 │  ledger · memory ·       │          │  logical model names → │
+                 │  snapshots · audits      │          │  provider API keys     │
+                 └──────────────────────────┘          └────────────────────────┘
+```
+
+Four containers, defined in `docker-compose.yml`:
+
+| container  | image / build                         | role                                                                                    |
+|------------|---------------------------------------|-----------------------------------------------------------------------------------------|
+| `db`       | `pgvector/pgvector:pg16`              | PostgreSQL 16 with the `vector` extension; data in the `pgdata` volume                   |
+| `litellm`  | `ghcr.io/berriai/litellm`             | Local proxy; maps the logical names in `litellm/config.yaml` to providers and holds the provider keys |
+| `backend`  | `backend/Dockerfile`                  | FastAPI app; mounts `config.yaml` read-only and `./uploads`; runs `schema.sql` at start  |
+| `frontend` | `frontend/Dockerfile`                 | Vite build served by nginx; the only port published beyond loopback                     |
+
+The backend never sees provider API keys: it talks to LiteLLM with
+`LITELLM_MASTER_KEY` and refers to models only by the logical names `default-chat`,
+`cheap-chat` and `default-embedding`. Swapping providers is a LiteLLM config change.
+
+Startup (`app/main.py` lifespan): load `config.yaml` (fail fast with a `ConfigError`),
+run the security guard on the secrets, check `EMBEDDING_DIMENSIONS` matches the
+`vector(1536)` column, execute `schema.sql` (every statement idempotent, so it doubles
+as the migration mechanism) and upsert the configured accounts into `accounts`.
+
+## 2. Deployment
+
+Settl is meant to run on one always-on machine on your home network and to be reached
+over the LAN. This is the long version of the README's "Run it in five minutes".
+
+### Prerequisites
+
+* A machine that stays on: a Mac mini, a NAS, a mini PC or a Raspberry-class board
+  with a few GB of RAM.
+* Docker with the Docker Compose plugin.
+* Optionally, API keys for a language-model provider. As shipped, `litellm/config.yaml`
+  uses Anthropic for chat and OpenAI for embeddings, so it expects an
+  `ANTHROPIC_API_KEY` and an `OPENAI_API_KEY`; point both logical models at one
+  provider if you prefer. Settl works with no key at all (see "Running without an
+  LLM" below).
+
+### Install
+
+```bash
+git clone https://github.com/mattiaborsoi/personal-finance settl && cd settl
+cp config.example.yaml config.yaml
+cp .env.example .env
+```
+
+### `config.yaml`
+
+`config.yaml` is git-ignored and holds everything personal; the field-by-field
+reference is in section 11. Working through `config.example.yaml` from the top:
+
+* **`users`**: the two of you, each with an `id`, a `display_name`, a
+  `base_salary_pa` and an `additional_income_pa`. The incomes exist only to set the
+  split ratio (the example's 100,000 and 80,000 give 0.555556 / 0.444444) and are
+  never shown to the secondary login: `GET /api/config` strips them.
+* **`settlement`**: `salary_proportional` or `equal_50_50`, the rounding, and the day
+  of the following month by which you settle (`settlement_day_of_month`).
+* **`accounts`**: one entry per account or card. `institution` and `identifier_last4`
+  are how uploaded statements are mapped to accounts, so use exactly what the
+  statement prints; `owner` is the person who spends on it; the optional `label` is
+  the friendlier name shown in the app. The example set is a typical spread for a
+  couple: an HSBC Premier current account (··4471) and an Amex Platinum (··7715) for
+  the primary user, a Barclays Premier current account (··2093) for the secondary
+  user, a supplementary Amex Platinum card (··3348) that the secondary user spends on
+  but which is billed to the primary user (`credit_supplementary`, with
+  `default_claim_type: shared_proportional` so its lines start out as shared), a
+  Virgin Money credit card (··5502) and a Robinhood investment account
+  (`investment_cash`).
+* **`deterministic_rules`**: ordered regexes for merchants you already know; a match
+  skips the LLM and is auto-approved. The supplier names in the example (AQUANORTH
+  WATER, NORTHWIND ENERGY, FIBRELINE BROADBAND, EVERGREEN LIFE) are placeholders:
+  replace them with what your own statements print. Two rules are worth keeping in
+  some form: the `Transfers:Settlement` rule that recognises your partner's
+  settlement transfer, and the `Transfers:Investment` rule with `transfer_to_account`
+  that tracks cash moved into the investment account.
+* **`transfers.payment_patterns`**: how a card payment is described on your
+  current-account and card statements, so the two legs are matched to each other and
+  never counted as spending.
+* **`llm`, `auditor`, `categories`**: the similarity threshold and few-shot count, the
+  Auditor's thresholds, and the category taxonomy offered to the classifier and the
+  UI. The defaults are fine to start with.
+
+#### Claim types: who bears what
+
+Every transaction and claim carries a *claim type* that says who the cost belongs to.
+Who *paid* is worked out from the account it was spent on; who *bears* it comes from
+the table below. The difference between the two is what ends up in the settlement
+(section 6 has the arithmetic).
+
+| claim type            | who bears it                                                           |
+|-----------------------|------------------------------------------------------------------------|
+| `personal`            | whoever owns the account it was spent from; nothing to settle          |
+| `shared_proportional` | both of you, in proportion to your incomes                             |
+| `shared_equal`        | both of you, 50 / 50                                                   |
+| `secondary_personal`  | your partner alone (their item that went on your card)                 |
+| `primary_personal`    | you alone (your item that went on your partner's card or in a claim)   |
+
+A supplementary card is treated as spent by its holder but paid by the main
+cardholder, which is exactly the case Settl was built to untangle. The income ratio
+comes from the salaries in `config.yaml`; switch to `equal_50_50` if you prefer a
+straight split.
+
+### `.env`
+
+The backend refuses to start with the placeholder values, so set:
+
+| variable                                 | rule                                                                                     |
+|------------------------------------------|------------------------------------------------------------------------------------------|
+| `DB_PASSWORD`                            | any password; it is baked into the database volume on first run (changing it later is a separate step, below) |
+| `SECRET_KEY`                             | at least 32 random characters (`openssl rand -hex 32`); rotating it logs everyone out    |
+| `PRIMARY_PASSWORD`, `SECONDARY_PASSWORD` | at least 8 characters each, not a placeholder, and different from each other             |
+| `LITELLM_MASTER_KEY`                     | any long random string; it guards the local LLM proxy                                    |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`   | provider keys, read only by the LiteLLM container; leave them empty when running without an LLM |
+
+`LLM_PROVIDER`, `EMBEDDING_PROVIDER` and `KEEP_UPLOADED_FILES` are covered below and
+in section 11.
+
+### First start and first login
+
+```bash
+docker compose up -d --build
+```
+
+builds and starts the four containers; on first start the backend creates the schema
+and syncs the configured accounts (section 1). Open <http://localhost> (or the
+machine's LAN address) and log in with `PRIMARY_PASSWORD`. Your partner opens
+<http://localhost/claim> on their phone and logs in with `SECONDARY_PASSWORD`; that
+login can log claims and read the settlement, and nothing else. To check everything
+is wired up, run the test-suite inside the container:
+
+```bash
+docker compose exec backend pytest -v   # optional; uses a separate _test database
+```
+
+### Running without an LLM
+
+Set `LLM_PROVIDER=none` and `EMBEDDING_PROVIDER=hash` in `.env`. Your rules and the
+merchant memory still work, using an offline embedding; merchants Settl has never seen
+land in the queue as `Uncategorized` for you to fix once, after which they are
+remembered. The Auditor still runs and writes its summary sentence from the numbers
+alone. Do not switch the embedding provider once the memory has rows in it: the two
+vector spaces are not compatible, so clear the memory first.
+
+### Updating
+
+```bash
+git pull && docker compose up -d --build
+```
+
+The schema upgrades itself on start: `schema.sql` is idempotent and is re-run every
+time the backend boots (section 12), so there is no migration step.
+
+### Backups and restore
+
+* **Back up:** `docker compose exec db pg_dump -U postgres financemaster > backup.sql`.
+  The dump carries the ledger, the settlement snapshots, the audits and everything the
+  merchant memory has learned.
+* **Restore** into a fresh database:
+  `docker compose exec -T db psql -U postgres financemaster < backup.sql`.
+* `config.yaml` and `.env` are not in the database; keep copies of both alongside the
+  dump.
+
+### Changing the database password
+
+The password lives in the database volume, so editing `DB_PASSWORD` in `.env` alone
+breaks the backend's connection. Either run `docker compose down -v` (which deletes
+all data; back up first) and start again with the new value, or change it in place
+and then update `.env`:
+
+```bash
+docker compose exec db psql -U postgres -c "ALTER USER postgres PASSWORD 'new-password'"
+docker compose up -d
+```
+
+### Uploaded files
+
+Statements are deleted from disk as soon as they are ingested; only a sha256 is kept
+to spot re-uploads. Set `KEEP_UPLOADED_FILES=true` if you want the originals kept
+under `./uploads`.
+
+### Keep it private
+
+Settl speaks plain HTTP and is meant for your LAN. Only the web port (80) is
+reachable from other machines; the database, the LLM proxy and the API are bound to
+the host's loopback address. Do not expose the host to the internet. If you want to
+reach it from outside, put it behind a VPN or a reverse proxy that terminates TLS, and
+bind port 80 to a specific interface in `docker-compose.yml` if the host has a public
+one. The full security model is in section 10.
+
+## 3. Ingestion pipeline
+
+`app/services/ingestion.py` orchestrates one upload:
+
+```
+parse (Agent 1) → per-line account resolution → fingerprint / dedupe
+  → classify (rules / transfer pattern / Agent 2) → insert (pending_review | auto_approved)
+  → transfer buffer registration (+ mirror rows) → cross-ledger matching
+```
+
+* **File-level dedupe:** the upload's sha256 is stored in `statement_uploads`; the same
+  file is rejected with 409.
+* **Line-level dedupe:** each line gets `fingerprint = sha256(account | date | amount |
+  normalised text | occurrence)`, where `occurrence` counts identical lines within the
+  file, so overlapping statements insert nothing twice while two identical purchases on
+  one day are both kept.
+* **Account resolution:** an explicit `account_id` is the file's default; a line printed
+  under a card section that resolves to one account of the same institution (a
+  supplementary card) keeps that account. Without an explicit account, the line's
+  `card_last4`, then the statement's `account_last4` / institution, decide. Ambiguity is
+  a 422 listing the candidates.
+* **Periods:** a transaction is filed under the calendar month of its own date. New
+  lines that would land in a closed period are refused (409); already-known lines are
+  skipped, so a statement overlapping a closed month still goes through.
+* **Limits:** `.pdf`, `.csv`, `.xlsx`, `.xls`; 25 MB; PDFs of more than 60 pages are
+  refused before parsing.
+
+### Agent 1: extractor (`app/services/parsers/`)
+
+Deterministic parsers run first: `TabularParser` (pandas; CSV/XLSX/XLS with header
+detection and a sign convention taken from the target account's type when the file
+gives no hint), `PdfTableParser` (pdfplumber tables) and `PdfTextParser` (text-line
+regexes with date context inferred from the statement period). For PDFs both PDF
+parsers run and the one that finds more transactions wins (the table parser on a tie).
+
+The **LLM layout extractor** (`llm_extractor.py`) is a fallback only:
+
+* used only when no deterministic parser found any transaction, only for PDFs, and only
+  when an LLM is configured (never for spreadsheets, never raw bytes);
+* page text is chunked at ~6 000 characters; a document needing more than **20 LLM
+  calls** is refused up front; **60 pages** is the hard document limit;
+* the model must return the blueprint JSON schema; every field is validated and
+  coerced (ISO dates, `Decimal` amounts, negative = money out), malformed items are
+  dropped with a warning.
+
+### Agent 2: the Guesser (`app/services/guesser.py`)
+
+Precedence for each raw description:
+
+1. **Deterministic rule** from `config.yaml` (first match wins) → `source=rule`,
+   `auto_approved`; may carry `is_internal_transfer` / `transfer_to_account`.
+2. **Card-payment pattern** (`transfers.payment_patterns`) → `Transfers:Internal`,
+   `is_internal_transfer`, `source=transfer`, `auto_approved`.
+3. **Merchant memory** (`app/services/memory.py`, pgvector): the description is
+   normalised (upper-case, digits and punctuation stripped), embedded, and the top-k
+   (`llm.top_k`, default 3) nearest rows are fetched by cosine distance using the HNSW
+   index. If the best hit's similarity is **at or above `llm.similarity_threshold`
+   (0.82)** its merchant, category and claim type are used → `source=memory`,
+   confidence = similarity, `pending_review`.
+4. **One LLM call** with a minimal payload: the quoted description, the signed amount,
+   the account context (institution, type, owner role, default claim type), the allowed
+   categories and claim types, and the memory hits with **similarity ≥ 0.5** as
+   few-shot examples (weaker hits are noise and an injection surface). The JSON answer
+   is validated field by field: an unknown category becomes `Uncategorized` and halves
+   the confidence, an unknown claim type falls back to the account default, a blank
+   merchant falls back to the heuristic cleaner → `source=llm`, `pending_review`.
+5. **No answer** (no LLM, or the call failed) → `Uncategorized`, the account's default
+   claim type, `source=none`, `pending_review`.
+
+**Learning loop.** Approving a transaction (`POST /approve`, `approve-batch`, with
+`remember=true`, the default) and correcting an already-approved one (`PATCH`) upsert
+the confirmed classification into `merchant_memory`, keyed on the normalised
+description, with a fresh embedding and an incremented `review_count`. Internal
+transfers and `Uncategorized` answers are never remembered: a transfer is not a
+merchant, and remembering "unknown" would silence the model for that merchant forever.
+
+Embeddings are 1 536-dimensional. `EMBEDDING_PROVIDER=litellm` calls `/v1/embeddings`;
+`EMBEDDING_PROVIDER=hash` is an offline character-n-gram feature hasher into the same
+space. The two spaces are incompatible: do not switch providers once memory has rows.
+
+## 4. Cross-ledger reconciliation and the transfer buffer
+
+`app/services/transfers.py` implements the blueprint's timing buffer:
+
+1. A transaction matching a payment pattern, or a rule with `is_internal_transfer`, is
+   flagged `is_internal_transfer` and inserted into `transfer_buffer` as `unmatched`.
+2. The engine looks for an inverse counterpart on a *different* account: amount within
+   `amount_tolerance` (**±0.01**) of the negated amount, date within
+   `match_window_days` (**±7** calendar days), itself unmatched and not already linked.
+   Closest date wins; ties break deterministically.
+3. Both transactions get `linked_transfer_id` pointing at each other and both buffer
+   rows become `matched` with `resolved_at`.
+4. Unmatched rows persist across period closes and never block settlement; matching
+   runs after every upload and on demand (`POST /api/transfers/rematch`). Entries can
+   be linked by hand (`/match`) or marked **`ignored`**, a third state for entries that
+   will never find a counterpart.
+
+Transfers, matched or not, are excluded from settlement and from the expense views.
+A rule with `transfer_to_account` (cash moved to an investment account) also writes a
+**mirror entry** on the target account: the inverse amount, `source=transfer`,
+`auto_approved`, `raw_description` prefixed `MIRROR `, linked to its source. Removing
+or un-flagging the source leg deletes its mirror rather than leaving an orphan.
+
+## 5. Periods
+
+One `ledger_periods` row per calendar month (`YYYY-MM`). Closing a period
+(`POST /api/periods/{key}/close`) refuses with 409 while transactions are still
+`pending_review` unless `force=true`, then runs the Auditor, writes the settlement
+snapshot and locks the period. While closed, `PATCH`, approve, split and delete on
+its transactions, and delete on its claims, return 409; uploads adding new lines and
+claims dated in it are refused the same way. Reopening lifts the lock; the snapshot
+stays and is shown next to the live figure.
+
+## 6. Settlement maths (`app/services/settlement.py`)
+
+**Allocation.** For a signed `amount` and a claim type, the primary user's fraction is
+
+| claim type            | primary fraction                                              |
+|-----------------------|---------------------------------------------------------------|
+| `shared_proportional` | `primary_ratio = income_p / (income_p + income_s)` from config |
+| `shared_equal`        | 0.5                                                           |
+| `primary_personal`    | 1                                                             |
+| `secondary_personal`  | 0                                                             |
+| `personal`            | 1 if the account owner is primary, else 0                     |
+
+`allocated_primary = round_half_up(amount × fraction, rounding_decimals)` and
+`allocated_secondary = amount − allocated_primary`, the **exact remainder**, so the
+pair always sums to the amount and no penny is created or lost.
+
+**Payer.** For a transaction the payer is `AppConfig.payer_for_account`: the account's
+`billed_to` if set, else the **primary user for `credit_supplementary` accounts**
+(the supplementary card is billed to the main cardholder), else the owner. For a
+partner claim it is `paid_by` (a secondary session can only claim for themselves).
+
+**The four sums.** Over approved (`auto_approved` / `manual_approved`),
+non-transfer, non-`Transfers:*` transactions and all the period's claims:
+
+```
+net_owed_by_secondary =
+    + Σ secondary share of shared items paid by primary        (secondary_share_of_primary_paid_shared)
+    − Σ primary share of shared items paid by secondary        (primary_share_of_secondary_paid_shared)
+    + Σ secondary_personal items paid by primary               (secondary_personal_on_primary_paid)
+    − Σ primary_personal items paid by secondary               (primary_personal_on_secondary_paid)
+```
+
+Each item contributes to exactly one sum; an item borne entirely by its payer has no
+effect and is left out of `lines`. Refunds carry their sign through, so a refunded
+shared item reduces the debt. Approved credits categorised `Transfers:Settlement`
+(the partner's transfer to you) are reported as `settlement_payments_received` and are
+neither spend nor income. The API also reports `pending_review_count` so the UI can
+warn that the figure may still move.
+
+**Snapshot and due date.** Closing a period upserts the summary into
+`settlement_snapshots` (the persisted settlement ledger). `settlement_due_date` is
+`settlement.settlement_day_of_month` in the month after the period.
+
+## 7. Split transactions
+
+A transaction can be split into parts, each with its own amount, category,
+subcategory and claim type, for the classic mixed receipt (£10 at the supermarket:
+£6 groceries shared by income, £4 a personal item).
+
+**Data model.** Parts are ordinary rows in `transactions`:
+
+* the parent is flagged `is_split = true`; it keeps its money fields but carries no
+  money of its own for reporting purposes;
+* each part has `split_parent_id` (FK to the parent, `ON DELETE CASCADE`) and a
+  `split_index` for ordering, plus its own `amount`, `category`, `subcategory`,
+  `claim_type` and allocations computed with the usual `allocate()`;
+* parts copy the parent's `period_key`, `account_id`, dates, `cleaned_merchant`,
+  `raw_description` and `source_file`; they have **no fingerprint** and never enter the
+  transfer buffer, while the parent keeps its fingerprint so a re-upload still
+  dedupes;
+* invariants (`app/services/splits.py`): 2 to 20 parts, every part non-zero and
+  signed like the parent, none larger than the parent, and the parts summing
+  **exactly** to the parent's amount after quantisation; a zero-amount transaction
+  cannot be split.
+
+**Status.** Parts share the parent's review status; splitting is an act of review, so
+the parent (and its parts) are recorded `manual_approved` with `classification_source
+= manual`. Nothing is written to merchant memory for a split: a receipt that needed
+splitting is not evidence about the merchant in general.
+
+**Where parts count.**
+
+| view / engine                   | parent            | parts                                   |
+|---------------------------------|-------------------|-----------------------------------------|
+| settlement                      | excluded          | included (each with its own claim type) |
+| Macro / Micro metrics, trends   | excluded          | included                                |
+| Auditor                         | excluded          | included                                |
+| Liquidity view                  | **included**      | excluded (the parent is the real cash movement) |
+| `GET /api/transactions` list    | listed, with `parts` embedded; a `category` filter also matches parents with a part in that category | not listed on their own |
+| `GET /api/periods` counts       | counted           | counted through their parent            |
+
+**Rules.** Splitting is refused with 409 for internal transfers, for transactions in
+a closed period (like every other edit) and for parts themselves (no nesting);
+invalid parts are a 422. Once split, the parent's category, subcategory and claim
+type cannot be edited (edit the parts or remove the split), neither the parent nor a
+part can be flagged as an internal transfer, a part cannot be deleted on its own, and
+the merchant is renamed on the parent and copied to its parts.
+
+**Endpoints.** `PUT /api/transactions/{id}/split` creates the parts, replacing any
+earlier split; `DELETE /api/transactions/{id}/split` deletes the parts and leaves the
+parent as an ordinary, still approved, row; a part's category, subcategory or claim
+type is edited through `PATCH /api/transactions/{part_id}`, which recomputes its
+allocations. See `API.md` for the payloads.
+
+## 8. Metrics (`app/services/metrics.py`)
+
+Unless stated otherwise a view covers the period's approved transactions and leaves
+out internal transfers, anything categorised `Transfers:*` and, for the two expense
+views, `Income:*` (a salary credit must not shrink "household burn" or "true net
+expense"; refunds keep their spend category and still net off). Partner claims are
+positive costs and are included whether or not they are settled.
+
+* **Macro / household burn:** `primary_accounts_burn` = Σ |debits| across all accounts
+  (gross, refunds not netted) + `partner_claims_burn` = Σ claim amounts. `by_category`
+  nets refunds per category (a category can go negative).
+* **Micro / true net expense:** Σ `−allocated_primary_amount` (refunds and credits
+  reduce it) + Σ `partner_claims.primary_owes`; claims appear under the
+  pseudo-category `Partner claims`.
+* **Liquidity / cash flow:** literal cash movement on `checking` and `savings`
+  accounts, every review status, transfers included: `credits − debits`, per account.
+* **Trends:** the three headline figures for the last *n* months (zeros for empty
+  months).
+* **Investment (cash basis):** per `investment_cash` account, over all periods, using
+  only the mirror rows: `net_invested_capital = deposits − withdrawals`,
+  `realized_gain = max(withdrawals − deposits, 0)`. This is the `investment_position`
+  SQL view; totals sum per-account figures so one account's gain is never offset by
+  another's deposits.
+
+## 9. The Auditor (Agent 3, `app/services/auditor.py`)
+
+"Spend" here means approved, negative-amount, non-transfer, non-`Transfers:*`
+transactions.
+
+1. **Statistical anomalies.** Merchants are grouped by `cleaned_merchant`
+   (case-insensitive) and totalled per period over the current period and the
+   `auditor.lookback_periods` (3) before it. A merchant is *recurring* when it has
+   spend in at least two of the prior periods. The baseline is the **median** of its
+   prior per-period totals; the current total is flagged when
+   `|current − median| / median > auditor.deviation_threshold` (**0.15**). The
+   population **standard deviation** of the prior totals is reported as
+   `baseline_stddev` for context, not used as a second trigger. Each anomaly points at
+   the merchant's largest current-period transaction.
+2. **Category comparison.** Per-category spend against the average of the prior
+   periods (missing periods count as zero).
+3. **Narrative.** The LLM receives **aggregates only**: category totals, baseline
+   averages, percentage changes and the anomaly list, never line items, and must
+   answer `{"summary_sentence": ...}` in at most 60 words. If no LLM is configured, the
+   call fails or the answer is off-contract, a deterministic sentence is built from
+   the same numbers, so an audit always succeeds.
+
+Reports are appended to `audit_reports`; closing a period runs one automatically and
+`POST /api/audit/{key}/run` re-runs it at any time, including on a closed period.
+
+## 10. Security model
+
+* **Authentication.** Two shared passwords, `PRIMARY_PASSWORD` and
+  `SECONDARY_PASSWORD`, compared in constant time and exchanged for signed,
+  time-limited bearer tokens (`itsdangerous`, `SESSION_TTL_SECONDS`, 30 days). There
+  is no user table. Each token carries a short tag of the password it was issued for,
+  so rotating a password logs that role out everywhere. `primary` can do everything;
+  `secondary` can only log and list claims, delete their own unsettled claims, and
+  read the settlement and public config.
+* **Startup guard.** The backend refuses to start when `SECRET_KEY` is a placeholder
+  or shorter than 32 characters, when either password is a placeholder or shorter than
+  8 characters, or when the two passwords are the same.
+* **Login throttle.** Five failed logins from one client address within 15 minutes
+  lock that address out for 60 s; each further lockout doubles, capped at 15 minutes.
+  The API answers 429 with `Retry-After`.
+* **Uploads.** Files are written to the upload directory (created mode 700) under a
+  random name, capped at 25 MB, deleted after ingestion unless
+  `KEEP_UPLOADED_FILES=true`; only the sha256 is kept for duplicate detection.
+* **Prompt hygiene.** Statement text sent to a model is JSON-quoted and clipped to
+  200 characters, few-shot examples below 0.5 similarity are dropped, the system prompt
+  states that the text is data and never instructions, and every model answer is
+  validated against the configured taxonomy. The Auditor never sees line items.
+* **Network.** Only the frontend's port 80 is published to the network; `db`,
+  `litellm` and `backend` are bound to `127.0.0.1` on the host. Provider keys reach
+  the LiteLLM container only. The OpenAPI docs and `/api/health` are unauthenticated
+  but reachable only from the host. Everything is plain HTTP: keep it on the LAN or
+  behind TLS.
+* **Browser.** nginx sends `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer` and a strict CSP (`default-src 'self'`; no external
+  scripts, fonts or images; `frame-ancestors 'none'`). The SPA loads nothing from
+  third-party origins.
+* **Repository hygiene.** `.gitignore` excludes `.env`, `config.yaml`, uploads and
+  every statement format. `.gitleaks.toml` extends the default secret rules with UK
+  PII patterns (sort code + account number, labelled sort codes, IBANs, card numbers,
+  labelled postcodes, e-mail addresses). Pre-commit hooks run gitleaks, a private-key
+  detector, large-file and YAML checks and a guard that refuses to commit personal
+  files. CI (`.github/workflows/ci.yml`) runs `ruff` and the backend suite against a
+  pgvector service, the frontend lint / type-check / tests / build, and a full-history
+  gitleaks scan on every push.
+
+## 11. Configuration
+
+### `config.yaml` (untracked; start from `config.example.yaml`)
+
+| section               | what it drives                                                                              |
+|-----------------------|---------------------------------------------------------------------------------------------|
+| `app`                 | `base_currency`, `currency_symbol`, `data_dir` (default parent of the upload directory)     |
+| `users`               | `primary` / `secondary`: `id`, `display_name`, `base_salary_pa`, `additional_income_pa`; the income ratio is derived at load time |
+| `settlement`          | `split_strategy` (`salary_proportional` \| `equal_50_50`), `rounding_decimals`, `settlement_day_of_month` (1–28) |
+| `accounts`            | `id`, `institution` (as printed on statements; used to map uploads), optional `label` (a friendlier display name shown in the app in place of institution and account type, e.g. `HSBC Premier ··4471`; the last four digits are always appended), `account_type` (`checking`, `savings`, `credit`, `credit_supplementary`, `investment_cash`), `owner` (the spender), `identifier_last4`, `default_claim_type`, optional `billed_to` |
+| `deterministic_rules` | ordered regex → `category`, `claim_type`, optional `merchant`, `subcategory`, `is_internal_transfer`, `transfer_to_account` |
+| `transfers`           | `payment_patterns` (card-payment regexes), `match_window_days`, `amount_tolerance`          |
+| `llm`                 | `chat_model`, `embedding_model` (logical names from `litellm/config.yaml`), `similarity_threshold`, `top_k` |
+| `auditor`             | `deviation_threshold`, `lookback_periods`                                                   |
+| `categories`          | the taxonomy offered to the classifier and the UI (`Uncategorized` is always appended)      |
+
+Validation at load: distinct user ids, unique account ids, owners and `billed_to`
+must be configured users, `transfer_to_account` must name an account, regexes must
+compile, and `salary_proportional` needs a positive combined income.
+`GET /api/config` exposes a sanitised subset (no incomes, no rules).
+
+### `.env` (read by Docker Compose and the backend)
+
+| variable                                   | purpose                                                                          |
+|--------------------------------------------|----------------------------------------------------------------------------------|
+| `DB_PASSWORD`                              | PostgreSQL password; fixed in the volume on first start                          |
+| `LITELLM_MASTER_KEY`                       | key the backend presents to the proxy                                            |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`      | provider keys, injected into the `litellm` container only                        |
+| `SECRET_KEY`                               | token signing key (≥ 32 random characters)                                       |
+| `PRIMARY_PASSWORD`, `SECONDARY_PASSWORD`   | the two role passwords (≥ 8 characters, different)                               |
+| `LLM_PROVIDER`                             | `litellm` \| `none`                                                              |
+| `EMBEDDING_PROVIDER`                       | `litellm` \| `hash`                                                              |
+| `KEEP_UPLOADED_FILES`                      | `false` (default) deletes statements after ingestion                             |
+
+The backend also reads (set by `docker-compose.yml`, or defaults for local
+development): `DATABASE_URL`, `LITELLM_URL`, `LITELLM_API_KEY`, `CONFIG_PATH`,
+`UPLOAD_DIR`, `SESSION_TTL_SECONDS`, `LLM_TIMEOUT_SECONDS`, `EMBEDDING_DIMENSIONS`
+(must be 1536) and `CORS_ORIGINS`.
+
+## 12. Database schema (`backend/app/schema.sql`)
+
+| object                  | purpose                                                                                     |
+|-------------------------|---------------------------------------------------------------------------------------------|
+| `accounts`              | registry synced from `config.yaml` at start (removed accounts are kept, not offered)        |
+| `ledger_periods`        | one row per `YYYY-MM`, `is_closed`, `closed_at`                                             |
+| `statement_uploads`     | file provenance and sha256 for duplicate detection                                          |
+| `transactions`          | the master ledger: amounts, category, `claim_type`, generated `is_claimable`, the two allocations, `review_status`, transfer flag and link, `classification_source` / `_confidence`, `fingerprint`, and the split columns `is_split`, `split_parent_id`, `split_index` |
+| `merchant_memory`       | `raw_pattern` (normalised key, unique), merchant, category, claim type, `vector(1536)` embedding with an HNSW cosine index, `review_count` |
+| `partner_claims`        | claims logged at `/claim`: positive `amount`, `paid_by`, `primary_owes` / `secondary_owes`, `is_settled` |
+| `transfer_buffer`       | one row per transfer leg, `match_status` `unmatched` \| `matched` \| `ignored`              |
+| `audit_reports`         | Auditor output per run: sentence, anomalies and category comparison as JSONB               |
+| `settlement_snapshots`  | the settlement ledger: the four sums, net, payments received and line count at close       |
+| `investment_position`   | view: deposits, withdrawals, net invested capital and realised gain per `investment_cash` account |
+
+Enums: `account_type_enum`, `claim_type_enum`, `review_status_enum`
+(`pending_review`, `auto_approved`, `manual_approved`), `transfer_state_enum`.
+The file is re-run on every start; new columns are added with
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, so there is no separate migration tool.
+
+## 13. Design decisions (deviations from the blueprint)
+
+* **`primary_personal` claim type** was added to the enum so that "primary personal
+  items paid on secondary cards/claims" from the settlement formula can be recorded.
+* **Allocation rounding:** the primary share is rounded (half-up) and the secondary
+  share is the exact remainder, so allocations always sum to the amount and no penny is
+  lost. The blueprint rounds both sides independently.
+* **Periods are calendar months** keyed by each transaction's own date, so a card
+  statement closing on the 28th spills its late-July lines into July. The newest month
+  a file touched is kept on the upload record for provenance. This keeps the Auditor's
+  rolling windows and the settlement month intuitive for both users.
+* **Closed periods are locked:** edits, approvals, splits and deletions in a closed
+  period return 409 (reopen first); the transfer buffer keeps matching across closes
+  as the blueprint requires. The settlement figure at close is stored in
+  `settlement_snapshots` (the persisted settlement ledger) and shown next to the live
+  figure.
+* **Expense views exclude income:** Macro and Micro leave out `Income:*` categories as
+  well as transfers, so a salary credit cannot shrink "household burn" or "true net
+  expense"; refunds still net off within their spend category. The Macro headline is
+  gross debits; its category breakdown nets refunds.
+* **Memory threshold is "at or above" 0.82**, the learning loop runs on approve *and*
+  on corrections to already-approved transactions, transfers and `Uncategorized`
+  answers are never remembered, and few-shot examples below 0.5 similarity are not
+  sent to the model.
+* **Auditor:** the flag uses the rolling median as specified; the standard deviation of
+  the prior periods is reported alongside (`baseline_stddev`) rather than used as a
+  second trigger. Recurring means seen in at least two of the prior three periods.
+* **Transfer buffer** has an extra `ignored` state for entries that will never match.
+  Unmatched transfers are already excluded from spend (they are transfers whether or
+  not the other statement has arrived).
+* **Extra columns/tables:** `transactions.fingerprint` (idempotent re-uploads),
+  `classification_source` / `classification_confidence` (approval-queue badges),
+  `statement_uploads`, `audit_reports` and `settlement_snapshots`.
+* **Split transactions** are modelled as child rows in `transactions` rather than a
+  separate table, so every engine (settlement, metrics, Auditor) sees parts through
+  the same queries; the parent is filtered out of those engines with `is_split` and
+  the parts out of the liquidity view, the list and the period counts with
+  `split_parent_id`. A split approves the transaction, is never remembered (neither
+  parent nor part, on approve or on a later correction), and is refused for
+  transfers, closed periods and parts (no nesting).
+* **Investment tracking** uses mirror transactions on the investment account created
+  from a rule with `transfer_to_account`; removing or un-flagging the checking leg
+  removes its mirror. Realised gain is `max(withdrawals − deposits, 0)` on a cash basis
+  (see the `investment_position` view).
+* **Settlement payments** received from the partner are categorised
+  `Transfers:Settlement` by a rule and excluded from spend and income.
+* **Auth** is two shared passwords (primary / secondary) exchanged for signed,
+  time-limited bearer tokens; there is no user table by design.
+* **LLM fallback caps** (PDF only, 20 calls per file, 60 pages) and the offline
+  `hash` embedding provider were added so a bad upload cannot run up a bill and the
+  system is usable with no provider at all.
+
+## 14. Development setup
+
+Backend (Python 3.11):
+
+```bash
+cd backend
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/financemaster_test  # needs pgvector
+pytest -v
+ruff check .
+```
+
+Without `TEST_DATABASE_URL` (or `DATABASE_URL`, whose database name is suffixed
+`_test` and created on demand) the database-backed tests are skipped and the
+pure-logic tests still run. Each test runs in a transaction that is rolled back, the
+LLM is a `FakeLLMClient` and embeddings use the hashing provider, so the suite is
+fully offline. `tests/fixtures/generate.py` builds the synthetic statements at run
+time; no real statement is ever checked in. Inside Docker,
+`docker compose exec backend pytest -v` runs the same suite against a `_test`
+database on the `db` container.
+
+Frontend (Node 22):
+
+```bash
+cd frontend
+npm ci
+npm run dev        # http://localhost:5173, proxies /api to http://localhost:8000
+npm test           # vitest, jsdom, fetch mocked
+npm run lint       # eslint flat config with react-hooks
+npm run build      # tsc --noEmit && vite build
+```
+
+Pre-commit hooks: `pip install pre-commit && pre-commit install`. A manual scan of
+the working tree is `gitleaks detect --config .gitleaks.toml --no-git`.
+
+A `docker-compose.override.yml` (git-ignored) can replace the `litellm` service with a
+stub or inject build-time settings for local verification.
+
+## 15. Repository layout
+
+```
+├── docker-compose.yml          # db (pgvector), litellm, backend, frontend (nginx)
+├── config.example.yaml         # sanitised template for the untracked config.yaml
+├── .env.example                # runtime secrets template
+├── .gitleaks.toml              # secret + UK PII rules; .pre-commit-config.yaml wires them in
+├── litellm/config.yaml         # logical model names -> providers
+├── backend/
+│   ├── Dockerfile
+│   ├── app/
+│   │   ├── main.py             # FastAPI app, lifespan (guards, schema, account sync)
+│   │   ├── config.py           # Settings (.env) and AppConfig (config.yaml) models
+│   │   ├── auth.py             # passwords -> signed tokens, startup guard
+│   │   ├── schema.sql          # canonical DDL, idempotent, run at start
+│   │   ├── models.py           # SQLAlchemy mapping of schema.sql
+│   │   ├── schemas.py          # Pydantic request/response models (API.md)
+│   │   ├── routers/            # auth, reference, periods, statements, transactions,
+│   │   │                       # transfers, claims, settlement, metrics, audit, memory
+│   │   └── services/
+│   │       ├── parsers/        # Agent 1: tabular, pdf_table, pdf_text, llm_extractor, registry
+│   │       ├── rules.py        # deterministic rules + merchant name cleaner
+│   │       ├── guesser.py      # Agent 2
+│   │       ├── memory.py       # pgvector merchant memory
+│   │       ├── embeddings.py   # LiteLLM / hashing embedding clients
+│   │       ├── llm.py          # LiteLLM JSON client, Null and Fake clients
+│   │       ├── ingestion.py    # upload orchestration, fingerprints, mirrors
+│   │       ├── transfers.py    # transfer buffer and matching
+│   │       ├── settlement.py   # allocation and the four sums
+│   │       ├── settlement_snapshots.py
+│   │       ├── splits.py       # split transactions
+│   │       ├── metrics.py      # macro / micro / liquidity / investment
+│   │       ├── auditor.py      # Agent 3
+│   │       ├── periods.py, accounts.py, providers.py
+│   └── tests/                  # pytest suite; fixtures/generate.py builds synthetic statements
+├── frontend/
+│   ├── Dockerfile, nginx.conf, nginx-security-headers.conf
+│   ├── DESIGN.md               # the design system
+│   └── src/                    # api.ts, auth/, config/, pages/, components/, lib/, test/
+└── docs/                       # TECHNICAL.md (this file), API.md, BLUEPRINT.md
+```
+
+## 16. Frontend design system
+
+The UI is a product, not an admin panel: token-driven colours shared by light and
+dark mode, one typeface, one brand colour, three view accents, status never conveyed
+by colour alone, British English in sentence case. The rules, tokens and component
+primitives are documented in [`frontend/DESIGN.md`](../frontend/DESIGN.md); read it
+before adding a component.

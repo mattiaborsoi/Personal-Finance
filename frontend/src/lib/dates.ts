@@ -1,0 +1,86 @@
+const MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+function pad(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
+}
+
+/** Local date as YYYY-MM-DD. */
+export function todayIso(now: Date = new Date()): string {
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/** Local month as YYYY-MM. */
+export function currentPeriodKey(now: Date = new Date()): string {
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+}
+
+export const PERIOD_KEY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+export function isPeriodKey(value: string): boolean {
+  return PERIOD_KEY_PATTERN.test(value);
+}
+
+/** "2026-03-07" -> "2026-03"; the current month when the date is not YYYY-MM-DD. */
+export function periodKeyForDate(iso: string | null | undefined, now: Date = new Date()): string {
+  const key = iso ? iso.slice(0, 7) : '';
+  return isPeriodKey(key) ? key : currentPeriodKey(now);
+}
+
+/**
+ * Which period a page should open on: the current month when it is on
+ * record, otherwise the newest period that is not in the future, otherwise
+ * the first listed one. Null when nothing is listed.
+ */
+export function defaultPeriodKey(periods: ReadonlyArray<{ period_key: string }>, now: Date = new Date()): string | null {
+  if (periods.length === 0) return null;
+  const current = currentPeriodKey(now);
+  const keys = periods.map((p) => p.period_key);
+  if (keys.includes(current)) return current;
+  // Period keys are zero-padded YYYY-MM, so string order is chronological order.
+  const past = keys.filter((k) => isPeriodKey(k) && k < current).sort();
+  return past.length > 0 ? past[past.length - 1] : keys[0];
+}
+
+/** "2026-03" -> "March 2026". Falls back to the input when it is not a period key. */
+export function periodLabel(periodKey: string): string {
+  if (!isPeriodKey(periodKey)) return periodKey;
+  const [year, month] = periodKey.split('-');
+  return `${MONTHS[Number(month) - 1]} ${year}`;
+}
+
+/** "2026-03" -> "Mar 26" for compact chart axes. */
+export function periodShortLabel(periodKey: string): string {
+  if (!isPeriodKey(periodKey)) return periodKey;
+  const [year, month] = periodKey.split('-');
+  return `${MONTHS[Number(month) - 1].slice(0, 3)} ${year.slice(2)}`;
+}
+
+/** "2026-03-07" -> "7 Mar 2026". Unknown formats are returned unchanged. */
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!match) return iso;
+  const [, year, month, day] = match;
+  return `${Number(day)} ${MONTHS[Number(month) - 1].slice(0, 3)} ${year}`;
+}
+
+/** "2026-03-07T10:15:00Z" -> "7 Mar 2026, 10:15". */
+export function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}

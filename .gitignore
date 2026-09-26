@@ -1,0 +1,43 @@
+# --- Secrets & personal data (never commit) ---
+.env
+.env.*
+!.env.example
+/config.yaml
+/config.*.yaml
+!/config.example.yaml
+uploads/
+data/
+pgdata/
+
+# Statements and exports may contain PII / bank identifiers
+*.pdf
+*.xlsx
+*.xls
+*.csv
+*.ofx
+*.qif
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Node / frontend ---
+node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+
+# --- Tooling ---
+*.log
+.DS_Store
+.idea/
+.vscode/
+docker-compose.override.yml

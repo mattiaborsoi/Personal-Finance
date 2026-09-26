@@ -1,0 +1,32 @@
+# Pre-commit hooks guarding against secrets and personal data leaking into the repo.
+# Install once:  pip install pre-commit && pre-commit install
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+        name: gitleaks (secrets, bank identifiers, postcodes, e-mail addresses)
+        args: ["--config", ".gitleaks.toml"]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: detect-private-key
+
+  - repo: local
+    hooks:
+      - id: block-personal-files
+        name: block config.yaml / statements / env files / uploads
+        entry: >-
+          bash -c 'for f in "$@"; do case "$f" in
+            config.example.yaml|.env.example) ;;
+            config.yaml|config.*.yaml|.env|.env.*|*.pdf|*.xlsx|*.xls|*.csv|*.ofx|*.qif|uploads/*|*/uploads/*|data/*|pgdata/*)
+              echo "refusing to commit personal file: $f"; exit 1;;
+          esac; done' --
+        language: system
+        pass_filenames: true

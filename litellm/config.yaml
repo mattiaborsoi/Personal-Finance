@@ -1,0 +1,30 @@
+# LiteLLM proxy configuration.
+# The backend only ever refers to the logical names below (see `llm:` in config.yaml),
+# so swapping providers or models never touches application code.
+model_list:
+  - model_name: default-chat
+    litellm_params:
+      model: anthropic/claude-opus-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      max_tokens: 1024
+      temperature: 0
+  # Cheaper alternative for merchant classification; point `llm.chat_model` at it if preferred.
+  - model_name: cheap-chat
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      max_tokens: 1024
+      temperature: 0
+  - model_name: default-embedding
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  json_logs: true
+
+general_settings:
+  # Requests must carry `Authorization: Bearer $LITELLM_MASTER_KEY`.
+  master_key: os.environ/LITELLM_MASTER_KEY

@@ -1,0 +1,104 @@
+import { LogOut, Menu, X } from 'lucide-react';
+import { useState } from 'react';
+import { Outlet, useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext';
+import { initials } from '../lib/format';
+import { btnIcon, cx } from '../lib/ui';
+import { BrandMark, PRODUCT_NAME, Wordmark } from './BrandMark';
+import { NavLinks } from './NavLinks';
+import { ThemeToggle } from './ThemeToggle';
+
+const ROLE_LABEL = { primary: 'Primary account', secondary: 'Partner' } as const;
+
+export function Layout() {
+  const { session, logout } = useAuth();
+  const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  if (!session) return null;
+
+  function handleLogout() {
+    logout();
+    navigate('/login', { replace: true });
+  }
+
+  const userChip = (
+    <div className="flex items-center gap-3">
+      <span
+        aria-hidden="true"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-soft text-xs font-semibold text-brand-strong"
+      >
+        {initials(session.display_name)}
+      </span>
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium text-ink">{session.display_name}</p>
+        <p className="truncate text-xs text-ink-3">{ROLE_LABEL[session.role]}</p>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen md:flex">
+      {/* Desktop sidebar */}
+      <aside className="hidden w-64 shrink-0 border-r border-hairline bg-surface md:sticky md:top-0 md:flex md:h-screen md:flex-col">
+        <div className="px-5 pb-4 pt-5">
+          <Wordmark />
+        </div>
+        <nav aria-label="Main" className="flex-1 overflow-y-auto px-3 py-2">
+          <NavLinks role={session.role} />
+        </nav>
+        <div className="border-t border-hairline p-3">
+          <div className="flex items-center justify-between gap-2 rounded-xl px-2 py-2">
+            {userChip}
+            <div className="flex items-center gap-1">
+              <ThemeToggle />
+              <button type="button" className={btnIcon} onClick={handleLogout} aria-label="Log out" title="Log out">
+                <LogOut className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* Mobile top bar */}
+      <header className="sticky top-0 z-20 border-b border-hairline bg-surface/90 backdrop-blur md:hidden">
+        <div className="flex items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-2.5">
+            <BrandMark size={26} />
+            <div className="leading-tight">
+              <p className="text-sm font-semibold text-ink">{PRODUCT_NAME}</p>
+              <p className="text-xs text-ink-3">{session.display_name}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1">
+            <ThemeToggle />
+            <button type="button" className={btnIcon} onClick={handleLogout} aria-label="Log out" title="Log out">
+              <LogOut className="h-4 w-4" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={cx(btnIcon, menuOpen && 'bg-surface-2 text-ink')}
+              aria-expanded={menuOpen}
+              aria-controls="mobile-nav"
+              aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              {menuOpen ? <X className="h-4 w-4" aria-hidden="true" /> : <Menu className="h-4 w-4" aria-hidden="true" />}
+            </button>
+          </div>
+        </div>
+        {menuOpen && (
+          <nav id="mobile-nav" aria-label="Main" className="border-t border-hairline px-3 py-2 animate-rise">
+            <NavLinks role={session.role} onNavigate={() => setMenuOpen(false)} />
+          </nav>
+        )}
+      </header>
+
+      <main className="min-w-0 flex-1 px-4 py-5 sm:px-8 sm:py-8">
+        <div className="mx-auto max-w-6xl animate-rise">
+          <Outlet />
+        </div>
+      </main>
+    </div>
+  );
+}

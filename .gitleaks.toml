@@ -1,0 +1,71 @@
+# gitleaks configuration: default secret rules plus PII patterns relevant to a
+# UK personal-finance repository (sort codes, account numbers, card numbers, IBANs,
+# postcodes, e-mail addresses). Run manually with:
+#   gitleaks detect --config .gitleaks.toml --no-git   (working tree)
+#   gitleaks detect --config .gitleaks.toml            (history)
+
+title = "personal-finance"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "uk-sort-code-and-account"
+description = "UK sort code followed by an 8-digit account number"
+regex = '''\b\d{2}-\d{2}-\d{2}\b[^\n]{0,20}\b\d{8}\b'''
+
+[[rules]]
+id = "uk-sort-code-labelled"
+description = "Labelled UK sort code"
+regex = '''(?i)sort\s*code[^\n]{0,10}\d{2}[- ]?\d{2}[- ]?\d{2}'''
+
+[[rules]]
+id = "iban"
+description = "IBAN"
+regex = '''\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}([A-Z0-9]?){0,16}\b'''
+keywords = ["GB", "IBAN"]
+
+[[rules]]
+id = "payment-card-number"
+description = "16-digit payment card number in four groups (with or without separators)"
+regex = '''\b(?:\d{4}[ -]?){3}\d{4}\b'''
+
+[[rules]]
+id = "uk-postcode-labelled"
+description = "Labelled UK postcode"
+regex = '''(?i)postcode[^\n]{0,10}\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b'''
+
+[[rules]]
+id = "email-address"
+description = "E-mail address (personal identifiers must not be committed)"
+regex = '''[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'''
+[rules.allowlist]
+regexes = [
+  '''noreply@anthropic\.com''',
+  '''[A-Za-z0-9._%+-]+@users\.noreply\.github\.com''',
+  '''[A-Za-z0-9._%+-]+@example\.(com|org|net)''',
+]
+
+[[rules]]
+id = "anthropic-api-key"
+description = "Anthropic API key"
+regex = '''sk-ant-[A-Za-z0-9\-_]{20,}'''
+
+[[rules]]
+id = "openai-api-key"
+description = "OpenAI API key"
+regex = '''sk-(?:proj-)?[A-Za-z0-9]{20,}'''
+
+[allowlist]
+description = "Lock files and the documented placeholder values"
+paths = [
+  '''^frontend/package-lock\.json$''',
+]
+regexes = [
+  '''sk-local-change-me''',
+  '''change-me-db-password''',
+  '''changeme_secure_pwd''',
+  '''change-me-to-a-long-random-string''',
+  '''\b00-00-00\b''',                      # sanitised sort code used by the synthetic fixtures
+  '''\b0000[ -]?0000[ -]?0000[ -]?0000\b''',  # nil UUID / all-zero placeholders, not a card number
+]
