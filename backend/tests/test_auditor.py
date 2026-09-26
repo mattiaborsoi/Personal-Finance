@@ -9,13 +9,15 @@ statistical step is exercised with Fixture 3 from the blueprint (Northwind Energ
 from __future__ import annotations
 
 import json
-from datetime import date
+import logging
+import uuid
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
 
-from app.config import AppConfig, AuditorSection
+from app.config import AppConfig, AppSection, AuditorSection
 from app.models import AuditReport
 from app.services import auditor
 from app.services.llm import FakeLLMClient, NullLLMClient
@@ -24,8 +26,11 @@ from tests.factories import ensure_period, make_transaction
 
 D = Decimal
 PERIOD = "2026-08"
+JULY = "2026-07"
 ENERGY_RAW = "NORTHWIND ENERGY DD REF 1234"
 ENERGY = "Northwind Energy"
+WATER_RAW = "CLEARWATER UTILITIES DD"
+WATER = "Clearwater Utilities"
 
 
 def _bill(
@@ -36,6 +41,7 @@ def _bill(
     amount: str,
     merchant: str = ENERGY,
     raw: str = ENERGY_RAW,
+    category: str = "Bills:Energy",
     review_status: str = "auto_approved",
 ):
     """Insert one bill on the 3rd of *month* 2026 on the HSBC current account."""
@@ -47,10 +53,14 @@ def _bill(
         amount=amount,
         raw_description=raw,
         cleaned_merchant=merchant,
-        category="Bills:Energy",
+        category=category,
         review_status=review_status,
         classification_source="rule",
     )
+
+
+def _water_bill(db, config, *, month: int, amount: str = "-60.00"):
+    return _bill(db, config, month=month, amount=amount, merchant=WATER, raw=WATER_RAW, category="Bills:Water")
 
 
 def _energy_history(db, config):
@@ -59,8 +69,24 @@ def _energy_history(db, config):
         _bill(db, config, month=month, amount="-68.20")
 
 
+def _first_statements(db, config):
+    """A fresh install whose statements start in May, audited in July (look-back 3).
+
+    Water is flat at £60; energy is £200, £218 then £213. April has no data at all, so
+    the baseline must average June and May only: water £60 (not £40, "+50%") and
+    energy £209 (not £139.33, "+53%").
+    """
+    for month, energy in ((5, "-200.00"), (6, "-218.00"), (7, "-213.00")):
+        _bill(db, config, month=month, amount=energy)
+        _water_bill(db, config, month=month)
+
+
 def _with_lookback(config: AppConfig, lookback: int) -> AppConfig:
     return config.model_copy(update={"auditor": AuditorSection(lookback_periods=lookback)})
+
+
+def _with_currency(config: AppConfig, code: str, symbol: str) -> AppConfig:
+    return config.model_copy(update={"app": AppSection(base_currency=code, currency_symbol=symbol)})
 
 
 # --------------------------------------------------------------------------- #
@@ -78,10 +104,43 @@ def test_prior_period_keys_rejects_bad_key(config):
         auditor.prior_period_keys(config, "2026-13")
 
 
+def test_system_prompt_states_the_currency(config):
+    prompt = auditor.system_prompt(config)
+    assert prompt.startswith(auditor.SYSTEM_PROMPT)
+    assert "All amounts are in GBP; write them with the £ symbol" in prompt
+    assert "All amounts are in EUR; write them with the € symbol" in auditor.system_prompt(
+        _with_currency(config, "EUR", "€")
+    )
+    # The base prompt explains the baseline so the model does not invent a comparison.
+    assert "baseline_periods" in auditor.SYSTEM_PROMPT
+
+
+def test_foreign_currency_mentions(config):
+    assert auditor.foreign_currency_mentions(config, "August spend was £1,234.56 (GBP), up 14%.") == []
+    assert auditor.foreign_currency_mentions(config, "August spend was $212.00.") == ["$"]
+    assert auditor.foreign_currency_mentions(config, "Spend was 212 usd, roughly 190 EUR or ¥30,000.") == [
+        "¥",
+        "USD",
+        "EUR",
+    ]
+    # ISO codes only count as whole words.
+    assert auditor.foreign_currency_mentions(config, "Travel across Europe rose on a Eurostar fare.") == []
+    euro = _with_currency(config, "EUR", "€")
+    assert auditor.foreign_currency_mentions(euro, "Spend was €50.00 (EUR).") == []
+    assert auditor.foreign_currency_mentions(euro, "Spend was £50.00.") == ["£"]
+    # A symbol that is part of the configured one is not foreign.
+    dollars = _with_currency(config, "USD", "US$")
+    assert auditor.foreign_currency_mentions(dollars, "Spend was US$50.00, or 50 USD.") == []
+
+
 def test_deterministic_summary_wording(config):
     comparison = [
-        auditor.CategoryComparisonOut(category="Groceries", current=D("1000.00"), baseline_average=D("900.00")),
-        auditor.CategoryComparisonOut(category="Bills:Energy", current=D("234.56"), baseline_average=D("183.00")),
+        auditor.CategoryComparisonOut(
+            category="Groceries", current=D("1000.00"), baseline_average=D("900.00"), baseline_periods=3
+        ),
+        auditor.CategoryComparisonOut(
+            category="Bills:Energy", current=D("234.56"), baseline_average=D("183.00"), baseline_periods=3
+        ),
     ]
     anomalies = [
         auditor.AnomalyOut(
@@ -105,6 +164,43 @@ def test_deterministic_summary_without_history_or_anomalies(config):
     assert sentence.startswith("August 2026 spend was £50.00, with no spend in the previous 3 months")
     assert sentence.endswith("no recurring bills deviated from their 3-month median.")
     assert auditor.deterministic_summary(config, PERIOD, [], []) == "August 2026 has no approved spend to audit."
+
+
+def test_deterministic_summary_names_the_months_with_data(config):
+    """Fewer prior months with data than the look-back: say how many, not "3-month average"."""
+    two = [
+        auditor.CategoryComparisonOut(
+            category="Bills:Energy", current=D("213.00"), baseline_average=D("209.00"), baseline_periods=2
+        ),
+        auditor.CategoryComparisonOut(
+            category="Bills:Water", current=D("60.00"), baseline_average=D("60.00"), baseline_periods=2
+        ),
+    ]
+    assert auditor.deterministic_summary(config, JULY, two, []) == (
+        "July 2026 spend was £273.00, up 1.5% on the average of the previous 2 months with data; "
+        "no recurring bills deviated from their 3-month median."
+    )
+    one = [
+        auditor.CategoryComparisonOut(
+            category="Bills:Water", current=D("60.00"), baseline_average=D("60.00"), baseline_periods=1
+        )
+    ]
+    assert auditor.deterministic_summary(config, "2026-06", one, []).startswith(
+        "June 2026 spend was £60.00, in line with the only previous month with data;"
+    )
+    # A look-back of 1 with its single month present is still "the 1-month average".
+    assert auditor.deterministic_summary(_with_lookback(config, 1), "2026-06", one, []).startswith(
+        "June 2026 spend was £60.00, in line with the 1-month average;"
+    )
+
+
+def test_baseline_periods_is_zero_for_reports_stored_before_the_field_existed():
+    old_row = auditor.CategoryComparisonOut.model_validate(
+        {"category": "Groceries", "current": "10.00", "baseline_average": "9.00", "change_pct": 11.1}
+    )
+    assert old_row.baseline_periods == 0
+    assert auditor.baseline_periods([old_row]) == 0
+    assert auditor.baseline_periods([]) == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -307,6 +403,14 @@ def test_no_transactions_gives_no_anomalies(seeded_db, config):
     assert auditor.statistical_anomalies(seeded_db, config, PERIOD) == []
 
 
+@requires_db
+def test_flat_merchant_in_the_first_months_is_not_flagged(seeded_db, config):
+    """Statements from May only: a £60 bill in May and June is not a deviation in July."""
+    _first_statements(seeded_db, config)
+
+    assert auditor.statistical_anomalies(seeded_db, config, JULY) == []
+
+
 # --------------------------------------------------------------------------- #
 # category_comparison
 # --------------------------------------------------------------------------- #
@@ -397,6 +501,9 @@ def test_category_comparison_numbers(seeded_db, config):
     by_cat = {r.category: r for r in rows}
 
     assert [r.category for r in rows] == ["Groceries", "Bills:Energy", "Dining", "Travel"]
+    # Groceries carry spend in all three prior months, so every category averages over 3.
+    assert [r.baseline_periods for r in rows] == [3, 3, 3, 3]
+    assert auditor.baseline_periods(rows) == 3
     groceries = by_cat["Groceries"]
     assert groceries.current == D("250.00")  # 150 + 100; the 25.00 refund is not spend
     assert groceries.baseline_average == D("200.00")
@@ -425,6 +532,41 @@ def test_category_comparison_without_history(seeded_db, config):
     assert rows[0].current == D("120.00")
     assert rows[0].baseline_average == D("0.00")
     assert rows[0].change_pct is None
+    assert rows[0].baseline_periods == 0
+
+
+@requires_db
+def test_category_comparison_averages_over_prior_periods_with_data(seeded_db, config):
+    _first_statements(seeded_db, config)
+
+    rows = auditor.category_comparison(seeded_db, config, JULY)
+    by_cat = {r.category: r for r in rows}
+
+    # April is inside the look-back window but has no statement: it is not a month of zero spend.
+    assert [r.baseline_periods for r in rows] == [2, 2]
+    water = by_cat["Bills:Water"]
+    assert (water.current, water.baseline_average) == (D("60.00"), D("60.00"))  # not 120 / 3 = 40 (+50%)
+    assert water.change_pct == pytest.approx(0.0)
+    energy = by_cat["Bills:Energy"]
+    assert (energy.current, energy.baseline_average) == (D("213.00"), D("209.00"))  # not 418 / 3 = 139.33 (+53%)
+    assert energy.change_pct == pytest.approx(float(D("4.00") / D("209.00") * 100))
+
+
+@requires_db
+def test_category_missing_from_a_month_with_data_counts_as_zero(seeded_db, config):
+    # Water in May and June, energy in June only: June and May carry data, so energy
+    # averages 100 / 2 rather than 100 / 1.
+    _water_bill(seeded_db, config, month=5)
+    _water_bill(seeded_db, config, month=6)
+    _bill(seeded_db, config, month=6, amount="-100.00")
+    _water_bill(seeded_db, config, month=7)
+
+    by_cat = {r.category: r for r in auditor.category_comparison(seeded_db, config, JULY)}
+
+    assert by_cat["Bills:Energy"].baseline_average == D("50.00")
+    assert by_cat["Bills:Energy"].current == D("0.00")
+    assert by_cat["Bills:Water"].baseline_average == D("60.00")
+    assert by_cat["Bills:Water"].baseline_periods == 2
 
 
 @requires_db
@@ -466,6 +608,8 @@ def test_run_audit_uses_llm_sentence_and_sends_aggregates_only(seeded_db, config
     assert "summary_sentence" in system
     payload = json.loads(user)
     assert payload["period_key"] == PERIOD
+    assert payload["lookback_periods"] == 3
+    assert payload["baseline_periods"] == 3
     assert payload["total_current_spend"] == "200.00"
     assert payload["total_baseline_average"] == "168.20"
     assert {c["category"]: c["current"] for c in payload["categories"]} == {
@@ -484,6 +628,92 @@ def test_run_audit_uses_llm_sentence_and_sends_aggregates_only(seeded_db, config
 
 
 @requires_db
+def test_llm_prompt_and_payload_state_the_currency(seeded_db, config):
+    _fixture_3_with_groceries(seeded_db, config)
+    llm = FakeLLMClient(responses=[{"summary_sentence": "Energy jumped."}])
+
+    auditor.run_audit(seeded_db, config, llm, PERIOD)
+
+    system, payload = llm.calls[0]["system"], json.loads(llm.calls[0]["user"])
+    assert system == auditor.system_prompt(config)
+    assert "All amounts are in GBP; write them with the £ symbol" in system
+    assert payload["currency"] == {"code": "GBP", "symbol": "£"}
+
+    euro = _with_currency(config, "EUR", "€")
+    llm = FakeLLMClient(responses=[{"summary_sentence": "Energy jumped."}])
+    auditor.run_audit(seeded_db, euro, llm, PERIOD)
+    assert "All amounts are in EUR; write them with the € symbol" in llm.calls[0]["system"]
+    assert json.loads(llm.calls[0]["user"])["currency"] == {"code": "EUR", "symbol": "€"}
+
+
+@requires_db
+def test_run_audit_rejects_llm_sentence_quoting_another_currency(seeded_db, config, caplog):
+    _fixture_3_with_groceries(seeded_db, config)
+    fallback = "August 2026 spend was £200.00, up 18.9% on the 3-month average"
+
+    for foreign, quoted in (
+        ("August spend was $200.00, up 18.9% on the 3-month average.", "$"),
+        ("August spend was 200 USD; Northwind Energy rose to 87.27 USD.", "USD"),
+        ("August spend was €200.00 (about 170 GBP).", "€"),
+    ):
+        caplog.clear()
+        llm = FakeLLMClient(responses=[{"summary_sentence": foreign}])
+        with caplog.at_level(logging.WARNING, logger="app.services.auditor"):
+            report = auditor.run_audit(seeded_db, config, llm, PERIOD)
+        assert len(llm.calls) == 1
+        assert report.summary_sentence.startswith(fallback)
+        assert f"the LLM quoted {quoted} on a GBP ledger" in caplog.text
+
+    # The configured currency, as symbol or code, is fine.
+    accepted = "August spend was £200.00 (GBP), up 18.9%; Northwind Energy rose to £87.27."
+    report = auditor.run_audit(seeded_db, config, FakeLLMClient(responses=[{"summary_sentence": accepted}]), PERIOD)
+    assert report.summary_sentence == accepted
+
+    # On a euro ledger the pound is the foreign one.
+    euro = _with_currency(config, "EUR", "€")
+    report = auditor.run_audit(seeded_db, euro, FakeLLMClient(responses=[{"summary_sentence": accepted}]), PERIOD)
+    assert report.summary_sentence.startswith("August 2026 spend was €200.00, up 18.9%")
+    report = auditor.run_audit(
+        seeded_db, euro, FakeLLMClient(responses=[{"summary_sentence": "August spend was €200.00."}]), PERIOD
+    )
+    assert report.summary_sentence == "August spend was €200.00."
+
+
+@requires_db
+def test_llm_payload_counts_only_prior_periods_with_data(seeded_db, config):
+    _first_statements(seeded_db, config)
+    llm = FakeLLMClient(responses=[{"summary_sentence": "Steady."}])
+
+    auditor.run_audit(seeded_db, config, llm, JULY)
+
+    payload = json.loads(llm.calls[0]["user"])
+    assert payload["lookback_periods"] == 3
+    assert payload["baseline_periods"] == 2
+    assert payload["total_current_spend"] == "273.00"
+    assert payload["total_baseline_average"] == "269.00"
+    assert {c["category"]: c["baseline_average"] for c in payload["categories"]} == {
+        "Bills:Energy": "209.00",
+        "Bills:Water": "60.00",
+    }
+    assert payload["anomalies"] == []
+
+
+@requires_db
+def test_llm_payload_says_there_is_no_baseline_without_history(seeded_db, config):
+    _groceries(seeded_db, config, 8, "-120.00")
+    llm = FakeLLMClient(responses=[{"summary_sentence": "First month."}])
+
+    auditor.run_audit(seeded_db, config, llm, PERIOD)
+
+    payload = json.loads(llm.calls[0]["user"])
+    assert payload["baseline_periods"] == 0
+    assert payload["total_baseline_average"] == "0.00"
+    assert payload["categories"] == [
+        {"category": "Groceries", "current": "120.00", "baseline_average": "0.00", "change_pct": None}
+    ]
+
+
+@requires_db
 def test_run_audit_without_llm_uses_deterministic_sentence(seeded_db, config):
     _fixture_3_with_groceries(seeded_db, config)
 
@@ -494,6 +724,49 @@ def test_run_audit_without_llm_uses_deterministic_sentence(seeded_db, config):
         "1 recurring bill deviated: Northwind Energy £87.27 vs £68.20 (+28.0%)."
     )
     assert len(report.anomalies) == 1
+
+
+@requires_db
+def test_run_audit_in_the_first_months_uses_the_months_with_data(seeded_db, config):
+    _first_statements(seeded_db, config)
+
+    report = auditor.run_audit(seeded_db, config, NullLLMClient(), JULY)
+
+    assert report.summary_sentence == (
+        "July 2026 spend was £273.00, up 1.5% on the average of the previous 2 months with data; "
+        "no recurring bills deviated from their 3-month median."
+    )
+    assert report.anomalies == []
+    assert all(c.baseline_periods == 2 for c in report.category_comparison)
+
+    stored = auditor.latest_report(seeded_db, JULY)
+    assert stored is not None
+    assert [c.baseline_periods for c in stored.category_comparison] == [2, 2]
+
+
+@requires_db
+def test_reports_stored_before_baseline_periods_still_load(seeded_db, config):
+    ensure_period(seeded_db, PERIOD)
+    seeded_db.add(
+        AuditReport(
+            id=uuid.uuid4(),
+            period_key=PERIOD,
+            summary_sentence="Old report.",
+            anomalies=[],
+            category_comparison=[
+                {"category": "Groceries", "current": "10.00", "baseline_average": "9.00", "change_pct": 11.1}
+            ],
+            created_at=datetime.now(UTC),
+        )
+    )
+    seeded_db.flush()
+
+    report = auditor.latest_report(seeded_db, PERIOD)
+
+    assert report is not None
+    assert report.summary_sentence == "Old report."
+    assert report.category_comparison[0].baseline_average == D("9.00")
+    assert report.category_comparison[0].baseline_periods == 0
 
 
 @requires_db
@@ -543,6 +816,7 @@ def test_run_audit_persists_and_latest_report_returns_newest(seeded_db, config):
         "current": "112.73",
         "baseline_average": "100.00",
         "change_pct": pytest.approx(12.73),
+        "baseline_periods": 3,
     }
 
     latest = auditor.latest_report(seeded_db, PERIOD)

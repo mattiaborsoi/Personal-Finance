@@ -351,7 +351,10 @@ class MacroMetrics(BaseModel):
     household_burn: Decimal
     primary_accounts_burn: Decimal
     partner_claims_burn: Decimal
+    refunds: Decimal = Decimal("0.00")
+    """Credits received in spend categories this period; shown, never deducted from the burn."""
     by_category: list[CategoryAmount]
+    """Gross debits per category plus a ``Partner claims`` row; sums exactly to ``household_burn``."""
 
 
 class MicroMetrics(BaseModel):
@@ -418,6 +421,8 @@ class CategoryComparisonOut(BaseModel):
     current: Decimal
     baseline_average: Decimal
     change_pct: float | None = None
+    baseline_periods: int = 0
+    """Prior look-back periods with any spend that the average is taken over (same on every row)."""
 
 
 class AuditReportOut(BaseModel):

@@ -17,9 +17,11 @@ have been settled.
     headline burn is gross spend.
   - ``partner_claims_burn`` = Σ ``partner_claims.amount``.
   - ``household_burn`` = ``primary_accounts_burn + partner_claims_burn``.
-  - ``by_category`` nets refunds per category (Σ ``-amount``), so a category with a
-    large refund can have a negative figure and an income category such as
-    ``Income:Salary`` appears negative. Every category is listed, largest first.
+  - ``by_category`` is the same gross figure per category (categories with no debit
+    are left out) plus the pseudo-category ``"Partner claims"`` whenever the period
+    has any, so the rows add up exactly to ``household_burn``. Largest first.
+  - ``refunds`` = Σ positive amounts in spend categories (the same filter), reported
+    so the UI can say how much came back without deducting it from the headline.
 
 * **Micro / True Net Expense** - what the primary user actually bears.
 
@@ -198,6 +200,8 @@ class _CategoryTotals:
     category: str
     gross_debits: Decimal
     """Σ |amount| over debits only - refunds are not netted."""
+    credits: Decimal
+    """Σ amount over credits only - refunds and other money back in a spend category."""
     net_spend: Decimal
     """Σ -amount - refunds and credits net off."""
     primary_net_spend: Decimal
@@ -233,10 +237,12 @@ def _approved_non_transfer(period_key: str) -> tuple:
 
 def _spend_by_category(db: Session, period_key: str) -> list[_CategoryTotals]:
     debit_abs = case((Transaction.amount < 0, -Transaction.amount), else_=0)
+    credit = case((Transaction.amount > 0, Transaction.amount), else_=0)
     stmt = (
         select(
             Transaction.category,
             func.coalesce(func.sum(debit_abs), 0),
+            func.coalesce(func.sum(credit), 0),
             func.coalesce(func.sum(-Transaction.amount), 0),
             func.coalesce(func.sum(-Transaction.allocated_primary_amount), 0),
         )
@@ -247,10 +253,11 @@ def _spend_by_category(db: Session, period_key: str) -> list[_CategoryTotals]:
         _CategoryTotals(
             category=category,
             gross_debits=quantize(gross),
+            credits=quantize(credits),
             net_spend=quantize(net),
             primary_net_spend=quantize(primary),
         )
-        for category, gross, net, primary in db.execute(stmt)
+        for category, gross, credits, net, primary in db.execute(stmt)
     ]
 
 
@@ -266,11 +273,17 @@ def _claim_totals(db: Session, period_key: str) -> _ClaimTotals:
 
 def _macro(categories: list[_CategoryTotals], claims: _ClaimTotals) -> MacroMetrics:
     primary_burn = quantize(sum((c.gross_debits for c in categories), ZERO))
+    # Gross per category, like the headline, so the rows reconcile with it: a category
+    # that only received a refund this period carries no burn and is left out.
+    by_category = [CategoryAmount(category=c.category, amount=c.gross_debits) for c in categories if c.gross_debits > 0]
+    if claims.count:
+        by_category.append(CategoryAmount(category=PARTNER_CLAIMS_CATEGORY, amount=claims.amount))
     return MacroMetrics(
         household_burn=primary_burn + claims.amount,
         primary_accounts_burn=primary_burn,
         partner_claims_burn=claims.amount,
-        by_category=_sorted_categories(CategoryAmount(category=c.category, amount=c.net_spend) for c in categories),
+        refunds=quantize(sum((c.credits for c in categories), ZERO)),
+        by_category=_sorted_categories(by_category),
     )
 
 

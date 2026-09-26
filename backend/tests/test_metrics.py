@@ -95,14 +95,61 @@ def test_macro_view(seeded_db: Session, config: AppConfig) -> None:
     assert macro.primary_accounts_burn == D("120.00")
     assert macro.partner_claims_burn == D("50.00")
     assert macro.household_burn == D("170.00")
-    # by_category nets the refund, largest first; income never appears in an expense view.
+    # by_category is gross like the headline (the refund is reported, not netted) plus
+    # the claims, largest first, and adds up to it; income never appears in an expense view.
     assert [(c.category, c.amount) for c in macro.by_category] == [
-        ("Groceries", D("70.00")),
+        ("Groceries", D("100.00")),
+        ("Partner claims", D("50.00")),
         ("Entertainment", D("20.00")),
     ]
-    for value in (macro.primary_accounts_burn, macro.partner_claims_burn, macro.household_burn):
+    assert sum((c.amount for c in macro.by_category), D("0")) == macro.household_burn
+    assert macro.refunds == D("30.00")
+    for value in (macro.primary_accounts_burn, macro.partner_claims_burn, macro.household_burn, macro.refunds):
         assert _is_2dp(value)
     assert all(_is_2dp(c.amount) for c in macro.by_category)
+
+
+@requires_db
+def test_macro_rows_reconcile_with_the_headline(seeded_db: Session, config: AppConfig) -> None:
+    """A category that only received a refund carries no burn; refunds are totalled, never deducted."""
+    make_transaction(seeded_db, config, account_id=CARD, transaction_date=date(2026, 8, 3), amount="-80.00",
+                     raw_description="WAITROSE 1234 LONDON", category="Groceries")
+    make_transaction(seeded_db, config, account_id=CARD, transaction_date=date(2026, 8, 9), amount="15.00",
+                     raw_description="WAITROSE REFUND", category="Groceries")
+    make_transaction(seeded_db, config, account_id=CARD, transaction_date=date(2026, 8, 12), amount="68.00",
+                     raw_description="RAIL FARE REFUND", category="Travel", claim_type="personal")
+    # Neither income, settlement money nor a pending credit is a refund.
+    make_transaction(seeded_db, config, account_id=CHECKING, transaction_date=date(2026, 8, 25), amount="4500.00",
+                     raw_description="EMPLOYER SALARY", category="Income:Salary", claim_type="personal")
+    make_transaction(seeded_db, config, account_id=CHECKING, transaction_date=date(2026, 8, 3), amount="1685.73",
+                     raw_description="PARTNER TRANSFER CR", category="Transfers:Settlement", claim_type="personal")
+    make_transaction(seeded_db, config, account_id=CARD, transaction_date=date(2026, 8, 20), amount="9.00",
+                     raw_description="CINEWORLD REFUND", category="Entertainment", claim_type="personal",
+                     review_status="pending_review")
+    make_claim(seeded_db, config, claim_date=date(2026, 8, 10), amount="25.00", claim_type="shared_equal")
+
+    macro = metrics.period_metrics(seeded_db, config, PERIOD).macro
+
+    assert macro.primary_accounts_burn == D("80.00")
+    assert macro.partner_claims_burn == D("25.00")
+    assert macro.household_burn == D("105.00")
+    assert [(c.category, c.amount) for c in macro.by_category] == [
+        ("Groceries", D("80.00")),
+        ("Partner claims", D("25.00")),
+    ]
+    assert sum((c.amount for c in macro.by_category), D("0")) == macro.household_burn
+    assert macro.refunds == D("15.00") + D("68.00") == D("83.00")
+    assert _is_2dp(macro.refunds)
+
+
+@requires_db
+def test_macro_without_claims_or_refunds(seeded_db: Session, config: AppConfig) -> None:
+    make_transaction(seeded_db, config, account_id=CARD, transaction_date=date(2026, 8, 3), amount="-40.00",
+                     category="Groceries")
+    macro = metrics.period_metrics(seeded_db, config, PERIOD).macro
+    assert macro.by_category == [CategoryAmount(category="Groceries", amount=D("40.00"))]
+    assert macro.household_burn == D("40.00")
+    assert macro.refunds == D("0.00")
 
 
 @requires_db
@@ -184,6 +231,7 @@ def test_settled_claims_still_count(seeded_db: Session, config: AppConfig) -> No
     out = metrics.period_metrics(seeded_db, config, PERIOD)
     assert out.macro.partner_claims_burn == D("30.00")
     assert out.macro.household_burn == D("30.00")
+    assert out.macro.by_category == [CategoryAmount(category="Partner claims", amount=D("30.00"))]
     assert out.micro.from_partner_claims == D("5.00")
     assert out.micro.true_net_expense == D("5.00")
     assert out.micro.by_category == [CategoryAmount(category="Partner claims", amount=D("5.00"))]
@@ -198,6 +246,7 @@ def test_empty_and_missing_periods_return_zeros(seeded_db: Session, config: AppC
         assert out.macro.household_burn == D("0.00")
         assert out.macro.primary_accounts_burn == D("0.00")
         assert out.macro.partner_claims_burn == D("0.00")
+        assert out.macro.refunds == D("0.00")
         assert out.macro.by_category == []
         assert out.micro.true_net_expense == D("0.00")
         assert out.micro.from_transactions == D("0.00")

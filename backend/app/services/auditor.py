@@ -7,9 +7,15 @@ median of its prior per-period amounts and flag the current period when::
     |current - median_prior| / median_prior > auditor.deviation_threshold
 
 Step 2 (LLM, optional): send only *aggregated* category totals (current period vs the
-average of the previous periods) plus the statistical anomalies, and ask for a single
-concise narrative sentence. If the LLM is unavailable a deterministic sentence is
-produced instead, so the audit always succeeds.
+average of the previous periods that carried any spend) plus the statistical anomalies,
+and ask for a single concise narrative sentence. The payload and the prompt state the
+configured currency, and an answer quoting another currency is rejected. If the LLM is
+unavailable, fails or answers off-contract a deterministic sentence is produced instead,
+so the audit always succeeds.
+
+The category baseline is averaged over the prior look-back periods that contain any
+approved spend (``baseline_periods``), not over the whole window: a fresh install whose
+statements start in May must not read April as a month of zero spend.
 
 The result is persisted in ``audit_reports`` and returned as
 :class:`app.schemas.AuditReportOut`.
@@ -25,6 +31,7 @@ from __future__ import annotations
 import calendar
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -48,13 +55,20 @@ ZERO = Decimal("0.00")
 
 SYSTEM_PROMPT = (
     "You are a personal finance auditor. You receive aggregated spend figures for one "
-    "ledger period compared with the average of the preceding periods, plus a list of "
-    "recurring merchants whose charge deviated from their prior median. Write ONE concise, "
-    "plain-English sentence (max 60 words) summarising how the period compares and calling "
-    "out the most notable changes with their amounts. Do not invent figures. Respond with "
-    'strictly this JSON object and nothing else: {"summary_sentence": "<sentence>"}'
+    "ledger period compared with the average of the preceding periods that carried any "
+    "spend (baseline_periods says how many; when it is 0 there is no history, so describe "
+    "the period without comparing it), plus a list of recurring merchants whose charge "
+    "deviated from their prior median. Write ONE concise, plain-English sentence (max 60 "
+    "words) summarising how the period compares and calling out the most notable changes "
+    "with their amounts. Do not invent figures. Respond with strictly this JSON object and "
+    'nothing else: {"summary_sentence": "<sentence>"}'
 )
+"""Base narrative prompt; :func:`system_prompt` appends the configured currency."""
 LLM_MAX_TOKENS = 300
+
+CURRENCY_SYMBOLS: tuple[str, ...] = ("$", "€", "£", "¥")
+CURRENCY_CODES: tuple[str, ...] = ("USD", "EUR", "GBP", "JPY")
+"""Symbols and ISO codes an LLM answer is checked against (see :func:`foreign_currency_mentions`)."""
 
 
 # --------------------------------------------------------------------------- #
@@ -81,6 +95,32 @@ def _period_label(period_key: str) -> str:
     """Human-readable label for a period key, e.g. ``2026-08`` -> ``August 2026``."""
     year, month = int(period_key[:4]), int(period_key[5:7])
     return f"{calendar.month_name[month]} {year}"
+
+
+def system_prompt(config: AppConfig) -> str:
+    """:data:`SYSTEM_PROMPT` followed by the configured currency, so the model never guesses it."""
+    return (
+        f"{SYSTEM_PROMPT} All amounts are in {config.app.base_currency}; write them with the "
+        f"{config.app.currency_symbol} symbol and never in another currency."
+    )
+
+
+def foreign_currency_mentions(config: AppConfig, text: str) -> list[str]:
+    """Currency symbols and ISO codes in *text* other than the configured ones.
+
+    Symbols are matched anywhere (``$212.00``); codes only as whole words, so ``EUR``
+    is caught but ``Europe`` is not. A symbol that is part of the configured one (``$``
+    in ``US$``) is not foreign.
+    """
+    own_symbol = config.app.currency_symbol
+    own_code = config.app.base_currency.upper()
+    found = [symbol for symbol in CURRENCY_SYMBOLS if symbol not in own_symbol and symbol in text]
+    found += [
+        code
+        for code in CURRENCY_CODES
+        if code != own_code and re.search(rf"\b{code}\b", text, flags=re.IGNORECASE) is not None
+    ]
+    return found
 
 
 def prior_period_keys(config: AppConfig, period_key: str) -> list[str]:
@@ -200,14 +240,16 @@ def statistical_anomalies(db: Session, config: AppConfig, period_key: str) -> li
 def category_comparison(db: Session, config: AppConfig, period_key: str) -> list[CategoryComparisonOut]:
     """Per-category spend for *period_key* against the average of the prior lookback periods.
 
-    ``baseline_average`` is the total prior spend divided by ``lookback_periods`` (periods
-    without spend count as zero), so it is ``0`` when there is no history at all.
-    ``change_pct`` is the percentage change against the baseline, or ``None`` when the
-    baseline is zero. Categories with spend in either the current or a prior period are
-    included, sorted by current spend descending (then by name).
+    Only prior periods that contain any approved spend (in any category) count towards
+    the baseline: ``baseline_periods`` is their number and ``baseline_average`` is the
+    category's total prior spend divided by it. A category without spend in one of
+    those periods still counts as zero for that period. When no prior period has data
+    the baseline is ``0`` and ``baseline_periods`` is ``0``. ``change_pct`` is the
+    percentage change against the baseline, or ``None`` when the baseline is zero.
+    Categories with spend in either the current or a prior period are included, sorted
+    by current spend descending (then by name).
     """
     priors = prior_period_keys(config, period_key)
-    lookback = Decimal(len(priors))
 
     totals_stmt = (
         _spend_stmt([period_key, *priors])
@@ -216,19 +258,50 @@ def category_comparison(db: Session, config: AppConfig, period_key: str) -> list
     )
     current: dict[str, Decimal] = {}
     prior_sum: dict[str, Decimal] = {}
+    priors_with_data: set[str] = set()
     for category, key, total in db.execute(totals_stmt):
-        bucket = current if key == period_key else prior_sum
-        bucket[category] = bucket.get(category, ZERO) + abs(Decimal(total))
+        if key == period_key:
+            current[category] = current.get(category, ZERO) + abs(Decimal(total))
+        else:
+            prior_sum[category] = prior_sum.get(category, ZERO) + abs(Decimal(total))
+            priors_with_data.add(key)
+    baseline_periods = len(priors_with_data)
 
     rows: list[CategoryComparisonOut] = []
     for category in set(current) | set(prior_sum):
         cur = _q2(current.get(category, ZERO))
-        baseline = _q2(prior_sum.get(category, ZERO) / lookback)
+        baseline = _q2(prior_sum.get(category, ZERO) / baseline_periods) if baseline_periods else ZERO
         change = float((cur - baseline) / baseline * 100) if baseline > 0 else None
-        rows.append(CategoryComparisonOut(category=category, current=cur, baseline_average=baseline, change_pct=change))
+        rows.append(
+            CategoryComparisonOut(
+                category=category,
+                current=cur,
+                baseline_average=baseline,
+                change_pct=change,
+                baseline_periods=baseline_periods,
+            )
+        )
 
     rows.sort(key=lambda r: (-r.current, r.category))
     return rows
+
+
+def baseline_periods(comparison: list[CategoryComparisonOut]) -> int:
+    """How many prior periods the comparison's baseline averages over (0 without history).
+
+    Every row of one report carries the same count; reports stored before the field
+    existed read as ``0``.
+    """
+    return max((r.baseline_periods for r in comparison), default=0)
+
+
+def _baseline_label(lookback: int, periods_with_data: int) -> str:
+    """What the total is compared against, e.g. ``the 3-month average``."""
+    if periods_with_data == lookback:
+        return f"the {lookback}-month average"
+    if periods_with_data == 1:
+        return "the only previous month with data"
+    return f"the average of the previous {periods_with_data} months with data"
 
 
 # --------------------------------------------------------------------------- #
@@ -246,6 +319,9 @@ def deterministic_summary(
 
         August 2026 spend was £1,234.56, up 14.0% on the 3-month average; 1 recurring
         bill deviated: Northwind Energy £87.27 vs £68.20 (+28.0%).
+
+    When fewer than ``lookback_periods`` prior months carried spend the comparison says
+    so: ``up 1.5% on the average of the previous 2 months with data``.
     """
     label = _period_label(period_key)
     lookback = config.auditor.lookback_periods
@@ -256,12 +332,13 @@ def deterministic_summary(
     total_baseline = sum((r.baseline_average for r in comparison), ZERO)
     head = f"{label} spend was {_money(config, total_current)}"
     if total_baseline > 0:
+        against = _baseline_label(lookback, baseline_periods(comparison))
         change = float((total_current - total_baseline) / total_baseline)
         if abs(change) < 0.0005:
-            head += f", in line with the {lookback}-month average"
+            head += f", in line with {against}"
         else:
             direction = "up" if change > 0 else "down"
-            head += f", {direction} {abs(change) * 100:.1f}% on the {lookback}-month average"
+            head += f", {direction} {abs(change) * 100:.1f}% on {against}"
     else:
         head += f", with no spend in the previous {lookback} months to compare against"
 
@@ -277,13 +354,21 @@ def deterministic_summary(
 
 
 def _llm_payload(
+    config: AppConfig,
     period_key: str,
     comparison: list[CategoryComparisonOut],
     anomalies: list[AnomalyOut],
 ) -> str:
-    """Compact JSON for the narrative prompt: aggregates and anomalies only, never line items."""
+    """Compact JSON for the narrative prompt: aggregates and anomalies only, never line items.
+
+    States the currency and how many prior periods the baseline averages over
+    (``baseline_periods``, 0 when there is nothing to compare against).
+    """
     payload = {
         "period_key": period_key,
+        "currency": {"code": config.app.base_currency, "symbol": config.app.currency_symbol},
+        "lookback_periods": config.auditor.lookback_periods,
+        "baseline_periods": baseline_periods(comparison),
         "total_current_spend": str(sum((r.current for r in comparison), ZERO)),
         "total_baseline_average": str(sum((r.baseline_average for r in comparison), ZERO)),
         "categories": [
@@ -309,15 +394,23 @@ def _llm_payload(
 
 
 def _llm_summary(
-    llm: LLMClient, period_key: str, comparison: list[CategoryComparisonOut], anomalies: list[AnomalyOut]
+    llm: LLMClient,
+    config: AppConfig,
+    period_key: str,
+    comparison: list[CategoryComparisonOut],
+    anomalies: list[AnomalyOut],
 ) -> str | None:
-    """Ask the LLM for the narrative; ``None`` when unavailable, failing or off-contract."""
+    """Ask the LLM for the narrative; ``None`` when unavailable, failing or off-contract.
+
+    An answer that quotes a currency other than the configured one (``$212.00`` on a
+    GBP ledger) is off-contract: the caller falls back to :func:`deterministic_summary`.
+    """
     if not llm.available:
         return None
     try:
         result = llm.complete_json(
-            system=SYSTEM_PROMPT,
-            user=_llm_payload(period_key, comparison, anomalies),
+            system=system_prompt(config),
+            user=_llm_payload(config, period_key, comparison, anomalies),
             max_tokens=LLM_MAX_TOKENS,
         )
     except LLMError as exc:
@@ -327,7 +420,17 @@ def _llm_summary(
     if not isinstance(sentence, str) or not sentence.strip():
         log.warning("audit narrative for %s: LLM response lacked summary_sentence", period_key)
         return None
-    return sentence.strip()
+    sentence = sentence.strip()
+    foreign = foreign_currency_mentions(config, sentence)
+    if foreign:
+        log.warning(
+            "audit narrative for %s fell back to the deterministic summary: the LLM quoted %s on a %s ledger",
+            period_key,
+            ", ".join(foreign),
+            config.app.base_currency,
+        )
+        return None
+    return sentence
 
 
 # --------------------------------------------------------------------------- #
@@ -356,7 +459,7 @@ def run_audit(db: Session, config: AppConfig, llm: LLMClient, period_key: str) -
     get_or_create_period(db, period_key)
     anomalies = statistical_anomalies(db, config, period_key)
     comparison = category_comparison(db, config, period_key)
-    summary = _llm_summary(llm, period_key, comparison, anomalies)
+    summary = _llm_summary(llm, config, period_key, comparison, anomalies)
     if summary is None:
         summary = deterministic_summary(config, period_key, comparison, anomalies)
 
@@ -387,10 +490,13 @@ def latest_report(db: Session, period_key: str) -> AuditReportOut | None:
 
 __all__ = [
     "SYSTEM_PROMPT",
+    "baseline_periods",
     "category_comparison",
     "deterministic_summary",
+    "foreign_currency_mentions",
     "latest_report",
     "prior_period_keys",
     "run_audit",
     "statistical_anomalies",
+    "system_prompt",
 ]
