@@ -556,6 +556,9 @@ Reports are appended to `audit_reports`; closing a period runs one automatically
   8 characters, or when the two passwords are the same.
 * **Login throttle.** Five failed logins from one client address within 15 minutes
   lock that address out for 60 s; each further lockout doubles, capped at 15 minutes.
+  The address is the one nginx vouches for: it overwrites `X-Forwarded-For` with the
+  connecting address, and the backend reads the last entry, so a client cannot dodge
+  the throttle or aim it at someone else by sending its own header.
   The API answers 429 with `Retry-After`.
 * **Uploads.** Files are written to the upload directory (created mode 700) under a
   random name, capped at 25 MB, deleted after ingestion unless

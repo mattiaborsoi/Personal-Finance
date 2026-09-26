@@ -44,9 +44,20 @@ def reset_login_throttle() -> None:
 
 
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip() or "unknown"
+    """The address the throttle keys on.
+
+    nginx (``frontend/nginx.conf``) overwrites ``X-Forwarded-For`` with the connecting
+    address, so the *last* entry is the one the proxy vouches for; the first entry is
+    whatever the client sent and would let anyone dodge the throttle, or aim it at
+    someone else's address, by rotating the header.
+    """
+    forwarded = request.headers.get("x-forwarded-for", "")
+    entries = [entry.strip() for entry in forwarded.split(",") if entry.strip()]
+    if entries:
+        return entries[-1]
+    real_ip = (request.headers.get("x-real-ip") or "").strip()
+    if real_ip:
+        return real_ip
     return request.client.host if request.client else "unknown"
 
 

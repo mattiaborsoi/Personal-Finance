@@ -84,6 +84,23 @@ class TestLoginThrottle:
         auth_router.reset_login_throttle()
         assert client.post("/api/auth/login", json={"password": "primary-pass"}).status_code == 200
 
+    def test_throttle_keys_on_the_proxy_vouched_address_not_the_client_supplied_one(self, client):
+        # nginx overwrites X-Forwarded-For with the connecting address; should a proxy append
+        # instead, the last entry is still the trustworthy one. Rotating the first entry must
+        # neither dodge the lockout nor let a stranger aim it at someone else's address.
+        auth_router.reset_login_throttle()
+
+        def login(password: str, forwarded_for: str):
+            headers = {"X-Forwarded-For": forwarded_for}
+            return client.post("/api/auth/login", json={"password": password}, headers=headers)
+
+        for n in range(auth_router.MAX_FAILURES):
+            assert login("wrong", f"10.9.9.{n}, 192.168.1.20").status_code == 401
+        assert login("wrong", "10.9.9.99, 192.168.1.20").status_code == 429
+        # The address a stranger tried to target is untouched: only the last entry counts.
+        assert login("primary-pass", "192.168.1.20, 192.168.1.30").status_code == 200
+        auth_router.reset_login_throttle()
+
     def test_success_clears_failures(self, client):
         auth_router.reset_login_throttle()
         for _ in range(auth_router.MAX_FAILURES - 1):
