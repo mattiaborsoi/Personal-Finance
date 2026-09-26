@@ -23,7 +23,12 @@ services:
       timeout: 5s
       retries: 20
 
+  # The bundled LiteLLM proxy. It is part of the "bundled-litellm" profile, which
+  # .env enables by default (COMPOSE_PROFILES=bundled-litellm). Already running
+  # LiteLLM elsewhere? Leave COMPOSE_PROFILES empty and point LITELLM_URL /
+  # LITELLM_API_KEY at it (or do the same later under Settings -> AI -> Proxy).
   litellm:
+    profiles: ["bundled-litellm"]
     # Pin a release tag (e.g. main-v1.x.y) for reproducible deployments.
     image: ghcr.io/berriai/litellm:main-latest
     restart: always
@@ -33,7 +38,7 @@ services:
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-local-change-me}
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--port", "4000"]
@@ -47,12 +52,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      litellm:
-        condition: service_started
+    # Lets the backend reach a LiteLLM running on the host as host.docker.internal
+    # (Docker Desktop provides the name; this line adds it on Linux too).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - DATABASE_URL=postgresql://postgres:${DB_PASSWORD:?set DB_PASSWORD in .env}@db:5432/financemaster
-      - LITELLM_URL=http://litellm:4000
-      - LITELLM_API_KEY=${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
+      - LITELLM_URL=${LITELLM_URL:-http://litellm:4000}
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-local-change-me}
       - CONFIG_PATH=/app/config/config.yaml
       - UPLOAD_DIR=/app/uploads
       - KEEP_UPLOADED_FILES=${KEEP_UPLOADED_FILES:-false}

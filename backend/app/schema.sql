@@ -51,6 +51,14 @@ ALTER TABLE accounts ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0;
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
 
+-- App settings edited in the UI (Settings -> AI ...): one JSON document per key.
+-- Values override config.yaml / .env defaults; a missing key means "use the defaults".
+CREATE TABLE IF NOT EXISTS app_settings (
+    key VARCHAR(64) PRIMARY KEY,
+    value JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Ledger Periods (Statement Batches) ---------------------------------------
 CREATE TABLE IF NOT EXISTS ledger_periods (
     period_key VARCHAR(7) PRIMARY KEY, -- Format: YYYY-MM

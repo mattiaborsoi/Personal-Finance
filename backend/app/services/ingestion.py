@@ -173,7 +173,9 @@ def ingest_statement(
     path: str | Path,
     filename: str,
     account_id: str | None = None,
+    extraction_llm: LLMClient | None = None,
 ) -> UploadResult:
+    """``llm`` classifies merchants; ``extraction_llm`` (default: the same client) reads PDFs."""
     path = Path(path)
     sha = file_sha256(path)
     dup = db.scalars(select(StatementUpload).where(StatementUpload.sha256 == sha)).first()
@@ -184,7 +186,7 @@ def ingest_statement(
     if account_id and explicit_account is None:
         raise AccountResolutionError(f"unknown account_id {account_id!r}", [a.id for a in config.accounts])
 
-    parsed = parse_statement(path, config, llm=llm, filename=filename, account=explicit_account)
+    parsed = parse_statement(path, config, llm=extraction_llm or llm, filename=filename, account=explicit_account)
     warnings = list(parsed.warnings)
     default_account = _resolve_default_account(parsed, config, account_id)
 

@@ -11,7 +11,7 @@ from app.schemas import AuditReportOut
 from app.services import auditor
 from app.services.llm import LLMClient
 from app.services.periods import PERIOD_KEY_RE, get_or_create_period
-from app.services.providers import get_llm
+from app.services.providers import get_audit_llm
 
 router = APIRouter(prefix="/audit", tags=["audit"], dependencies=[Depends(require_primary)])
 
@@ -27,7 +27,7 @@ def run_audit(
     period_key: str,
     db: Session = Depends(get_db),
     config: AppConfig = Depends(get_effective_config),
-    llm: LLMClient = Depends(get_llm),
+    llm: LLMClient = Depends(get_audit_llm),
 ) -> AuditReportOut:
     _validate(period_key)
     get_or_create_period(db, period_key)

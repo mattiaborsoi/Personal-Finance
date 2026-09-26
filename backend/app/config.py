@@ -212,9 +212,22 @@ class TransfersSection(BaseModel):
 
 class LLMSection(BaseModel):
     chat_model: str = "default-chat"
+    """Model for classifying merchants (many small calls)."""
+    extraction_model: str | None = None
+    """Model for reading PDFs the parsers cannot; defaults to ``chat_model``."""
+    audit_model: str | None = None
+    """Model for the monthly summary sentence; defaults to ``chat_model``."""
     embedding_model: str = "default-embedding"
     similarity_threshold: float = Field(default=0.82, ge=0.0, le=1.0)
     top_k: int = Field(default=3, ge=1, le=20)
+
+    @property
+    def extraction_model_name(self) -> str:
+        return self.extraction_model or self.chat_model
+
+    @property
+    def audit_model_name(self) -> str:
+        return self.audit_model or self.chat_model
 
 
 class AuditorSection(BaseModel):
@@ -421,7 +434,10 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql://postgres:postgres@localhost:5432/financemaster"
     litellm_url: str = "http://localhost:4000"
-    litellm_api_key: str = "sk-local-change-me"
+    """The bundled proxy (or whatever LITELLM_URL says); Settings -> AI can point elsewhere."""
+    litellm_api_key: str = ""
+    litellm_master_key: str = "sk-local-change-me"
+    """Falls back to the bundled proxy's master key when LITELLM_API_KEY is unset."""
     config_path: str = "./config.yaml"
     upload_dir: str | None = None
     """Where uploaded statements are kept; defaults to ``<app.data_dir>/uploads``."""
@@ -453,6 +469,10 @@ class Settings(BaseSettings):
     @property
     def sqlalchemy_url(self) -> str:
         return normalise_database_url(self.database_url)
+
+    @property
+    def proxy_api_key(self) -> str:
+        return self.litellm_api_key or self.litellm_master_key
 
 
 def normalise_database_url(url: str) -> str:

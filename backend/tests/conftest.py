@@ -186,7 +186,7 @@ def client(seeded_db: Session, settings: Settings, config: AppConfig, embedder, 
     from app.deps import get_config, get_settings
     from app.main import create_app
     from app.routers.auth import reset_login_throttle
-    from app.services.providers import get_embedder, get_llm
+    from app.services.providers import get_audit_llm, get_embedder, get_extraction_llm, get_llm
 
     reset_login_throttle()
     test_settings = settings.model_copy(update={"upload_dir": str(tmp_path / "uploads")})
@@ -199,6 +199,8 @@ def client(seeded_db: Session, settings: Settings, config: AppConfig, embedder, 
     application.dependency_overrides[get_settings] = lambda: test_settings
     application.dependency_overrides[get_config] = lambda: config
     application.dependency_overrides[get_llm] = lambda: fake_llm
+    application.dependency_overrides[get_extraction_llm] = lambda: fake_llm
+    application.dependency_overrides[get_audit_llm] = lambda: fake_llm
     application.dependency_overrides[get_embedder] = lambda: embedder
     with TestClient(application) as c:
         yield c

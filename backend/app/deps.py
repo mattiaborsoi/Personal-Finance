@@ -27,22 +27,38 @@ def get_config() -> AppConfig:
     return load_config(get_settings().config_path)
 
 
-def get_effective_config(db: Session = Depends(get_db), base: AppConfig = Depends(get_config)) -> AppConfig:
-    """The file configuration with ``accounts`` replaced by the database rows.
+def get_ai_settings(
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    base: AppConfig = Depends(get_config),
+):
+    """The AI setup (Settings -> AI), falling back to ``config.yaml`` / ``.env``."""
+    from app.services import ai_settings
 
-    Accounts are edited in the app, so routers must see the current rows rather than
-    whatever ``config.yaml`` said on first start. Everything else (users, split
-    strategy, rules, categories) still comes from the file.
+    return ai_settings.load(db, settings, base)[0]
+
+
+def get_effective_config(
+    db: Session = Depends(get_db),
+    base: AppConfig = Depends(get_config),
+    ai=Depends(get_ai_settings),
+) -> AppConfig:
+    """The file configuration with what the app manages overlaid.
+
+    ``accounts`` come from the database rows (edited under Settings -> Accounts) and
+    the ``llm`` / ``auditor`` choices from the AI settings (Settings -> AI), so routers
+    always see the current values. Users, split strategy, rules and categories still
+    come from the file.
     """
+    from app.services import ai_settings
     from app.services.accounts import load_account_configs
 
-    return base.with_accounts(load_account_configs(db))
+    return ai_settings.apply(base.with_accounts(load_account_configs(db)), ai)
 
 
 def reset_caches() -> None:
     get_settings.cache_clear()
     get_config.cache_clear()
-    from app.services.providers import get_embedder, get_llm
+    from app.services.providers import reset_caches as reset_provider_caches
 
-    get_llm.cache_clear()
-    get_embedder.cache_clear()
+    reset_provider_caches()

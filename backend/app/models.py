@@ -66,6 +66,18 @@ class Account(Base):
     transactions: Mapped[list[Transaction]] = relationship(back_populates="account")
 
 
+class AppSetting(Base):
+    """A settings document edited in the UI (e.g. ``key="ai"``), overriding file defaults."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class LedgerPeriod(Base):
     __tablename__ = "ledger_periods"
 

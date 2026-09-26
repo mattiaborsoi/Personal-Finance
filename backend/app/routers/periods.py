@@ -13,7 +13,7 @@ from app.schemas import PeriodOut
 from app.services import auditor, settlement_snapshots
 from app.services.llm import LLMClient
 from app.services.periods import PERIOD_KEY_RE, close_period, get_or_create_period, reopen_period
-from app.services.providers import get_llm
+from app.services.providers import get_audit_llm
 
 router = APIRouter(prefix="/periods", tags=["periods"], dependencies=[Depends(require_primary)])
 
@@ -63,7 +63,7 @@ def close(
     force: bool = Query(default=False),
     db: Session = Depends(get_db),
     config: AppConfig = Depends(get_effective_config),
-    llm: LLMClient = Depends(get_llm),
+    llm: LLMClient = Depends(get_audit_llm),
 ) -> PeriodOut:
     _validate_key(period_key)
     period = get_or_create_period(db, period_key)

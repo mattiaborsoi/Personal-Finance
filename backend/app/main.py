@@ -17,6 +17,7 @@ from app.deps import get_config, get_settings
 from app.models import EMBEDDING_DIMENSIONS
 from app.routers import (
     accounts,
+    ai,
     audit,
     auth,
     claims,
@@ -39,6 +40,7 @@ ROUTERS = (
     auth.router,
     reference.router,
     accounts.router,
+    ai.router,
     periods.router,
     statements.router,
     transactions.router,

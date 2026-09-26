@@ -22,8 +22,9 @@ each with their own accounts and cards, who would rather not keep a spreadsheet.
 * **One figure, settled.** Your partner logs the cash they paid from their phone, card
   payments and transfers cancel themselves out, and at month end Settl shows who owes
   whom, by when, with every line behind it.
-* **Looks after itself.** Add or change your accounts and cards in Settings, and
-  update Settl to the latest version from GitHub with one click.
+* **Looks after itself.** Add or change your accounts and cards in Settings, pick
+  which AI model does what (or plug in a LiteLLM you already run), and update Settl
+  to the latest version from GitHub with one click.
 
 ## See it
 

@@ -143,7 +143,9 @@ The backend refuses to start with the placeholder values, so set:
 | `DB_PASSWORD`                            | any password; it is baked into the database volume on first run (changing it later is a separate step, below) |
 | `SECRET_KEY`                             | at least 32 random characters (`openssl rand -hex 32`); rotating it logs everyone out    |
 | `PRIMARY_PASSWORD`, `SECONDARY_PASSWORD` | at least 8 characters each, not a placeholder, and different from each other             |
-| `LITELLM_MASTER_KEY`                     | any long random string; it guards the local LLM proxy                                    |
+| `COMPOSE_PROFILES`                       | `bundled-litellm` starts the bundled LiteLLM proxy; leave it empty when you run your own (see "Using your own LiteLLM") |
+| `LITELLM_MASTER_KEY`                     | any long random string; it guards the bundled LLM proxy                                  |
+| `LITELLM_URL` / `LITELLM_API_KEY`        | optional: a LiteLLM you already run (defaults: the bundled container and its master key); Settings → AI can set this too |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`   | provider keys, read only by the LiteLLM container; leave them empty when running without an LLM |
 
 `LLM_PROVIDER`, `EMBEDDING_PROVIDER` and `KEEP_UPLOADED_FILES` are covered below and
@@ -166,14 +168,48 @@ is wired up, run the test-suite inside the container:
 docker compose exec backend pytest -v   # optional; uses a separate _test database
 ```
 
-### Running without an LLM
+### The AI setup (Settings → AI)
 
-Set `LLM_PROVIDER=none` and `EMBEDDING_PROVIDER=hash` in `.env`. Your rules and the
-merchant memory still work, using an offline embedding; merchants Settl has never seen
-land in the queue as `Uncategorized` for you to fix once, after which they are
-remembered. The Auditor still runs and writes its summary sentence from the numbers
-alone. Do not switch the embedding provider once the memory has rows in it: the two
-vector spaces are not compatible, so clear the memory first.
+Everything about the models is chosen in the app, under **Settings → AI**, and
+stored in the database (`app_settings`, key `ai`); `config.yaml` (`llm`, `auditor`)
+and `.env` (`LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `LITELLM_URL`) only provide the
+defaults shown before anything is saved. A saved change applies to the next request.
+The page offers:
+
+* **Use AI** on or off. Off means rules and the merchant memory only: unknown
+  merchants land in the queue as `Uncategorized` for you to fix once, and the
+  Auditor writes its sentence from the numbers alone.
+* **Which model does what**: categorising transactions (many small calls, a cheap
+  model is fine), reading PDFs the parsers cannot (rare), the monthly summary (one
+  call a month), and the embeddings behind the merchant memory (or "Offline, no
+  AI", the hash embedder). The choices are whatever the selected LiteLLM proxy
+  lists (`/model/info`, else `/v1/models`); add models by editing
+  `litellm/config.yaml` and restarting the proxy.
+* **Fine-tuning**: the memory confidence (cosine similarity at or above which a
+  remembered merchant is trusted without asking), how many examples go into the
+  prompt, and the Auditor's deviation threshold and look-back.
+* **Test connection**: one tiny call per job, with latency; the embedding test also
+  checks the vector has the schema's 1 536 dimensions.
+
+Changing the embedding model or provider makes the stored merchant vectors
+incomparable, so the page asks you to confirm clearing the merchant memory (the API
+answers 409 otherwise). Provider API keys never pass through the app; they stay in
+`.env` for the bundled proxy or in your own LiteLLM's configuration.
+
+### Using your own LiteLLM
+
+Settl ships a LiteLLM container, but nothing depends on it being *that* one. The
+container sits in the Compose profile `bundled-litellm`, which `.env` enables by
+default (`COMPOSE_PROFILES=bundled-litellm`). To use a LiteLLM you already run:
+
+1. leave `COMPOSE_PROFILES` empty in `.env`, so the bundled proxy is not started;
+2. either set `LITELLM_URL` and `LITELLM_API_KEY` in `.env`, or pick **My own
+   LiteLLM** under Settings → AI → Proxy and enter the URL and key there (the key is
+   stored in the database, never shown again, and used only server-side).
+
+From inside the containers a proxy on the same machine is `http://host.docker.internal:4000`
+(Docker Desktop provides that name; on Linux the backend service adds it via
+`extra_hosts`). Model names are whatever your proxy lists.
 
 ### Updating
 
@@ -569,8 +605,10 @@ compile, and `salary_proportional` needs a positive combined income.
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`      | provider keys, injected into the `litellm` container only                        |
 | `SECRET_KEY`                               | token signing key (≥ 32 random characters)                                       |
 | `PRIMARY_PASSWORD`, `SECONDARY_PASSWORD`   | the two role passwords (≥ 8 characters, different)                               |
-| `LLM_PROVIDER`                             | `litellm` \| `none`                                                              |
-| `EMBEDDING_PROVIDER`                       | `litellm` \| `hash`                                                              |
+| `COMPOSE_PROFILES`                         | `bundled-litellm` (default) starts the bundled proxy; empty = bring your own      |
+| `LITELLM_URL`, `LITELLM_API_KEY`           | an external LiteLLM (default: `http://litellm:4000` with `LITELLM_MASTER_KEY`); overridable in Settings → AI |
+| `LLM_PROVIDER`                             | `litellm` \| `none` — the default for "Use AI" in Settings → AI                   |
+| `EMBEDDING_PROVIDER`                       | `litellm` \| `hash` — the default embedding provider in Settings → AI             |
 | `KEEP_UPLOADED_FILES`                      | `false` (default) deletes statements after ingestion                             |
 
 The backend also reads (set by `docker-compose.yml`, or defaults for local

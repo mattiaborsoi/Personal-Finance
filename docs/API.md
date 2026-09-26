@@ -48,6 +48,29 @@ AccountOut: `id, institution, label, account_type, owner_user_id, identifier_las
 
 `DELETE /api/accounts/{id}` → 204. **409** when the account has transactions or uploads, or a `config.yaml` rule sends transfers to it (archive it instead).
 
+## AI (Settings → AI)
+
+Which proxy and models Settl uses, and the thresholds behind them. Defaults come from `config.yaml` (`llm`, `auditor`) and `.env` (`LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `LITELLM_URL`); a saved document overrides them and applies to the next request, no restart needed. Provider API keys never pass through this API.
+
+`GET /api/ai` →
+```json
+{
+  "enabled": true,
+  "embedding_provider": "litellm",
+  "models": { "chat": "default-chat", "extraction": "default-chat", "audit": "default-chat", "embedding": "default-embedding" },
+  "thresholds": { "similarity_threshold": 0.82, "top_k": 3, "deviation_threshold": 0.15, "lookback_periods": 3 },
+  "proxy": { "mode": "bundled", "url": "http://litellm:4000", "bundled_url": "http://litellm:4000", "reachable": true, "has_key": true },
+  "available_models": [ { "name": "cheap-chat", "mode": "chat", "provider": "Anthropic", "model": "claude-haiku-4-5" } ],
+  "memory_rows": 8,
+  "stored": false
+}
+```
+`models.chat` categorises transactions, `extraction` reads PDFs the parsers cannot, `audit` writes the monthly summary, `embedding` turns merchants into vectors (`embedding_provider: "hash"` = offline, no AI). `available_models` is what the selected LiteLLM proxy lists (`/model/info`, falling back to `/v1/models`), cached for a minute; `proxy.mode` is `bundled` (the Compose container, URL and key from `.env`) or `external` (a LiteLLM you already run, at `proxy.url` with a key stored server-side and never returned). `stored: false` means nothing has been saved yet.
+
+`PUT /api/ai` body: any subset of `{ enabled, embedding_provider, models: {chat?, extraction?, audit?, embedding?}, thresholds: {...}, proxy: {mode?, url?, api_key?}, clear_memory }` → the same body as `GET`. A blank or omitted `api_key` keeps the stored one. **422** for out-of-range thresholds (similarity 0.5–0.99, top_k 1–10, deviation 0.05–1.0, look-back 1–12), a model the proxy does not list or lists with the wrong kind, or `mode: external` without an `http(s)://` URL. **409** when the embedding model or provider changes while `memory_rows > 0` and `clear_memory` is not `true`: the stored vectors would no longer be comparable; with `clear_memory: true` the merchant memory is emptied and the change saved.
+
+`POST /api/ai/test` body: the same shape as `PUT` (the values on the form, saved or not) → `{ "chat": {ok, ms, model, error} | null, "extraction": ..., "audit": ..., "embedding": {ok, ms, model, dimensions, error} }`. Each chat job is one tiny completion; the embedding test also checks the vector has the schema's 1536 dimensions. `null` for a job that is switched off; never a 5xx.
+
 ## System (Settings → System)
 
 `GET /api/system` →

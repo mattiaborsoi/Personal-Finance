@@ -19,7 +19,7 @@ from app.services.ingestion import AccountResolutionError, DuplicateUploadError,
 from app.services.llm import LLMClient
 from app.services.parsers.base import ParseError
 from app.services.periods import PeriodClosedError
-from app.services.providers import get_embedder, get_llm
+from app.services.providers import get_embedder, get_extraction_llm, get_llm
 
 router = APIRouter(prefix="/statements", tags=["statements"], dependencies=[Depends(require_primary)])
 
@@ -42,6 +42,7 @@ def upload_statement(
     settings: Settings = Depends(get_settings),
     embedder: EmbeddingClient = Depends(get_embedder),
     llm: LLMClient = Depends(get_llm),
+    extraction_llm: LLMClient = Depends(get_extraction_llm),
 ) -> UploadResult:
     filename = _safe_filename(file.filename or "")
     suffix = Path(filename).suffix.lower()
