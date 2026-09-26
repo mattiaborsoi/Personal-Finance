@@ -101,6 +101,19 @@ describe('<SystemPanel />', () => {
     expect(screen.getByText('Not checked')).toBeInTheDocument();
   });
 
+  it('does not keep asking to reload for an update that finished before the page was opened', async () => {
+    // The updater reports "succeeded" until its next run; only an update followed from this page earns the banner.
+    mockFetch(({ method, url }) => (method === 'GET' && url === '/api/system' ? jsonResponse(succeeded) : undefined));
+
+    renderPanel();
+
+    expect(await screen.findByText('Up to date')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Reload to use the new version/)).not.toBeInTheDocument();
+    expect(screen.getByText(/The last update finished/)).toHaveTextContent('running f9e8d7c');
+    expect(screen.getByText('Last update log')).toBeInTheDocument();
+  });
+
   it('disables Check again and says so when update checks are off on the server', async () => {
     mockFetch(({ method, url }) =>
       method === 'GET' && url === '/api/system'

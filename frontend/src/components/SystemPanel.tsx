@@ -46,6 +46,12 @@ export function SystemPanel({ pollIntervalMs = 3000 }: Props) {
   const [actionError, setActionError] = useState<string | null>(null);
   /** True from "Update now" until the updater reports a final state, even before the server says "running". */
   const [watching, setWatching] = useState(false);
+  /**
+   * True once an update followed from this page has finished. The updater keeps
+   * reporting "succeeded" until the next run, so a page opened later (or reloaded)
+   * must not keep asking the user to reload.
+   */
+  const [completedHere, setCompletedHere] = useState(false);
   const [restarting, setRestarting] = useState(false);
 
   useEffect(() => {
@@ -80,6 +86,7 @@ export function SystemPanel({ pollIntervalMs = 3000 }: Props) {
         setRestarting(false);
         if (next.updater.state !== 'running') {
           setWatching(false);
+          setCompletedHere(true);
           return;
         }
       } catch (err) {
@@ -227,7 +234,7 @@ export function SystemPanel({ pollIntervalMs = 3000 }: Props) {
             </Notice>
             <UpdateLog log={updater.log} />
           </div>
-        ) : updater.state === 'succeeded' ? (
+        ) : updater.state === 'succeeded' && completedHere ? (
           <div className="space-y-3">
             <Notice
               tone="good"
@@ -244,6 +251,21 @@ export function SystemPanel({ pollIntervalMs = 3000 }: Props) {
             {updater.log && (
               <details className="text-sm text-ink-2">
                 <summary className="cursor-pointer">Update log</summary>
+                <div className="mt-2">
+                  <UpdateLog log={updater.log} />
+                </div>
+              </details>
+            )}
+          </div>
+        ) : updater.state === 'succeeded' ? (
+          <div className="space-y-3">
+            <p className="text-sm text-ink-2">
+              The last update finished{updater.finished_at ? ` ${formatDateTime(updater.finished_at)}` : ''} and the app is
+              running {info.running.short ?? 'the current version'}. Nothing is running now.
+            </p>
+            {updater.log && (
+              <details className="text-sm text-ink-2">
+                <summary className="cursor-pointer">Last update log</summary>
                 <div className="mt-2">
                   <UpdateLog log={updater.log} />
                 </div>

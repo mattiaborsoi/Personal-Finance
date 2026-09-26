@@ -1,0 +1,20 @@
+name: Feature request
+description: Suggest an improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The situation or problem, in plain words. Solutions welcome, but the problem matters more.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could Settl help?
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Upload / parsing, Approval queue / categorising, Split transactions, Transfers, Claims, Settlement, Dashboard / metrics, Audit, Settings, Updater, Deployment / Docker, Docs, Other]

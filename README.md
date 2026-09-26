@@ -90,3 +90,10 @@ even those can be switched off.
   configuration, schema and development setup.
 * [docs/API.md](docs/API.md): the REST contract.
 * [docs/BLUEPRINT.md](docs/BLUEPRINT.md): the original specification.
+
+## Contributing
+
+Bug reports and ideas go in [issues](https://github.com/mattiaborsoi/Personal-Finance/issues);
+changes come as pull requests against `main`, see [CONTRIBUTING.md](CONTRIBUTING.md).
+Security problems: [SECURITY.md](SECURITY.md). Settl is released under the
+[MIT licence](LICENSE).

@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: ["**"]
+  # Also check pull requests, including ones opened from forks.
+  pull_request:
 
 permissions:
   contents: read

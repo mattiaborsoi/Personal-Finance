@@ -1,0 +1,40 @@
+name: Bug report
+description: Something in Settl does not behave as it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please do not paste statements, account numbers, real names or keys; describe the shape of the data instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Upload a CSV with ...
+        2. Open the approval queue ...
+        3. ...
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The "Running" commit shown under Settings → System.
+      placeholder: 373559b
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Upload / parsing, Approval queue / categorising, Split transactions, Transfers, Claims, Settlement, Dashboard / metrics, Audit, Settings, Updater, Deployment / Docker, Docs, Other]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant lines from `docker compose logs backend` (secrets redacted).
+      render: text
