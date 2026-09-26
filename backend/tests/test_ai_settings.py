@@ -123,9 +123,13 @@ def test_proxy_resolution_and_key_handling(config):
         "mode": "external",
         "url": "http://other:4000",
         "bundled_url": "http://litellm.test:4000",
+        "from_env": True,  # litellm.test is not the Compose service, so .env overrode it
         "has_key": True,
     }
     assert "api_key" not in str(public)
+    # The Compose default is the bundled container itself, whatever the port or trailing slash.
+    bundled = ai_settings.defaults(_settings(litellm_url="http://litellm:4000/"), config)
+    assert bundled.public_dict(_settings(litellm_url="http://litellm:4000/"))["proxy"]["from_env"] is False
 
     with pytest.raises(ai_settings.AiSettingsError, match="http://"):
         ai_settings.merged(ai, AiUpdate(proxy={"mode": "external", "url": "litellm.local:4000"}))

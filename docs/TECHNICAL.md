@@ -203,9 +203,14 @@ container sits in the Compose profile `bundled-litellm`, which `.env` enables by
 default (`COMPOSE_PROFILES=bundled-litellm`). To use a LiteLLM you already run:
 
 1. leave `COMPOSE_PROFILES` empty in `.env`, so the bundled proxy is not started;
-2. either set `LITELLM_URL` and `LITELLM_API_KEY` in `.env`, or pick **My own
-   LiteLLM** under Settings → AI → Proxy and enter the URL and key there (the key is
-   stored in the database, never shown again, and used only server-side).
+2. either set `LITELLM_URL` and `LITELLM_API_KEY` in `.env` (the Proxy card in
+   Settings → AI then reads **Proxy from .env** with that URL), or pick **My own
+   LiteLLM** there and enter the URL and key in the app (the key is stored in the
+   database, never shown again, and used only server-side).
+
+If your proxy lists no embedding model (an Anthropic-only LiteLLM, say), the
+merchant memory stays on the offline hash embedder and the page says so; add an
+embedding model to your LiteLLM to switch it on.
 
 From inside the containers a proxy on the same machine is `http://host.docker.internal:4000`
 (Docker Desktop provides that name; on Linux the backend service adds it via

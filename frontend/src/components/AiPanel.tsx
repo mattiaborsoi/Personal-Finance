@@ -49,11 +49,16 @@ import { LoadingState } from './LoadingState';
 import { Notice } from './Notice';
 import { StatTile } from './StatTile';
 
-export const SAVED_MESSAGE = 'Saved. New settings apply to the next upload.';
+export const SAVED_MESSAGE = 'Saved. New settings apply to the next upload and the next monthly summary.';
 export const MODEL_LIST_UNAVAILABLE_MESSAGE =
   'The list of models could not be loaded from the proxy, so type the model names as they appear in its config.';
 export const STALE_MODEL_LIST_MESSAGE = 'Save to refresh the list of models.';
+export const NO_EMBEDDING_MODEL_MESSAGE =
+  'This proxy lists no embedding model, so merchants are matched offline. Add one to your LiteLLM (text-embedding-3-small, say) and save to use AI here.';
 export const PROXY_URL_PLACEHOLDER = 'http://host.docker.internal:4000';
+/** The first radio: the proxy `.env` names, which is the bundled container unless `LITELLM_URL` was set. */
+export const BUNDLED_PROXY_LABEL = 'Bundled proxy';
+export const PROXY_FROM_ENV_LABEL = 'Proxy from .env';
 
 // ---------------------------------------------------------------------------
 // The jobs and the thresholds, as the form shows them
@@ -539,6 +544,10 @@ export function AiPanel() {
   /** The proxy's list is only worth offering when it came from the proxy the form points at. */
   const typedModels = !reachable || staleList;
   const external = form.proxy.mode === 'external';
+  /** `.env` points at a LiteLLM other than the bundled container, so "bundled" would be a lie. */
+  const envProxy = saved.proxy.from_env;
+  /** The proxy answered and nothing it lists can embed, so the memory cannot go online until it does. */
+  const noEmbeddingModel = !typedModels && optionsFor(saved.available_models, 'embedding', '').length === 0;
   const busy = saving || testing;
 
   async function save(event: FormEvent) {
@@ -636,12 +645,20 @@ export function AiPanel() {
             value="bundled"
             checked={!external}
             disabled={busy}
-            label="Bundled proxy"
+            label={envProxy ? PROXY_FROM_ENV_LABEL : BUNDLED_PROXY_LABEL}
             hint={
-              <>
-                The LiteLLM container that ships with {PRODUCT_NAME} (<code className="font-mono">docker compose</code>). Provider keys go
-                in <code className="font-mono">.env</code>.
-              </>
+              envProxy ? (
+                <>
+                  <code className="font-mono">LITELLM_URL</code> in <code className="font-mono">.env</code> points at{' '}
+                  <code className="font-mono">{saved.proxy.bundled_url}</code>, so the container that ships with {PRODUCT_NAME} is not
+                  used.
+                </>
+              ) : (
+                <>
+                  The LiteLLM container that ships with {PRODUCT_NAME} (<code className="font-mono">docker compose</code>). Provider keys
+                  go in <code className="font-mono">.env</code>.
+                </>
+              )
             }
             onChange={(mode) => setProxy({ mode })}
           />
@@ -737,16 +754,26 @@ export function AiPanel() {
                   />
                 )}
                 {!chatJob && (
-                  <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink-2">
-                    <input
-                      type="checkbox"
-                      className={checkboxBase}
-                      checked={offline}
-                      disabled={busy}
-                      onChange={(e) => edit((prev) => ({ ...prev, embedding_provider: e.target.checked ? 'hash' : 'litellm' }))}
-                    />
-                    Offline, no AI
-                  </label>
+                  <>
+                    <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink-2">
+                      <input
+                        type="checkbox"
+                        className={checkboxBase}
+                        checked={offline}
+                        // With nothing to embed, unticking would only lead to a save the server refuses.
+                        disabled={busy || (offline && noEmbeddingModel)}
+                        aria-describedby={noEmbeddingModel ? `${id}-offline-note` : undefined}
+                        onChange={(e) => edit((prev) => ({ ...prev, embedding_provider: e.target.checked ? 'hash' : 'litellm' }))}
+                      />
+                      Offline, no AI
+                    </label>
+                    {noEmbeddingModel && (
+                      <p id={`${id}-offline-note`} className="flex items-start gap-2 text-xs text-ink-3">
+                        <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                        {NO_EMBEDDING_MODEL_MESSAGE}
+                      </p>
+                    )}
+                  </>
                 )}
               </ModelRow>
             );
@@ -911,9 +938,18 @@ export function AiPanel() {
       </div>
 
       <p className="text-xs text-ink-3">
-        API keys never appear here. They live in <code className="font-mono">.env</code> on the server and the list of models in{' '}
-        <code className="font-mono">litellm/config.yaml</code>; after changing either, run{' '}
-        <code className="font-mono">docker compose up -d litellm</code>.
+        {external || envProxy ? (
+          <>
+            Provider API keys never appear here. They live in your LiteLLM's own configuration, as does the list of models;{' '}
+            {PRODUCT_NAME} only holds the proxy's key.
+          </>
+        ) : (
+          <>
+            API keys never appear here. They live in <code className="font-mono">.env</code> on the server and the list of models in{' '}
+            <code className="font-mono">litellm/config.yaml</code>; after changing either, run{' '}
+            <code className="font-mono">docker compose up -d litellm</code>.
+          </>
+        )}
       </p>
     </form>
   );

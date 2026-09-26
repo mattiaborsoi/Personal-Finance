@@ -6,7 +6,10 @@ import { aiSettings } from '../test/fixtures';
 import { jsonResponse, mockFetch, renderWithProviders, type RecordedCall } from '../test/utils';
 import {
   AiPanel,
+  BUNDLED_PROXY_LABEL,
   MODEL_LIST_UNAVAILABLE_MESSAGE,
+  NO_EMBEDDING_MODEL_MESSAGE,
+  PROXY_FROM_ENV_LABEL,
   PROXY_URL_PLACEHOLDER,
   PROXY_URL_SCHEME_MESSAGE,
   SAVED_MESSAGE,
@@ -413,7 +416,9 @@ describe('<AiPanel />', () => {
   it('sends only the proxy fields that changed', async () => {
     const user = userEvent.setup();
     const { calls } = mockAi(
-      aiSettings({ proxy: { mode: 'external', url: EXTERNAL_URL, bundled_url: 'http://litellm:4000', reachable: true, has_key: false } }),
+      aiSettings({
+        proxy: { mode: 'external', url: EXTERNAL_URL, bundled_url: 'http://litellm:4000', from_env: false, reachable: true, has_key: false },
+      }),
     );
 
     await renderPanel();
@@ -437,6 +442,63 @@ describe('<AiPanel />', () => {
     await user.click(saveButton());
     await waitFor(() => expect(byMethod(calls, 'PUT')).toHaveLength(2));
     expect(byMethod(calls, 'PUT')[1].body).toEqual({ proxy: { mode: 'bundled' } });
+  });
+
+  it('calls the first proxy "from .env" when LITELLM_URL points away from the bundled container', async () => {
+    mockAi(
+      aiSettings({
+        proxy: { mode: 'bundled', url: EXTERNAL_URL, bundled_url: EXTERNAL_URL, from_env: true, reachable: true, has_key: true },
+      }),
+    );
+
+    await renderPanel();
+
+    const radio = screen.getByRole('radio', { name: PROXY_FROM_ENV_LABEL });
+    expect(radio).toBeChecked();
+    expect(screen.queryByRole('radio', { name: BUNDLED_PROXY_LABEL })).not.toBeInTheDocument();
+    expect(radio).toHaveAccessibleDescription(
+      `LITELLM_URL in .env points at ${EXTERNAL_URL}, so the container that ships with Settl is not used.`,
+    );
+    // No bundled container to restart, so no advice to do so.
+    expect(screen.queryByText(/docker compose up -d litellm/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Provider API keys never appear here/)).toHaveTextContent("Settl only holds the proxy's key");
+  });
+
+  it('keeps the merchant memory offline, and says why, when the proxy lists no embedding model', async () => {
+    const user = userEvent.setup();
+    const chatOnly = aiSettings().available_models.filter((m) => m.mode === 'chat');
+    const { calls } = mockAi(aiSettings({ embedding_provider: 'hash', available_models: chatOnly, memory_rows: 0 }));
+
+    await renderPanel();
+
+    const offline = screen.getByRole('checkbox', { name: 'Offline, no AI' });
+    expect(offline).toBeChecked();
+    expect(offline).toBeDisabled();
+    expect(offline).toHaveAccessibleDescription(NO_EMBEDDING_MODEL_MESSAGE);
+    expect(screen.queryByLabelText('Merchant memory')).not.toBeInTheDocument();
+    // The chat jobs are unaffected.
+    await user.selectOptions(screen.getByLabelText('Categorising transactions'), 'cheap-chat');
+    await user.click(saveButton());
+    await waitFor(() => expect(byMethod(calls, 'PUT')).toHaveLength(1));
+    expect(byMethod(calls, 'PUT')[0].body).toEqual({ models: { chat: 'cheap-chat' } });
+  });
+
+  it('still lets the memory go offline when its saved model is one the proxy no longer lists', async () => {
+    const user = userEvent.setup();
+    const chatOnly = aiSettings().available_models.filter((m) => m.mode === 'chat');
+    const { calls } = mockAi(aiSettings({ available_models: chatOnly, memory_rows: 0 }));
+
+    await renderPanel();
+
+    expect(screen.getByText(NO_EMBEDDING_MODEL_MESSAGE)).toBeInTheDocument();
+    expect(optionLabels(screen.getByLabelText('Merchant memory'))).toEqual(['default-embedding (not listed by the proxy)']);
+    const offline = screen.getByRole('checkbox', { name: 'Offline, no AI' });
+    expect(offline).toBeEnabled();
+    await user.click(offline);
+    expect(offline).toBeDisabled();
+    await user.click(saveButton());
+    await waitFor(() => expect(byMethod(calls, 'PUT')).toHaveLength(1));
+    expect(byMethod(calls, 'PUT')[0].body).toEqual({ embedding_provider: 'hash' });
   });
 
   it('refuses a URL without a scheme and shows the server’s 422 for one it rejects', async () => {

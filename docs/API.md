@@ -59,13 +59,13 @@ Which proxy and models Settl uses, and the thresholds behind them. Defaults come
   "embedding_provider": "litellm",
   "models": { "chat": "default-chat", "extraction": "default-chat", "audit": "default-chat", "embedding": "default-embedding" },
   "thresholds": { "similarity_threshold": 0.82, "top_k": 3, "deviation_threshold": 0.15, "lookback_periods": 3 },
-  "proxy": { "mode": "bundled", "url": "http://litellm:4000", "bundled_url": "http://litellm:4000", "reachable": true, "has_key": true },
+  "proxy": { "mode": "bundled", "url": "http://litellm:4000", "bundled_url": "http://litellm:4000", "from_env": false, "reachable": true, "has_key": true },
   "available_models": [ { "name": "cheap-chat", "mode": "chat", "provider": "Anthropic", "model": "claude-haiku-4-5" } ],
   "memory_rows": 8,
   "stored": false
 }
 ```
-`models.chat` categorises transactions, `extraction` reads PDFs the parsers cannot, `audit` writes the monthly summary, `embedding` turns merchants into vectors (`embedding_provider: "hash"` = offline, no AI). `available_models` is what the selected LiteLLM proxy lists (`/model/info`, falling back to `/v1/models`), cached for a minute; `proxy.mode` is `bundled` (the Compose container, URL and key from `.env`) or `external` (a LiteLLM you already run, at `proxy.url` with a key stored server-side and never returned). `stored: false` means nothing has been saved yet.
+`models.chat` categorises transactions, `extraction` reads PDFs the parsers cannot, `audit` writes the monthly summary, `embedding` turns merchants into vectors (`embedding_provider: "hash"` = offline, no AI). `available_models` is what the selected LiteLLM proxy lists (`/model/info`, falling back to `/v1/models`), cached for a minute; `proxy.mode` is `bundled` (whatever `.env` says: `LITELLM_URL` / `LITELLM_API_KEY`, by default the Compose container; `from_env: true` when `.env` points elsewhere) or `external` (a LiteLLM you already run, at `proxy.url` with a key stored server-side and never returned). `stored: false` means nothing has been saved yet.
 
 `PUT /api/ai` body: any subset of `{ enabled, embedding_provider, models: {chat?, extraction?, audit?, embedding?}, thresholds: {...}, proxy: {mode?, url?, api_key?}, clear_memory }` → the same body as `GET`. A blank or omitted `api_key` keeps the stored one. **422** for out-of-range thresholds (similarity 0.5–0.99, top_k 1–10, deviation 0.05–1.0, look-back 1–12), a model the proxy does not list or lists with the wrong kind, or `mode: external` without an `http(s)://` URL. **409** when the embedding model or provider changes while `memory_rows > 0` and `clear_memory` is not `true`: the stored vectors would no longer be comparable; with `clear_memory: true` the merchant memory is emptied and the change saved.
 

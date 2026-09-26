@@ -527,14 +527,17 @@ export interface AiThresholds {
   lookback_periods: number;
 }
 
-/** "bundled": the LiteLLM container that ships with the app; "external": one the user already runs. */
+/** "bundled": the proxy `.env` names, by default the LiteLLM container that ships with the app; "external": one saved in the app. */
 export type ProxyMode = 'bundled' | 'external';
 
 export interface AiProxy {
   mode: ProxyMode;
-  /** The URL in use: the bundled container's, or the one saved for an external proxy. */
+  /** The URL in use: the one from `.env`, or the one saved for an external proxy. */
   url: string;
+  /** What `.env` says (`LITELLM_URL`); the bundled container unless overridden. */
   bundled_url: string;
+  /** True when `LITELLM_URL` in `.env` points somewhere other than the bundled container. */
+  from_env: boolean;
   reachable: boolean;
   /** Whether an API key is stored for the proxy; the key itself is never returned. */
   has_key: boolean;

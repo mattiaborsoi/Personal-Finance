@@ -39,6 +39,8 @@ log = logging.getLogger(__name__)
 SETTINGS_KEY = "ai"
 MODEL_LIST_CACHE_SECONDS = 60
 TEST_TIMEOUT_SECONDS = 30.0
+BUNDLED_PROXY_HOST = "litellm"
+"""The Compose service name of the LiteLLM container that ships with the app."""
 
 EmbeddingProvider = Literal["litellm", "hash"]
 
@@ -65,9 +67,10 @@ class AiThresholds(BaseModel):
 class AiProxy(BaseModel):
     """Which LiteLLM proxy to talk to.
 
-    ``bundled`` is the container from ``docker-compose.yml`` (URL and key from
-    ``.env``); ``external`` is a LiteLLM you already run, at ``url`` with
-    ``api_key`` (stored here, never returned to the browser).
+    ``bundled`` is whatever ``.env`` says (``LITELLM_URL`` / ``LITELLM_API_KEY``),
+    which by default is the container from ``docker-compose.yml``; ``external`` is
+    a LiteLLM you already run, at ``url`` with ``api_key`` (stored here, never
+    returned to the browser).
     """
 
     mode: Literal["bundled", "external"] = "bundled"
@@ -95,10 +98,13 @@ class AiSettings(BaseModel):
     def public_dict(self, settings: Settings) -> dict[str, Any]:
         """Everything but the stored key."""
         data = self.model_dump()
+        bundled_url = settings.litellm_url.rstrip("/")
         data["proxy"] = {
             "mode": self.proxy.mode,
             "url": self.proxy_url(settings),
-            "bundled_url": settings.litellm_url.rstrip("/"),
+            "bundled_url": bundled_url,
+            # True when LITELLM_URL in .env points somewhere other than the bundled container.
+            "from_env": httpx.URL(bundled_url).host != BUNDLED_PROXY_HOST,
             "has_key": bool(self.proxy_key(settings)),
         }
         return data
