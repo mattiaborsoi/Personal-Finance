@@ -20,14 +20,14 @@ Sign convention everywhere: **negative = money out, positive = money in**. Money
                  ┌───────────────────────────▼──────────────────────────────────┐
                  │  backend   (FastAPI, uvicorn, Python 3.11)   127.0.0.1:8000  │
                  │    config engine · auth · routers · services (agents)        │
-                 └──────────┬─────────────────────────────────────┬─────────────┘
-                            │ SQL (psycopg 3)                      │ HTTP (OpenAI-compatible)
-                 ┌──────────▼───────────────┐          ┌──────────▼─────────────┐
-                 │  db  pgvector/pgvector:  │          │  litellm  proxy        │
-                 │  pg16   127.0.0.1:5432   │          │  127.0.0.1:4000        │
-                 │  ledger · memory ·       │          │  logical model names → │
-                 │  snapshots · audits      │          │  provider API keys     │
-                 └──────────────────────────┘          └────────────────────────┘
+                 └─┬─────────────────────┬─────────────────────┬────────────────┘
+                   │ SQL (psycopg 3)     │ HTTP (OpenAI API)   │ HTTP + token
+                 ┌─▼────────────────┐  ┌─▼────────────────┐  ┌─▼────────────────┐
+                 │ db pgvector/pg16 │  │ litellm  proxy   │  │ updater sidecar  │
+                 │ 127.0.0.1:5432   │  │ 127.0.0.1:4000   │  │ no host port     │
+                 │ ledger · memory  │  │ model names →    │  │ git pull, then   │
+                 │ snapshots, audits│  │ provider API keys│  │ compose rebuild  │
+                 └──────────────────┘  └──────────────────┘  └──────────────────┘
 ```
 
 Five containers, defined in `docker-compose.yml`:
@@ -179,8 +179,8 @@ docker compose up -d --build
 ```
 
 builds and starts the containers; on first start the backend creates the schema
-and seeds the accounts from `config.yaml` (section 1). Open <http://localhost> (or the
-machine's LAN address) and log in with `PRIMARY_PASSWORD`. Your partner opens
+and seeds the accounts from `config.yaml` if there is one (section 1). Open
+<http://localhost> (or the machine's LAN address) and log in with `PRIMARY_PASSWORD`. Your partner opens
 <http://localhost/claim> on their phone and logs in with `SECONDARY_PASSWORD`; that
 login can log claims and read the settlement, and nothing else. To check everything
 is wired up, run the test-suite inside the container:
@@ -198,7 +198,7 @@ defaults shown before anything is saved. A saved change applies to the next requ
 The page offers:
 
 * **Use AI** on or off. Off means rules and the merchant memory only: unknown
-  merchants land in the queue as `Uncategorized` for you to fix once, and the
+  merchants land in the Review queue as `Uncategorized` for you to fix once, and the
   Auditor writes its sentence from the numbers alone.
 * **Proxy**: one of two. **Settl's own LiteLLM** is the container from
   `docker-compose.yml` (its address is `BUNDLED_LITELLM_URL`, its key
@@ -297,8 +297,27 @@ time the backend boots (section 12), so there is no migration step.
   merchant memory has learned.
 * **Restore** into a fresh database:
   `docker compose exec -T db psql -U postgres financemaster < backup.sql`.
-* `config.yaml` and `.env` are not in the database; keep copies of both alongside the
-  dump.
+* `.env` (and `config.yaml`, if you use one) is not in the database; keep a copy
+  alongside the dump.
+
+### Starting over (Settings → System → Danger zone)
+
+The System tab ends with a danger zone, each action behind a typed phrase and a plain
+list of what goes and what stays (`POST /api/system/reset`,
+`app/services/reset.py`; one database transaction):
+
+* **Delete all transactions** (type `DELETE TRANSACTIONS`) empties the ledger: every
+  transaction (split parts and mirror legs included), the transfer buffer, statement
+  uploads, audit reports, settlement snapshots and every period no partner claim
+  files under, closed ones included. Partner claims (and their periods), merchant
+  memory, accounts and every Settings document are kept.
+* **Reset Settl to day one** (type `DELETE EVERYTHING`) also deletes partner claims,
+  every period, merchant memory and the `app_settings` documents (AI, household,
+  categories, rules), then deletes the accounts and seeds them from `config.yaml`
+  again (none without the file), exactly as on first start. `.env` is untouched, so
+  both logins keep working.
+
+Take a backup first if there is any chance you want the data back.
 
 ### Changing the database password
 
@@ -366,6 +385,26 @@ parse (Agent 1) → per-line account resolution → fingerprint / dedupe
   background is a possible follow-up.
 * **Limits:** `.pdf`, `.csv`, `.xlsx`, `.xls`; 25 MB; PDFs of more than 60 pages are
   refused before parsing.
+* **Provenance:** every inserted line carries `upload_id`, and so do the mirror legs
+  written for it and, later, the parts it is split into.
+
+### Removing an upload (`app/services/statement_uploads.py`)
+
+Each entry under "Previous uploads" on the Upload page has a Delete
+(`DELETE /api/statements/{id}`) that removes the upload and everything it brought
+in: its lines, their split parts and mirror legs, and their transfer-buffer rows. A
+counterpart outside the upload that was matched to one of them is unlinked and goes
+back to `unmatched` in the buffer (a mirror leg goes with its source). The
+`statement_uploads` row is dropped too, so the same file can be uploaded again;
+periods stay. The delete is refused with 409, changing nothing, when any of those
+lines sits in a closed period (reopen it first). Claims and settlement snapshots are
+not checked: they do not reference transactions.
+
+Uploads recorded before lines carried `upload_id` fall back to the unlinked lines
+whose `source_file` is the upload's filename. That is only safe when no other such
+upload has the same filename; otherwise the delete is refused with 409 and
+`GET /api/statements` reports `deletable: false`, so the button is greyed out with
+the reason (delete those lines from the Transactions page instead).
 
 ### Agent 1: extractor (`app/services/parsers/`)
 
@@ -434,6 +473,21 @@ merchant, and remembering "unknown" would silence the model for that merchant fo
 Embeddings are 1 536-dimensional. `EMBEDDING_PROVIDER=litellm` calls `/v1/embeddings`;
 `EMBEDDING_PROVIDER=hash` is an offline character-n-gram feature hasher into the same
 space. The two spaces are incompatible: do not switch providers once memory has rows.
+
+### Reviewing and correcting
+
+Lines left `pending_review` wait on the **Review** page (`/review`), which holds the
+approval queue for one month with the same period selector as the dashboard and the
+close / reopen control. The dashboard shows only a compact "N lines waiting for
+review" card linking there, and Review in the navigation carries the pending count
+of the month it opens on (from `GET /api/periods`, refreshed after an upload, a
+delete or a reset rather than polled).
+
+On the Transactions page the merchant name can be renamed inline
+(`PATCH /api/transactions/{id}` with `cleaned_merchant`). On a split parent the new
+name is copied to its parts; a part cannot be renamed on its own (409). As with any
+correction to an approved line, the new name is written to merchant memory, unless
+the line is a transfer, `Uncategorized` or split.
 
 ## 4. Cross-ledger reconciliation and the transfer buffer
 
@@ -664,8 +718,9 @@ Reports are appended to `audit_reports`; closing a period runs one automatically
   labelled postcodes, e-mail addresses). Pre-commit hooks run gitleaks, a private-key
   detector, large-file and YAML checks and a guard that refuses to commit personal
   files. CI (`.github/workflows/ci.yml`) runs `ruff` and the backend suite against a
-  pgvector service, the frontend lint / type-check / tests / build, and a full-history
-  gitleaks scan on every push.
+  pgvector service, `ruff` (with the backend's configuration) and a compile check on
+  `updater/updater.py`, the frontend lint / type-check / tests / build, and a
+  full-history gitleaks scan on every push.
 
 ## 11. Configuration
 
@@ -707,8 +762,8 @@ documents are under `/api/settings/*` for the primary login (docs/API.md).
 | `PRIMARY_PASSWORD`, `SECONDARY_PASSWORD`   | the two role passwords (≥ 8 characters, different)                               |
 | `COMPOSE_PROFILES`                         | `bundled-litellm` (default) starts Settl's own proxy; empty = bring your own      |
 | `LITELLM_URL`, `LITELLM_API_KEY`           | a LiteLLM you already run; when set it is the default choice under Settings → AI → Proxy |
-| `LLM_PROVIDER`                             | `litellm` \| `none` — the default for "Use AI" in Settings → AI                   |
-| `EMBEDDING_PROVIDER`                       | `litellm` \| `hash` — the default embedding provider in Settings → AI             |
+| `LLM_PROVIDER`                             | `litellm` \| `none` : the default for "Use AI" in Settings → AI                   |
+| `EMBEDDING_PROVIDER`                       | `litellm` \| `hash` : the default embedding provider in Settings → AI             |
 | `KEEP_UPLOADED_FILES`                      | `false` (default) deletes statements after ingestion                             |
 | `UPDATE_CHECK`                             | `true` (default) lets Settings → System ask `api.github.com` for the newest commits; `false` never contacts GitHub |
 | `UPDATE_REPO`, `UPDATE_BRANCH`             | the GitHub `owner/repo` and branch compared with the running code (defaults `mattiaborsoi/personal-finance`, `main`); the updater pulls the same branch |
@@ -729,7 +784,7 @@ timeouts), `EMBEDDING_DIMENSIONS` (must be 1536) and `CORS_ORIGINS`.
 | `app_settings`          | one JSONB document per `key`, saved from Settings (`household`, `categories`, `rules`, `ai`); each overrides the matching `config.yaml` / `.env` defaults |
 | `ledger_periods`        | one row per `YYYY-MM`, `is_closed`, `closed_at`                                             |
 | `statement_uploads`     | file provenance and sha256 for duplicate detection; `period_from` / `period_to` (the months the file spans, NULL on older rows) beside the legacy `period_key` |
-| `transactions`          | the master ledger: amounts, category, `claim_type`, generated `is_claimable`, the two allocations, `review_status`, transfer flag and link, `classification_source` / `_confidence`, `fingerprint`, and the split columns `is_split`, `split_parent_id`, `split_index` |
+| `transactions`          | the master ledger: amounts, category, `claim_type`, generated `is_claimable`, the two allocations, `review_status`, transfer flag and link, `classification_source` / `_confidence`, `fingerprint`, the split columns `is_split`, `split_parent_id`, `split_index`, `source_file`, and `upload_id` (nullable FK to `statement_uploads`, `ON DELETE SET NULL`; set on the upload's lines, their split parts and mirror legs, NULL on older rows) |
 | `merchant_memory`       | `raw_pattern` (normalised key, unique), merchant, category, claim type, `vector(1536)` embedding with an HNSW cosine index, `review_count` |
 | `partner_claims`        | claims logged at `/claim`: positive `amount`, `paid_by`, `primary_owes` / `secondary_owes`, `is_settled` |
 | `transfer_buffer`       | one row per transfer leg, `match_status` `unmatched` \| `matched` \| `ignored`              |
@@ -777,6 +832,7 @@ The file is re-run on every start; new columns are added with
   Unmatched transfers are already excluded from spend (they are transfers whether or
   not the other statement has arrived).
 * **Extra columns/tables:** `transactions.fingerprint` (idempotent re-uploads),
+  `transactions.upload_id` (removing an upload with everything it brought in),
   `classification_source` / `classification_confidence` (approval-queue badges),
   `statement_uploads`, `audit_reports`, `settlement_snapshots`, `app_settings` (what
   is saved under Settings) and the `accounts` detail columns (`label`,
@@ -900,9 +956,11 @@ stub or inject build-time settings for local verification.
 │   │       ├── metrics.py      # macro / micro / liquidity / investment
 │   │       ├── auditor.py      # Agent 3
 │   │       ├── accounts.py     # accounts table: seeding, create / edit / archive
+│   │       ├── statement_uploads.py # removing an upload and every line it brought in
 │   │       ├── site_settings.py # Settings -> Household, Categories, Rules documents
 │   │       ├── ai_settings.py  # Settings -> AI: proxy, models, thresholds, connection test
 │   │       ├── updates.py      # Settings -> System: GitHub check, updater client
+│   │       ├── reset.py        # Settings -> System -> Danger zone: delete transactions / everything
 │   │       └── periods.py
 │   └── tests/                  # pytest suite; fixtures/generate.py builds synthetic statements
 ├── frontend/
@@ -911,8 +969,15 @@ stub or inject build-time settings for local verification.
 │   │   tailwind.config.js, postcss.config.js, index.html
 │   ├── README.md               # scripts, production image, source layout
 │   ├── DESIGN.md               # the design system
-│   └── src/                    # main.tsx, App.tsx, api.ts, index.css; auth/, config/, hooks/,
-│                               # pages/, components/, lib/, test/
+│   └── src/                    # main.tsx, App.tsx, api.ts, index.css; auth/, config/, test/
+│       ├── pages/              # one per route: Dashboard, Review, Transactions, Upload, Transfers,
+│       │                       # Claims, Claim (the partner's phone form), Memory, Settings, Login
+│       ├── components/         # UI pieces, *.test.tsx alongside; the Settings tabs (AccountsPanel,
+│       │                       # HouseholdPanel, CategoriesPanel, RulesPanel, AiPanel, SystemPanel
+│       │                       # with DangerZone), UploadHistory, the form primitives Field, RadioOption
+│       ├── hooks/              # useAsync; reviewBadge (keeps the Review count in the navigation current)
+│       └── lib/                # ui, theme, money, dates, format, splits, views ...; household,
+│                               # categories, rules (Settings tab logic), review, reset, navNotice
 └── docs/                       # TECHNICAL.md (this file), API.md, BLUEPRINT.md,
                                 # images/ (the README screenshots)
 ```

@@ -71,6 +71,33 @@ Which proxy and models Settl uses, and the thresholds behind them. Defaults come
 
 `POST /api/ai/test` body: the same shape as `PUT` (the values on the form, saved or not) → `{ "chat": {ok, ms, model, error} | null, "extraction": ..., "audit": ..., "embedding": {ok, ms, model, dimensions, error} }`. Each chat job is one tiny completion; the embedding test also checks the vector has the schema's 1536 dimensions. `null` for a job that is switched off; never a 5xx.
 
+## Household, categories and rules (Settings → Household / Categories / Rules)
+
+Primary login only. Each is one `app_settings` document; `config.yaml` (or the built-in defaults without it) supplies the values until one is saved, and `stored: false` says nothing has been saved yet. A save applies to the next request. Every save is validated like the file (and against the full configuration), with **422** and a message naming the field.
+
+`GET /api/settings/household` →
+```json
+{
+  "users": { "primary": {"id","display_name","base_salary_pa","additional_income_pa"}, "secondary": {...} },
+  "split_strategy": "salary_proportional", "rounding_decimals": 2, "settlement_day_of_month": 1,
+  "base_currency": "GBP", "currency_symbol": "£",
+  "primary_ratio": 0.555556, "secondary_ratio": 0.444444, "stored": false
+}
+```
+`PUT /api/settings/household` body: any subset of the above without `id`s, ratios or `stored` (nested `users.primary` / `users.secondary` fields are merged) → the same body. The user `id`s come from `config.yaml` (or the built-in defaults) and never change. **422** for an empty or over-long (64) display name, a negative income, a `split_strategy` other than `salary_proportional` / `equal_50_50`, `salary_proportional` with no combined income, `rounding_decimals` outside 0–6, `settlement_day_of_month` outside 1–28, a `base_currency` that is not three letters or a `currency_symbol` that is not 1 to 3 characters.
+
+`GET /api/settings/categories` → `{ "categories": [ {name, in_use: {transactions, memory, rules}} ], "stored" }` in menu order; `in_use` counts matches ignoring case, split parts included.
+
+`PUT /api/settings/categories` `{ "categories": ["Bills:Water", "..."] }` → the same body. Replaces the list (adding, removing, reordering). **422** for a blank, over-long (128) or repeated name; **409** `category 'X' is still used by N transactions, N remembered merchants and N rules` when a removed category is in use.
+
+`POST /api/settings/categories/rename` `{ "from": "Food:Takeaway", "to": "Food:Delivery" }` → the categories body. Renames it in the list, on every transaction, in merchant memory and in the rules, in one transaction. **404** when `from` is not in the list; **409** for `Uncategorized` or a `to` that already exists; **422** for blank or over-long names.
+
+`GET /api/settings/rules` → `{ "rules": [ {pattern, category, claim_type, merchant, subcategory, is_internal_transfer, transfer_to_account} ], "payment_patterns": ["..."], "match_window_days": 7, "amount_tolerance": "0.01", "stored" }`; rules are tried in list order, first match wins.
+
+`PUT /api/settings/rules` body: any subset of `{ rules, payment_patterns, match_window_days, amount_tolerance }` (an omitted or `null` field keeps its value) → the same body. **422** naming the rule (`rule 3: ...`) for a pattern that is empty, longer than 512 characters or not a valid regex, a category outside the taxonomy, an unknown claim type or a `transfer_to_account` that is not an account; also for `match_window_days` outside 0–60 or `amount_tolerance` outside 0–10.
+
+`POST /api/settings/rules/test` `{ "description": "CARD PAYMENT THANK YOU", "rules"?: [...], "payment_patterns"?: [...] }` → `{ rule_index, rule, is_payment }`: the zero-based position and body of the first rule that matches (`null` for none) and whether the card-payment patterns match. Without `rules` / `payment_patterns` the saved ones are used; with them (unsaved edits) they are validated as on `PUT`.
+
 ## System (Settings → System)
 
 `GET /api/system` →

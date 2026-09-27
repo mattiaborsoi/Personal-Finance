@@ -14,7 +14,7 @@ each with their own accounts and cards, who would rather not keep a spreadsheet.
 
 * **Drop in a statement, get a sorted month.** A PDF, CSV or spreadsheet from any bank
   or card. Every line gets a merchant, a category and a "shared or not"; you only
-  approve the few Settl isn't sure about.
+  approve the few Settl isn't sure about, on the Review page.
 * **It learns your merchants.** Approve Waitrose once and every Waitrose after that is
   filed for you. The more you use it, the less it asks.
 * **Split the tricky ones.** £10 at Marks & Spencer becomes £6 groceries shared by
@@ -26,6 +26,9 @@ each with their own accounts and cards, who would rather not keep a spreadsheet.
   your rules and which AI model does what (or a LiteLLM you already run) are all set
   up in Settings, not in a config file, and Settl updates itself from GitHub with one
   click.
+* **Easy to undo.** Uploaded the wrong statement? Delete it from the Upload page and
+  every line it brought in goes with it. Settings → System ends with a danger zone
+  that empties the ledger or resets Settl to day one, behind a typed confirmation.
 
 ## See it
 
@@ -38,8 +41,9 @@ and where it went. Two more views show your own true share and your cash flow.*
 the month's figure.*
 
 ![The approval queue, with a merchant, a category and a claim type suggested for each line](docs/images/queue.png)
-*The queue: the Starbucks, the TfL fares and the Netflix are already filed; you glance,
-fix the odd one and approve the rest in one go.*
+*The Review page: the Starbucks, the TfL fares and the Netflix are already filed; you
+glance, fix the odd one and approve the rest in one go. The dashboard and the
+navigation tell you when lines are waiting.*
 
 ![The split dialog, dividing a Marks & Spencer receipt into two parts](docs/images/split.png)
 *£10 at Marks & Spencer: £6 groceries shared by income, £4 personal.*
@@ -76,7 +80,7 @@ defaults; whatever you change in Settings afterwards wins.
 It works with no AI key at all: set `LLM_PROVIDER=none` and `EMBEDDING_PROVIDER=hash`
 in `.env` and Settl runs on your rules and the merchants it has already learned.
 
-Everything else — updating, backups, running without an LLM, what goes where — is in
+Everything else (updating, backups, running without an LLM, what goes where) is in
 [docs/TECHNICAL.md](docs/TECHNICAL.md).
 
 ## Under the bonnet
