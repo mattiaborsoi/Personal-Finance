@@ -242,7 +242,7 @@ export function aiSettings(overrides: Partial<AiSettings> = {}): AiSettings {
       { name: 'default-embedding', mode: 'embedding', provider: 'OpenAI', model: 'text-embedding-3-small' },
       { name: 'local-anything', mode: null, provider: null, model: null },
     ],
-    proxy: { mode: 'bundled', url: 'http://litellm:4000', bundled_url: 'http://litellm:4000', from_env: false, reachable: true, has_key: true },
+    proxy: { mode: 'bundled', url: 'http://litellm:4000', bundled_url: 'http://litellm:4000', env_url: null, reachable: true, has_key: true },
     memory_rows: 8,
     stored: true,
     ...overrides,

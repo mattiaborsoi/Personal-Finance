@@ -9,7 +9,8 @@ import {
   BUNDLED_PROXY_LABEL,
   MODEL_LIST_UNAVAILABLE_MESSAGE,
   NO_EMBEDDING_MODEL_MESSAGE,
-  PROXY_FROM_ENV_LABEL,
+  BUNDLED_PROXY_DOWN_MESSAGE,
+  EXTERNAL_PROXY_LABEL,
   PROXY_URL_PLACEHOLDER,
   PROXY_URL_SCHEME_MESSAGE,
   SAVED_MESSAGE,
@@ -89,8 +90,8 @@ describe('<AiPanel />', () => {
     expect(within(ai).getByText('8')).toBeInTheDocument();
     expect(within(ai).queryByText(/Nothing saved yet/)).not.toBeInTheDocument();
 
-    expect(screen.getByRole('radio', { name: 'Bundled proxy' })).toBeChecked();
-    expect(screen.getByRole('radio', { name: 'My own LiteLLM' })).not.toBeChecked();
+    expect(screen.getByRole('radio', { name: BUNDLED_PROXY_LABEL })).toBeChecked();
+    expect(screen.getByRole('radio', { name: EXTERNAL_PROXY_LABEL })).not.toBeChecked();
     expect(screen.queryByLabelText('Proxy URL')).not.toBeInTheDocument();
 
     // Chat jobs offer the chat models and the one the proxy says nothing about; never the embedding model.
@@ -378,7 +379,7 @@ describe('<AiPanel />', () => {
     const { calls } = mockAi(aiSettings());
 
     await renderPanel();
-    await user.click(screen.getByRole('radio', { name: 'My own LiteLLM' }));
+    await user.click(screen.getByRole('radio', { name: EXTERNAL_PROXY_LABEL }));
 
     const url = screen.getByLabelText('Proxy URL');
     expect(url).toHaveValue('');
@@ -404,7 +405,7 @@ describe('<AiPanel />', () => {
     await waitFor(() => expect(byMethod(calls, 'PUT')).toHaveLength(1));
     expect(byMethod(calls, 'PUT')[0].body).toEqual({ proxy: { mode: 'external', url: EXTERNAL_URL, api_key: 'sk-test' } });
     expect(await screen.findByRole('status')).toHaveTextContent(SAVED_MESSAGE);
-    expect(screen.getByRole('radio', { name: 'My own LiteLLM' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: EXTERNAL_PROXY_LABEL })).toBeChecked();
     expect(screen.getByLabelText('Proxy URL')).toHaveValue(EXTERNAL_URL);
     expect(screen.getByLabelText('API key')).toHaveValue('');
     expect(screen.queryByText(STALE_MODEL_LIST_MESSAGE)).not.toBeInTheDocument();
@@ -417,12 +418,12 @@ describe('<AiPanel />', () => {
     const user = userEvent.setup();
     const { calls } = mockAi(
       aiSettings({
-        proxy: { mode: 'external', url: EXTERNAL_URL, bundled_url: 'http://litellm:4000', from_env: false, reachable: true, has_key: false },
+        proxy: { mode: 'external', url: EXTERNAL_URL, bundled_url: 'http://litellm:4000', env_url: null, reachable: true, has_key: false },
       }),
     );
 
     await renderPanel();
-    expect(screen.getByRole('radio', { name: 'My own LiteLLM' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: EXTERNAL_PROXY_LABEL })).toBeChecked();
     expect(screen.getByLabelText('Proxy URL')).toHaveValue(EXTERNAL_URL);
     expect(screen.getByLabelText('API key')).toHaveAttribute('placeholder', 'Master key of your proxy');
     expect(screen.getByText('No key')).toBeInTheDocument();
@@ -436,7 +437,7 @@ describe('<AiPanel />', () => {
     expect(await screen.findByText('Key set')).toBeInTheDocument();
 
     // Back to the bundled container: only the mode goes, never the URL or an empty key.
-    await user.click(screen.getByRole('radio', { name: 'Bundled proxy' }));
+    await user.click(screen.getByRole('radio', { name: BUNDLED_PROXY_LABEL }));
     expect(screen.queryByLabelText('Proxy URL')).not.toBeInTheDocument();
     expect(screen.getByText(STALE_MODEL_LIST_MESSAGE)).toBeInTheDocument();
     await user.click(saveButton());
@@ -444,24 +445,52 @@ describe('<AiPanel />', () => {
     expect(byMethod(calls, 'PUT')[1].body).toEqual({ proxy: { mode: 'bundled' } });
   });
 
-  it('calls the first proxy "from .env" when LITELLM_URL points away from the bundled container', async () => {
+  it('starts from the LiteLLM named in .env when LITELLM_URL is set', async () => {
+    // The server defaults to the external proxy with that URL; the page shows it as such.
     mockAi(
       aiSettings({
-        proxy: { mode: 'bundled', url: EXTERNAL_URL, bundled_url: EXTERNAL_URL, from_env: true, reachable: true, has_key: true },
+        proxy: { mode: 'external', url: EXTERNAL_URL, bundled_url: 'http://litellm:4000', env_url: EXTERNAL_URL, reachable: true, has_key: true },
       }),
     );
 
     await renderPanel();
 
-    const radio = screen.getByRole('radio', { name: PROXY_FROM_ENV_LABEL });
-    expect(radio).toBeChecked();
-    expect(screen.queryByRole('radio', { name: BUNDLED_PROXY_LABEL })).not.toBeInTheDocument();
-    expect(radio).toHaveAccessibleDescription(
-      `LITELLM_URL in .env points at ${EXTERNAL_URL}, so the container that ships with Settl is not used.`,
+    const own = screen.getByRole('radio', { name: EXTERNAL_PROXY_LABEL });
+    expect(own).toBeChecked();
+    expect(own).toHaveAccessibleDescription(`Anywhere Settl's containers can reach; enter its URL and key below. .env suggests ${EXTERNAL_URL}.`);
+    expect(screen.getByRole('radio', { name: BUNDLED_PROXY_LABEL })).toHaveAccessibleDescription(
+      'The container that ships with Settl (docker compose, profile bundled-litellm), at http://litellm:4000. Provider keys go in .env.',
     );
+    expect(screen.getByLabelText('Proxy URL')).toHaveValue(EXTERNAL_URL);
     // No bundled container to restart, so no advice to do so.
     expect(screen.queryByText(/docker compose up -d litellm/)).not.toBeInTheDocument();
     expect(screen.getByText(/Provider API keys never appear here/)).toHaveTextContent("Settl only holds the proxy's key");
+    expect(saveButton()).toBeDisabled();
+  });
+
+  it('says what to do when the bundled LiteLLM is chosen but not running, and offers the .env proxy as the alternative', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockAi(
+      aiSettings({
+        available_models: [],
+        proxy: { mode: 'bundled', url: 'http://litellm:4000', bundled_url: 'http://litellm:4000', env_url: EXTERNAL_URL, reachable: false, has_key: true },
+      }),
+    );
+
+    await renderPanel();
+
+    expect(screen.getByRole('radio', { name: BUNDLED_PROXY_LABEL })).toBeChecked();
+    const notice = screen.getByText(new RegExp(BUNDLED_PROXY_DOWN_MESSAGE.replace(/[.'()]/g, '\\$&')));
+    expect(notice).toHaveTextContent('Set COMPOSE_PROFILES=bundled-litellm in .env and run docker compose up -d to start it, or choose a LiteLLM you already run.');
+
+    // Switching to the other option pre-fills the URL .env suggests; the warning is about the bundled one only.
+    await user.click(screen.getByRole('radio', { name: EXTERNAL_PROXY_LABEL }));
+    expect(screen.getByLabelText('Proxy URL')).toHaveValue(EXTERNAL_URL);
+    expect(screen.queryByText(/not answering/)).not.toBeInTheDocument();
+    await user.click(saveButton());
+
+    await waitFor(() => expect(byMethod(calls, 'PUT')).toHaveLength(1));
+    expect(byMethod(calls, 'PUT')[0].body).toEqual({ proxy: { mode: 'external', url: EXTERNAL_URL } });
   });
 
   it('keeps the merchant memory offline, and says why, when the proxy lists no embedding model', async () => {
@@ -511,7 +540,7 @@ describe('<AiPanel />', () => {
     });
 
     await renderPanel();
-    await user.click(screen.getByRole('radio', { name: 'My own LiteLLM' }));
+    await user.click(screen.getByRole('radio', { name: EXTERNAL_PROXY_LABEL }));
     const url = screen.getByLabelText('Proxy URL');
     await user.type(url, 'litellm:4000');
 
@@ -543,7 +572,7 @@ describe('<AiPanel />', () => {
     const { calls } = mockAi(aiSettings(), result);
 
     await renderPanel();
-    await user.click(screen.getByRole('radio', { name: 'My own LiteLLM' }));
+    await user.click(screen.getByRole('radio', { name: EXTERNAL_PROXY_LABEL }));
     await user.type(screen.getByLabelText('Proxy URL'), EXTERNAL_URL);
     await user.type(screen.getByLabelText('API key'), 'sk-test');
     await user.click(testButton());

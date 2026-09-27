@@ -56,9 +56,10 @@ export const STALE_MODEL_LIST_MESSAGE = 'Save to refresh the list of models.';
 export const NO_EMBEDDING_MODEL_MESSAGE =
   'This proxy lists no embedding model, so merchants are matched offline. Add one to your LiteLLM (text-embedding-3-small, say) and save to use AI here.';
 export const PROXY_URL_PLACEHOLDER = 'http://host.docker.internal:4000';
-/** The first radio: the proxy `.env` names, which is the bundled container unless `LITELLM_URL` was set. */
-export const BUNDLED_PROXY_LABEL = 'Bundled proxy';
-export const PROXY_FROM_ENV_LABEL = 'Proxy from .env';
+/** The two proxies on offer, nothing in between: the container that ships with the app, or one the user already runs. */
+export const BUNDLED_PROXY_LABEL = `${PRODUCT_NAME}'s own LiteLLM`;
+export const EXTERNAL_PROXY_LABEL = 'A LiteLLM I already run';
+export const BUNDLED_PROXY_DOWN_MESSAGE = `${PRODUCT_NAME}'s own LiteLLM is not answering.`;
 
 // ---------------------------------------------------------------------------
 // The jobs and the thresholds, as the form shows them
@@ -520,6 +521,14 @@ export function AiPanel() {
     edit((prev) => ({ ...prev, proxy: { ...prev.proxy, ...patch } }));
   }
 
+  /** Switching to the external proxy starts from the URL `.env` offers, when the form has none yet. */
+  function chooseProxy(mode: ProxyMode) {
+    edit((prev) => ({
+      ...prev,
+      proxy: { ...prev.proxy, mode, url: mode === 'external' && !prev.proxy.url ? (saved?.proxy.env_url ?? '') : prev.proxy.url },
+    }));
+  }
+
   if (!saved || !form) {
     return (
       <Card icon={Sparkles} title="AI">
@@ -544,8 +553,10 @@ export function AiPanel() {
   /** The proxy's list is only worth offering when it came from the proxy the form points at. */
   const typedModels = !reachable || staleList;
   const external = form.proxy.mode === 'external';
-  /** `.env` points at a LiteLLM other than the bundled container, so "bundled" would be a lie. */
-  const envProxy = saved.proxy.from_env;
+  /** What `.env` offers for the external option, if anything. */
+  const envUrl = saved.proxy.env_url;
+  /** The bundled container was chosen and saved, but nothing answers there. */
+  const bundledDown = saved.proxy.mode === 'bundled' && !external && !reachable;
   /** The proxy answered and nothing it lists can embed, so the memory cannot go online until it does. */
   const noEmbeddingModel = !typedModels && optionsFor(saved.available_models, 'embedding', '').length === 0;
   const busy = saving || testing;
@@ -645,22 +656,15 @@ export function AiPanel() {
             value="bundled"
             checked={!external}
             disabled={busy}
-            label={envProxy ? PROXY_FROM_ENV_LABEL : BUNDLED_PROXY_LABEL}
+            label={BUNDLED_PROXY_LABEL}
             hint={
-              envProxy ? (
-                <>
-                  <code className="font-mono">LITELLM_URL</code> in <code className="font-mono">.env</code> points at{' '}
-                  <code className="font-mono">{saved.proxy.bundled_url}</code>, so the container that ships with {PRODUCT_NAME} is not
-                  used.
-                </>
-              ) : (
-                <>
-                  The LiteLLM container that ships with {PRODUCT_NAME} (<code className="font-mono">docker compose</code>). Provider keys
-                  go in <code className="font-mono">.env</code>.
-                </>
-              )
+              <>
+                The container that ships with {PRODUCT_NAME} (<code className="font-mono">docker compose</code>, profile{' '}
+                <code className="font-mono">bundled-litellm</code>), at <code className="font-mono">{saved.proxy.bundled_url}</code>.
+                Provider keys go in <code className="font-mono">.env</code>.
+              </>
             }
-            onChange={(mode) => setProxy({ mode })}
+            onChange={chooseProxy}
           />
           <ProxyRadio
             id={f('proxy-external')}
@@ -668,11 +672,30 @@ export function AiPanel() {
             value="external"
             checked={external}
             disabled={busy}
-            label="My own LiteLLM"
-            hint={`A LiteLLM proxy you already run, anywhere ${PRODUCT_NAME}'s containers can reach.`}
-            onChange={(mode) => setProxy({ mode })}
+            label={EXTERNAL_PROXY_LABEL}
+            hint={
+              <>
+                Anywhere {PRODUCT_NAME}'s containers can reach; enter its URL and key below.
+                {envUrl && (
+                  <>
+                    {' '}
+                    <code className="font-mono">.env</code> suggests <code className="font-mono">{envUrl}</code>.
+                  </>
+                )}
+              </>
+            }
+            onChange={chooseProxy}
           />
         </fieldset>
+        {bundledDown && (
+          <Notice tone="warning" className="mt-4">
+            <p>
+              {BUNDLED_PROXY_DOWN_MESSAGE} Set <code className="font-mono">COMPOSE_PROFILES=bundled-litellm</code> in{' '}
+              <code className="font-mono">.env</code> and run <code className="font-mono">docker compose up -d</code> to start it, or
+              choose a LiteLLM you already run.
+            </p>
+          </Notice>
+        )}
         {external && (
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <Field
@@ -686,7 +709,7 @@ export function AiPanel() {
                 type="url"
                 inputMode="url"
                 className={cx(inputBase, 'font-mono', badScheme && 'border-critical hover:border-critical')}
-                placeholder={PROXY_URL_PLACEHOLDER}
+                placeholder={envUrl ?? PROXY_URL_PLACEHOLDER}
                 value={form.proxy.url}
                 autoComplete="off"
                 spellCheck={false}
@@ -938,7 +961,7 @@ export function AiPanel() {
       </div>
 
       <p className="text-xs text-ink-3">
-        {external || envProxy ? (
+        {external ? (
           <>
             Provider API keys never appear here. They live in your LiteLLM's own configuration, as does the list of models;{' '}
             {PRODUCT_NAME} only holds the proxy's key.
