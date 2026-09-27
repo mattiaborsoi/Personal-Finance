@@ -1,5 +1,5 @@
 import type { TransactionOut } from '../api';
-import { checkboxBase } from '../lib/ui';
+import { checkboxBase, cx } from '../lib/ui';
 
 interface Props {
   transaction: Pick<TransactionOut, 'is_internal_transfer' | 'is_split'>;
@@ -16,15 +16,20 @@ interface Props {
  * the transactions list and the approval queue. A split line cannot be one.
  */
 export function TransferToggle({ transaction: tx, merchant, disabled = false, title, onChange }: Props) {
+  // The label grows the 16px box's hit area into the cell's padding (px-2 py-3 in both callers).
   return (
-    <input
-      type="checkbox"
-      className={checkboxBase}
-      checked={tx.is_internal_transfer}
-      disabled={disabled || tx.is_split}
-      aria-label={`Mark ${merchant} as a transfer`}
-      title={tx.is_split ? 'Remove the split before marking this as a transfer' : (title ?? 'Internal transfer')}
-      onChange={(e) => onChange(e.target.checked)}
-    />
+    <label
+      className={cx('-mx-2 -my-3 inline-flex px-2 py-3 align-middle', disabled || tx.is_split ? 'cursor-not-allowed' : 'cursor-pointer')}
+    >
+      <input
+        type="checkbox"
+        className={checkboxBase}
+        checked={tx.is_internal_transfer}
+        disabled={disabled || tx.is_split}
+        aria-label={`Mark ${merchant} as a transfer`}
+        title={tx.is_split ? 'Remove the split before marking this as a transfer' : (title ?? 'Internal transfer')}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+    </label>
   );
 }

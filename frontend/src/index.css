@@ -104,6 +104,25 @@
   html {
     -webkit-text-size-adjust: 100%;
     font-feature-settings: 'cv11', 'ss03';
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* The mobile top bar is sticky (about 58px): keep keyboard-focused controls clear of it.
+     Matches the header's md:hidden; on desktop the sidebar sits beside the content. */
+  @media (max-width: 767px) {
+    html {
+      scroll-padding-top: 4.5rem;
+    }
+  }
+  /* No double-tap-to-zoom delay on controls. */
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  label,
+  summary,
+  [role='button'] {
+    touch-action: manipulation;
   }
   body {
     @apply min-h-screen bg-bg text-ink antialiased;

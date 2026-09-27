@@ -20,6 +20,8 @@ export function AuditCard({ period, refreshKey = 0 }: Props) {
   const audit = useAsync(() => api.getAudit(period), `audit:${period}:${refreshKey}`);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  /** Read out by the always-mounted status region once a run finishes. */
+  const [announcement, setAnnouncement] = useState('');
 
   const report = audit.data;
   // The server answers a period that has never been audited with a JSON null:
@@ -29,9 +31,11 @@ export function AuditCard({ period, refreshKey = 0 }: Props) {
   async function runAudit() {
     setRunning(true);
     setRunError(null);
+    setAnnouncement('');
     try {
       const result = await api.runAudit(period);
       audit.setData(() => result);
+      setAnnouncement(`Audit complete. ${result.summary_sentence}`);
     } catch (err) {
       setRunError(errorMessage(err));
     } finally {
@@ -54,6 +58,9 @@ export function AuditCard({ period, refreshKey = 0 }: Props) {
         </>
       }
     >
+      <p role="status" className="sr-only">
+        {announcement}
+      </p>
       {audit.error && <ErrorMessage message={audit.error.message} onRetry={audit.reload} />}
       <ErrorMessage message={runError} onDismiss={() => setRunError(null)} className="mb-3" />
       {audit.loading && !report && !audit.error && <LoadingState label="Loading audit" rows={3} />}

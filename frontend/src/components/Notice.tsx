@@ -20,21 +20,28 @@ interface Props {
   icon?: LucideIcon;
   role?: string;
   'aria-label'?: string;
+  /** Points at the message (pair with `messageId`), e.g. so an alertdialog reads its text. */
+  'aria-describedby'?: string;
+  /** id for the message element, so a `role="alertdialog"` can describe itself by it. */
+  messageId?: string;
   className?: string;
 }
 
 /** One-line inline message: closed-period notes, success confirmations, cautions. */
-export function Notice({ tone = 'neutral', children, actions, icon, role, className = '', ...rest }: Props) {
+export function Notice({ tone = 'neutral', children, actions, icon, role, messageId, className = '', ...rest }: Props) {
   const t = TONES[tone];
   const Icon = icon ?? t.icon;
   return (
     <div
       role={role}
       aria-label={rest['aria-label']}
+      aria-describedby={rest['aria-describedby']}
       className={cx('flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl px-4 py-3 text-sm', t.wrap, className)}
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-      <div className="min-w-0 flex-1 basis-48">{children}</div>
+      <div id={messageId} className="min-w-0 flex-1 basis-48">
+        {children}
+      </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );

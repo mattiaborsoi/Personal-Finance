@@ -1,5 +1,5 @@
 import { Check, X, type LucideIcon } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { btnDanger, btnIcon, btnPrimary, btnSecondary, btnSmall, cx } from '../lib/ui';
 
 type Tone = 'primary' | 'danger' | 'secondary';
@@ -37,6 +37,16 @@ export function ConfirmPrompt({
   className = '',
 }: PromptProps) {
   const size = small || iconOnly ? btnSmall : '';
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  // The prompt replaces the focused trigger, so move focus into it (its group name,
+  // the question, is announced). A destructive prompt lands on Cancel, so a held or
+  // repeated Enter cannot confirm it by accident.
+  useEffect(() => {
+    (tone === 'danger' ? cancelRef : confirmRef).current?.focus();
+    // Only on mount: the prompt is shown once per arming.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <span
       className={cx('inline-flex flex-wrap items-center gap-1.5 animate-rise', className)}
@@ -44,16 +54,31 @@ export function ConfirmPrompt({
       aria-label={label}
     >
       {!iconOnly && <span className="text-xs text-ink-2">{label}</span>}
-      <button type="button" className={cx(toneClass(tone), size)} disabled={busy} onClick={onConfirm} title={label}>
+      <button
+        ref={confirmRef}
+        type="button"
+        className={cx(toneClass(tone), size)}
+        disabled={busy}
+        onClick={onConfirm}
+        title={label}
+      >
         <Check className="h-3.5 w-3.5" aria-hidden="true" />
         {busy ? 'Working…' : 'Confirm'}
       </button>
       {iconOnly ? (
-        <button type="button" className={btnIcon} disabled={busy} onClick={onCancel} aria-label="Cancel" title="Cancel">
+        <button
+          ref={cancelRef}
+          type="button"
+          className={btnIcon}
+          disabled={busy}
+          onClick={onCancel}
+          aria-label="Cancel"
+          title="Cancel"
+        >
           <X className="h-4 w-4" aria-hidden="true" />
         </button>
       ) : (
-        <button type="button" className={cx(btnSecondary, size)} disabled={busy} onClick={onCancel}>
+        <button ref={cancelRef} type="button" className={cx(btnSecondary, size)} disabled={busy} onClick={onCancel}>
           <X className="h-3.5 w-3.5" aria-hidden="true" />
           Cancel
         </button>
@@ -103,6 +128,23 @@ export function ConfirmButton({
   const [busy, setBusy] = useState(false);
   const size = small || iconOnly ? btnSmall : '';
   const label = typeof children === 'string' ? children : undefined;
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
+
+  // Leaving the prompt unmounts the focused button; hand focus back to the trigger,
+  // unless the user has already moved on (focus is somewhere other than <body>).
+  // If the confirmed action removed this button (a deleted row), there is nothing to focus.
+  useEffect(() => {
+    if (armed || !returnFocus.current) return;
+    returnFocus.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body) triggerRef.current?.focus();
+  }, [armed]);
+
+  function disarm() {
+    returnFocus.current = true;
+    setArmed(false);
+  }
 
   async function run() {
     setBusy(true);
@@ -110,7 +152,7 @@ export function ConfirmButton({
       await onConfirm();
     } finally {
       setBusy(false);
-      setArmed(false);
+      disarm();
     }
   }
 
@@ -118,6 +160,7 @@ export function ConfirmButton({
     if (iconOnly && Icon) {
       return (
         <button
+          ref={triggerRef}
           type="button"
           className={cx(btnIcon, tone === 'danger' && 'hover:bg-critical/10 hover:text-critical-ink', className)}
           disabled={disabled}
@@ -131,6 +174,7 @@ export function ConfirmButton({
     }
     return (
       <button
+        ref={triggerRef}
         type="button"
         className={cx(toneClass(tone), size, className)}
         disabled={disabled}
@@ -148,7 +192,7 @@ export function ConfirmButton({
     <ConfirmPrompt
       label={confirmLabel}
       onConfirm={run}
-      onCancel={() => setArmed(false)}
+      onCancel={disarm}
       busy={busy}
       tone={tone}
       small={small}

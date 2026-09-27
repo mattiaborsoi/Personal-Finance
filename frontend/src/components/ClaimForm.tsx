@@ -1,12 +1,12 @@
 import { CirclePlus, Divide, Scale, User, type LucideIcon } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, editErrorMessage, isApiError, type ClaimCreate, type ClaimOut, type ClaimType } from '../api';
 import { useAuth } from '../auth/AuthContext';
 import { useConfig, useCurrency, useNames } from '../config/ConfigContext';
 import { claimDateProblem, earliestClaimDate, isDateProblem, isLargeClaim } from '../lib/claims';
 import { todayIso } from '../lib/dates';
 import { formatMoney, normaliseAmountInput } from '../lib/money';
-import { btnPrimary, cardInset, cx, inputBase, inputTall, labelBase, selectBase } from '../lib/ui';
+import { btnPrimary, cardInset, cx, inputBase, inputInvalid, inputTall, labelBase, radioBase, selectBase } from '../lib/ui';
 import { ConfirmPrompt } from './ConfirmButton';
 import { ErrorMessage } from './ErrorMessage';
 import { Notice } from './Notice';
@@ -39,6 +39,8 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
   const symbol = useCurrency();
   const [claimDate, setClaimDate] = useState(todayIso());
   const [dateError, setDateError] = useState<string | null>(null);
+  const [amountError, setAmountError] = useState<string | null>(null);
+  const [merchantError, setMerchantError] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
   const [merchant, setMerchant] = useState('');
   const [description, setDescription] = useState('');
@@ -51,6 +53,21 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
   const [confirmAmount, setConfirmAmount] = useState<string | null>(null);
 
   const isPrimary = session?.role === 'primary';
+  const submitRef = useRef<HTMLButtonElement>(null);
+
+  // The "Log it?" prompt replaces the submit button; when it goes (answered or
+  // cancelled) and took focus with it, put focus back on "Log claim".
+  const promptWasOpen = useRef(false);
+  useEffect(() => {
+    if (confirmAmount) {
+      promptWasOpen.current = true;
+      return;
+    }
+    if (!promptWasOpen.current) return;
+    promptWasOpen.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body) submitRef.current?.focus();
+  }, [confirmAmount]);
 
   function changeDate(next: string) {
     setClaimDate(next);
@@ -64,6 +81,7 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
 
   function changeAmount(next: string) {
     setAmount(next);
+    setAmountError(null);
     // The question quotes the amount, so a new amount needs asking again.
     setConfirmAmount(null);
   }
@@ -76,18 +94,17 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
     event?.preventDefault();
     setSuccess(null);
     const normalised = normaliseAmountInput(amount);
-    if (!normalised || Number(normalised) <= 0) {
-      setError('Enter an amount greater than zero.');
-      return;
-    }
-    if (!merchant.trim()) {
-      setError('Enter the merchant or a short description.');
-      return;
-    }
+    // Check every field so each shows its own problem, then send focus to the first one on screen.
     const dateProblem = claimDateProblem(claimDate);
-    if (dateProblem) {
-      setDateError(dateProblem);
-      setError(dateProblem);
+    const amountProblem = !normalised || Number(normalised) <= 0 ? 'Enter an amount greater than zero.' : null;
+    const merchantProblem = !merchant.trim() ? 'Enter the merchant or a short description.' : null;
+    setDateError(dateProblem);
+    setAmountError(amountProblem);
+    setMerchantError(merchantProblem);
+    const firstId = dateProblem ? 'claim-date' : amountProblem ? 'claim-amount' : merchantProblem ? 'claim-merchant' : null;
+    if (firstId || !normalised) {
+      setError(dateProblem ?? amountProblem ?? merchantProblem);
+      if (firstId) document.getElementById(firstId)?.focus();
       return;
     }
     setError(null);
@@ -135,7 +152,7 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
           <input
             id="claim-date"
             type="date"
-            className={cx(bigInput, dateError && 'border-critical hover:border-critical')}
+            className={cx(bigInput, dateError && inputInvalid)}
             value={claimDate}
             min={earliestClaimDate()}
             max={todayIso()}
@@ -165,13 +182,21 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
               id="claim-amount"
               type="text"
               inputMode="decimal"
-              className={cx(bigInput, 'pl-8 tabular')}
+              autoComplete="off"
+              className={cx(bigInput, 'pl-8 tabular', amountError && inputInvalid)}
               placeholder="0.00"
               value={amount}
+              aria-invalid={amountError ? true : undefined}
+              aria-describedby={amountError ? 'claim-amount-error' : undefined}
               onChange={(e) => changeAmount(e.target.value)}
               required
             />
           </div>
+          {amountError && (
+            <p id="claim-amount-error" className="mt-1.5 text-sm text-critical-ink">
+              {amountError}
+            </p>
+          )}
         </div>
       </div>
       <div>
@@ -181,13 +206,23 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
         <input
           id="claim-merchant"
           type="text"
-          className={bigInput}
-          placeholder="e.g. Tesco"
+          className={cx(bigInput, merchantError && inputInvalid)}
+          placeholder="e.g. Tesco…"
           value={merchant}
-          onChange={(e) => setMerchant(e.target.value)}
+          aria-invalid={merchantError ? true : undefined}
+          aria-describedby={merchantError ? 'claim-merchant-error' : undefined}
+          onChange={(e) => {
+            setMerchant(e.target.value);
+            setMerchantError(null);
+          }}
           autoComplete="off"
           required
         />
+        {merchantError && (
+          <p id="claim-merchant-error" className="mt-1.5 text-sm text-critical-ink">
+            {merchantError}
+          </p>
+        )}
       </div>
       <div>
         <label htmlFor="claim-description" className={labelBase}>
@@ -214,7 +249,8 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
                 key={opt.value}
                 className={cx(
                   cardInset,
-                  'flex min-h-[60px] cursor-pointer items-center gap-3 transition-colors',
+                  // has-[:focus-visible]: the whole card shows keyboard focus (offset, so it differs from the checked ring).
+                  'flex min-h-[60px] cursor-pointer items-center gap-3 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-surface',
                   checked ? 'bg-brand-soft/60 ring-2 ring-brand' : 'hover:bg-surface-3',
                 )}
               >
@@ -237,7 +273,7 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
                   value={opt.value}
                   checked={checked}
                   onChange={() => setClaimType(opt.value)}
-                  className="h-4 w-4 shrink-0 accent-brand"
+                  className={cx(radioBase, 'shrink-0')}
                 />
               </label>
             );
@@ -280,6 +316,7 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
         </div>
       ) : (
         <button
+          ref={submitRef}
           type="submit"
           disabled={busy}
           className={cx(btnPrimary, 'min-h-[48px] w-full text-base font-semibold')}

@@ -1,5 +1,5 @@
 import { ListChecks, Lock } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, editErrorMessage, type TransactionOut, type TransactionPatch } from '../api';
 import { useAsync } from '../hooks/useAsync';
 import { plural } from '../lib/format';
@@ -33,6 +33,17 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
   const [batchError, setBatchError] = useState<string | null>(null);
   /** The transaction whose split dialog is open. */
   const [splitting, setSplitting] = useState<TransactionOut | null>(null);
+  /** Read out by the always-mounted status region after an approval succeeds. */
+  const [announcement, setAnnouncement] = useState('');
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  /** Set when a saved split closes the dialog: the row (and the button focus would return to) is gone. */
+  const focusHeadingAfterSplit = useRef(false);
+
+  useEffect(() => {
+    if (splitting || !focusHeadingAfterSplit.current) return;
+    focusHeadingAfterSplit.current = false;
+    headingRef.current?.focus();
+  }, [splitting]);
 
   const items = queue.data?.items ?? [];
   const total = queue.data?.total ?? items.length;
@@ -81,6 +92,7 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
   }
 
   async function approveOne(tx: TransactionOut, corrections: TransactionPatch) {
+    setAnnouncement('');
     setRowErrors((prev) => {
       const next = { ...prev };
       delete next[tx.id];
@@ -88,9 +100,12 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
     });
     setBusyFor([tx.id], true);
     removeOptimistically([tx.id]);
+    // The row's Approve button had focus and has just gone; keep the keyboard user in the queue.
+    headingRef.current?.focus();
     try {
       await api.approveTransaction(tx.id, { ...corrections, remember: true });
       clearDrafts([tx.id]);
+      setAnnouncement(`Approved ${tx.cleaned_merchant || tx.raw_description}`);
       onChanged?.();
     } catch (err) {
       // The draft stays in `drafts`, so the restored row shows the user's edits.
@@ -105,12 +120,14 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
     const rows = items.filter((t) => selected.has(t.id));
     const ids = rows.map((t) => t.id);
     if (ids.length === 0) return;
+    setAnnouncement('');
     setBatchError(null);
     setBusyFor(ids, true);
     removeOptimistically(ids);
     try {
       await api.approveBatch({ ids, remember: true });
       clearDrafts(ids);
+      setAnnouncement(`${plural(ids.length, 'transaction')} approved`);
       onChanged?.();
     } catch (err) {
       restore(rows);
@@ -149,6 +166,7 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
 
   /** Splitting counts as approval, so the row leaves the queue just like an approved one. */
   function splitSaved(parent: TransactionOut) {
+    setAnnouncement('');
     setRowErrors((prev) => {
       const next = { ...prev };
       delete next[parent.id];
@@ -156,7 +174,9 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
     });
     removeOptimistically([parent.id]);
     clearDrafts([parent.id]);
+    focusHeadingAfterSplit.current = true;
     setSplitting(null);
+    setAnnouncement('Split saved and approved');
     onChanged?.();
   }
 
@@ -181,6 +201,9 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
   return (
     // min-w-0: the table scrolls inside the card; it must never widen the page on a phone.
     <section id="approval-queue" aria-label="Approval queue" className={cx(cardBase, 'min-w-0 scroll-mt-20 p-0 sm:p-0')}>
+      <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {announcement}
+      </p>
       {/* The batch bar stays in view while a long queue scrolls; the offset clears the mobile top bar. */}
       <header className="sticky top-[61px] z-10 rounded-t-2xl border-b border-hairline bg-surface/95 px-5 py-4 backdrop-blur sm:px-6 md:top-0">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -192,7 +215,9 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
               <ListChecks className="h-4 w-4" />
             </span>
             <div className="min-w-0">
-              <h2 className="text-base font-semibold tracking-tight text-ink">Approval queue</h2>
+              <h2 ref={headingRef} tabIndex={-1} className="text-base font-semibold tracking-tight text-ink focus:outline-none">
+                Approval queue
+              </h2>
               {queue.data && <p className="mt-0.5 text-xs text-ink-3">{`${plural(total, 'transaction')} pending review`}</p>}
             </div>
           </div>
@@ -248,7 +273,14 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
         // relative: the rows' screen-reader-only labels are absolutely positioned, so without a
         // positioned scroller they escape its clip at their static position and widen the page on a phone.
         <div className="relative overflow-x-auto pt-1">
-          <table className={cx(tableBase, tableFlush)}>
+          {/* Scroll margin on the row controls so the sticky batch bar (and the mobile top bar) never covers a focused one. */}
+          <table
+            className={cx(
+              tableBase,
+              tableFlush,
+              '[&_:is(input,select,button,a)]:scroll-mt-44 md:[&_:is(input,select,button,a)]:scroll-mt-24',
+            )}
+          >
             <thead className="sr-only">
               <tr>
                 <th scope="col">Select</th>

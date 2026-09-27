@@ -70,9 +70,12 @@ Rules:
   control's `aria-describedby`) and `RadioOption` (a radio with a bold label and a
   one-line hint that is its accessible description). A settings form keeps the
   saved document and the form apart, builds the PUT body from only the fields that
-  differ, and enables Save while that body is non-empty and the form is valid;
-  Discard is enabled whenever the form differs at all, an edit that cannot be sent
-  included. A 422 that names a field is shown as that field's `problem` (or beside
+  differ, and enables Save whenever there is a change to send or a problem to point
+  at: pressing it with a problem moves focus to the first invalid control rather
+  than sending anything, and it shows a spinner while the request runs. Discard is
+  enabled whenever the form differs at all, an edit that cannot be sent included.
+  A form with unsaved edits asks before the tab changes or the page unloads
+  (`useUnsavedChanges`). A 422 that names a field is shown as that field's `problem` (or beside
   its row, on the control it is about, which points at it with `aria-describedby`),
   anything else as an `ErrorMessage`, and a `Notice tone="good" role="status"`
   confirms the save. A document with `stored: false` gets `CONFIG_DEFAULTS_MESSAGE`
@@ -96,13 +99,19 @@ Rules:
   `inputCompact` field pre-filled with it; Enter or blur saves a changed, non-blank
   value through the row's own PATCH (its errors show under the row), Escape cancels,
   and focus returns to the pencil after Enter or Escape.
+* Skip link: `Layout` opens with a `skipLink` "Skip to content" link to
+  `<main id="main" tabIndex={-1}>`, hidden until focused. The sticky mobile top bar
+  is cleared for keyboard focus by `scroll-padding-top` in `index.css`, not by
+  `scroll-mt-*` on individual targets.
 * Navigation counts: a nav item may carry a small `warning/15` count pill (the lines
   waiting on Review) with the count spelt out for screen readers ("Review (12
   pending)"). It comes from one request in `Layout` that pages keep current by sharing
   what they load (`useSharePeriods`) or asking once after a change
   (`useRefreshReviewBadge`); never poll for it.
 * Messages: `Notice` (neutral/good/warning/critical wash + icon; closed-period
-  notes, confirmations), `ErrorMessage` (critical, with Retry/Dismiss),
+  notes, confirmations; as an inline `role="alertdialog"` confirmation it names its
+  message with `messageId` + `aria-describedby`, takes focus on its safe choice when
+  it appears and hands it back to the trigger on Cancel), `ErrorMessage` (critical, with Retry/Dismiss),
   `EmptyState` (icon circle, title, hint, action), `LoadingState` (inline
   spinner or a `rows` skeleton that holds the space), `StatTile` (label over a
   figure; `surface="raised"` when it sits on a wash, `inset` by default;

@@ -115,6 +115,28 @@ describe('<ClaimForm />', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Enter an amount greater than zero.');
     expect(calls).toHaveLength(0);
+    // The problem is also beside the field, which takes focus.
+    const amount = screen.getByLabelText(/Amount/);
+    expect(amount).toHaveAttribute('aria-invalid', 'true');
+    expect(amount).toHaveAccessibleDescription('Enter an amount greater than zero.');
+    expect(amount).toHaveFocus();
+    await user.type(amount, '5');
+    expect(amount).not.toHaveAttribute('aria-invalid');
+  });
+
+  it('marks every missing field and focuses the first one', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockFetch(() => undefined);
+    renderWithProviders(<ClaimForm onCreated={() => {}} />, { session: secondarySession });
+
+    await user.click(screen.getByRole('button', { name: 'Log claim' }));
+
+    expect(screen.getByLabelText(/Amount/)).toHaveFocus();
+    expect(screen.getByLabelText(/Amount/)).toHaveAttribute('aria-invalid', 'true');
+    const merchant = screen.getByLabelText('Merchant or description');
+    expect(merchant).toHaveAttribute('aria-invalid', 'true');
+    expect(merchant).toHaveAccessibleDescription('Enter the merchant or a short description.');
+    expect(calls).toHaveLength(0);
   });
 
   it('asks before logging an amount above £1,000 and only posts once confirmed', async () => {
@@ -135,9 +157,10 @@ describe('<ClaimForm />', () => {
     expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
     expect(screen.queryByRole('button', { name: 'Log claim' })).not.toBeInTheDocument();
 
-    // Cancel brings the form back untouched, still without a request.
+    // The question takes focus; Cancel brings the form back untouched, focus on Log claim, still without a request.
+    expect(within(prompt).getByRole('button', { name: 'Confirm' })).toHaveFocus();
     await user.click(within(prompt).getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByRole('button', { name: 'Log claim' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Log claim' })).toHaveFocus();
     expect(screen.getByLabelText(/Amount/)).toHaveValue('99999999');
     expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
 
@@ -251,6 +274,6 @@ describe('<ClaimForm />', () => {
     await user.type(screen.getByLabelText('Merchant or description'), 'Tesco');
     await user.click(screen.getByRole('button', { name: 'Log claim' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('This period is closed, so it can no longer be edited.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('This period is closed. It needs reopening from the dashboard before it can change.');
   });
 });

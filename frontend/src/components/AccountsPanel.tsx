@@ -14,6 +14,9 @@ import { EmptyState } from './EmptyState';
 import { ErrorMessage } from './ErrorMessage';
 import { LoadingState } from './LoadingState';
 
+/** Transaction counts grouped the British way: 12,345. */
+const COUNT_FORMAT = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 });
+
 type Dialog = { mode: 'create' } | { mode: 'edit'; account: AccountOut };
 
 export const HAS_TRANSACTIONS_TITLE = 'Has transactions; archive it instead';
@@ -183,7 +186,9 @@ export function AccountsPanel() {
                       <tr key={account.id} className={trHover}>
                         <td className={tdBase}>
                           <p className="font-semibold text-ink">{name}</p>
-                          <p className="mt-0.5 font-mono text-xs text-ink-3">{account.id}</p>
+                          <p translate="no" className="mt-0.5 font-mono text-xs text-ink-3">
+                            {account.id}
+                          </p>
                           {error && (
                             <p role="alert" className="mt-1 max-w-xs text-xs text-critical-ink">
                               {error}
@@ -198,7 +203,7 @@ export function AccountsPanel() {
                           {claimTypeLabel(account.default_claim_type, names)}
                         </td>
                         <td className={cx(tdBase, 'whitespace-nowrap text-ink-2')}>{personName(account.billed_to)}</td>
-                        <td className={cx(tdBase, 'text-right tabular')}>{account.transaction_count}</td>
+                        <td className={cx(tdBase, 'text-right tabular')}>{COUNT_FORMAT.format(account.transaction_count)}</td>
                         <td className={tdBase}>
                           {account.is_active ? (
                             <Badge tone="green" dot>

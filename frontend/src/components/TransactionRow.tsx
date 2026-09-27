@@ -143,6 +143,9 @@ export function TransactionRow({
               <div className="flex items-baseline gap-2">
                 {renameDraft !== null ? (
                   <input
+                    name="merchant_name"
+                    autoComplete="off"
+                    spellCheck={false}
                     className={cx(inputCompact, 'w-full max-w-[18rem] font-semibold')}
                     aria-label={`New name for ${merchant}`}
                     value={renameDraft}

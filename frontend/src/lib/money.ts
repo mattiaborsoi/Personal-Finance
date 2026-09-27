@@ -6,8 +6,13 @@ export function toNumber(value: Money | number | null | undefined): number {
   return typeof value === 'number' ? value : Number(value);
 }
 
-function groupThousands(integerPart: string): string {
-  return integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+/** UK grouping and decimals for every figure (the app is en-GB throughout). */
+const AMOUNT = new Intl.NumberFormat('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const COUNT = new Intl.NumberFormat('en-GB');
+
+/** A whole-number count with thousands grouping: `formatCount(12345)` -> `12,345`. */
+export function formatCount(n: number): string {
+  return COUNT.format(n);
 }
 
 /**
@@ -19,8 +24,7 @@ export function formatMoney(value: Money | number | null | undefined, symbol: st
   if (!Number.isFinite(n)) return '—';
   const rounded = Math.round(Math.abs(n) * 100) / 100;
   const negative = n < 0 && rounded !== 0;
-  const [integerPart, fraction] = rounded.toFixed(2).split('.');
-  return `${negative ? '-' : ''}${symbol}${groupThousands(integerPart)}.${fraction}`;
+  return `${negative ? '-' : ''}${symbol}${AMOUNT.format(rounded)}`;
 }
 
 /** Like formatMoney but with an explicit leading `+` for positive values. */

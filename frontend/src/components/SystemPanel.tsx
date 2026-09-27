@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { api, errorMessage, isApiError, type SystemInfo } from '../api';
 import { formatDate, formatDateTime } from '../lib/dates';
 import { plural } from '../lib/format';
-import { btnPrimary, btnSecondary, cx, eyebrow } from '../lib/ui';
+import { btnPrimary, btnSecondary, cx, eyebrow, focusRing } from '../lib/ui';
 import { Badge, type BadgeTone } from './Badge';
 import { Card } from './Card';
 import { ConfirmButton } from './ConfirmButton';
@@ -56,6 +56,8 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [checking, setChecking] = useState(false);
+  /** What the last "Check again" found, for screen readers; the polling below never touches it. */
+  const [checkResult, setCheckResult] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   /** True from "Update now" until the updater reports a final state, even before the server says "running". */
   const [watching, setWatching] = useState(false);
@@ -118,9 +120,18 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
 
   async function check() {
     setChecking(true);
+    setCheckResult('');
     setActionError(null);
     try {
-      setInfo(await api.checkForUpdates());
+      const next = await api.checkForUpdates();
+      setInfo(next);
+      setCheckResult(
+        next.update_available === true
+          ? `Update available: ${next.changes_truncated ? `more than ${next.changes.length} commits` : plural(next.changes.length, 'commit')} behind.`
+          : next.update_available === false
+            ? 'Up to date.'
+            : 'Could not tell whether an update is available.',
+      );
     } catch (err) {
       setActionError(errorMessage(err));
     } finally {
@@ -200,7 +211,11 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
         }
       >
         <dl className="grid gap-3 sm:grid-cols-2">
-          <StatTile as="dl-item" label="Running" value={<span className="font-mono">{info.running.short ?? 'unknown'}</span>} />
+          <StatTile as="dl-item" label="Running" value={
+              <span translate="no" className="font-mono">
+                {info.running.short ?? 'unknown'}
+              </span>
+            } />
           <StatTile
             as="dl-item"
             label="Latest on GitHub"
@@ -214,8 +229,10 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
             <ol aria-label="Changes" className="mt-2 divide-y divide-hairline overflow-hidden rounded-xl border border-hairline">
               {changes.map((change) => (
                 <li key={change.commit} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2 text-sm sm:flex-nowrap">
-                  <span className="font-mono text-xs text-ink-3">{change.short}</span>{' '}
-                  <span className="min-w-0 basis-full text-ink sm:flex-1 sm:basis-auto">{change.message}</span>{' '}
+                  <span translate="no" className="font-mono text-xs text-ink-3">
+                    {change.short}
+                  </span>{' '}
+                  <span className="min-w-0 basis-full break-words text-ink sm:flex-1 sm:basis-auto">{change.message}</span>{' '}
                   <span className="shrink-0 text-xs text-ink-3">{formatDate(change.date)}</span>
                 </li>
               ))}
@@ -253,6 +270,9 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
           >
             Update now
           </ConfirmButton>
+          <p aria-live="polite" className="sr-only">
+            {checkResult}
+          </p>
         </div>
         <ErrorMessage message={actionError} onDismiss={() => setActionError(null)} className="mt-4" />
       </Card>
@@ -290,7 +310,7 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
             </Notice>
             {updater.log && (
               <details className="text-sm text-ink-2">
-                <summary className="cursor-pointer">Update log</summary>
+                <summary className={cx('cursor-pointer rounded font-medium hover:text-ink', focusRing)}>Update log</summary>
                 <div className="mt-2">
                   <UpdateLog log={updater.log} />
                 </div>
@@ -305,7 +325,7 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
             </p>
             {updater.log && (
               <details className="text-sm text-ink-2">
-                <summary className="cursor-pointer">Last update log</summary>
+                <summary className={cx('cursor-pointer rounded font-medium hover:text-ink', focusRing)}>Last update log</summary>
                 <div className="mt-2">
                   <UpdateLog log={updater.log} />
                 </div>

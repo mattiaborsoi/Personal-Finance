@@ -50,7 +50,7 @@ export function Card({
               </span>
             )}
             <div className="min-w-0">
-              {title && <h2 className="text-base font-semibold tracking-tight text-ink">{title}</h2>}
+              {title && <h2 className="text-balance text-base font-semibold tracking-tight text-ink">{title}</h2>}
               {description && <p className="mt-0.5 text-xs text-ink-3">{description}</p>}
             </div>
           </div>

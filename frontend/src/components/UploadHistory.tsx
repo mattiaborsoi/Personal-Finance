@@ -117,7 +117,7 @@ export function UploadHistory({ statements, onDeleted }: Props) {
                     >
                       <FileText className="h-4 w-4" />
                     </span>
-                    <span className="min-w-0 break-all font-medium text-ink" title={s.sha256}>
+                    <span translate="no" className="min-w-0 break-all font-medium text-ink" title={s.sha256}>
                       {s.filename}
                     </span>
                   </span>
@@ -129,7 +129,9 @@ export function UploadHistory({ statements, onDeleted }: Props) {
                   {periodRangeLabel(s.period_from, s.period_to, s.period_key)}
                 </td>
                 <td className={tdBase}>
-                  <Badge tone="neutral">{s.parser}</Badge>
+                  <Badge tone="neutral">
+                    <span translate="no">{s.parser}</span>
+                  </Badge>
                 </td>
                 <td className={cx(tdBase, 'text-right tabular')}>{s.transaction_count}</td>
                 <td className={cx(tdBase, 'whitespace-nowrap text-right text-ink-3')}>{formatDateTime(s.created_at)}</td>

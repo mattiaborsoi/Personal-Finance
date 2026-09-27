@@ -19,40 +19,43 @@ export function CategoryBreakdown({ breakdown, accentClass = 'bg-brand' }: Props
   if (breakdown.kind === 'account') {
     if (breakdown.rows.length === 0) return <EmptyState title="No account activity this period" />;
     return (
-      <table className={cx(tableBase, 'tabular')}>
-        <thead>
-          <tr>
-            <th scope="col" className={cx(thBase, 'pl-0')}>
-              Account
-            </th>
-            <th scope="col" className={cx(thBase, 'text-right')}>
-              In
-            </th>
-            <th scope="col" className={cx(thBase, 'text-right')}>
-              Out
-            </th>
-            <th scope="col" className={cx(thBase, 'pr-0 text-right')}>
-              Net
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-hairline">
-          {breakdown.rows.map((row) => (
-            <tr key={row.account_id}>
-              <td className={cx(tdBase, 'pl-0 text-ink-2')}>{accountLabel(config.accounts, row.account_id)}</td>
-              <td className={cx(tdBase, 'text-right')}>
-                <MoneyText value={row.credits} />
-              </td>
-              <td className={cx(tdBase, 'text-right')}>
-                <MoneyText value={row.debits} />
-              </td>
-              <td className={cx(tdBase, 'pr-0 text-right font-semibold')}>
-                <MoneyText value={row.net} tone signed />
-              </td>
+      // Scrolls inside the one-third-width card rather than pushing the money columns past its edge.
+      <div className="overflow-x-auto">
+        <table className={cx(tableBase, 'tabular')}>
+          <thead>
+            <tr>
+              <th scope="col" className={cx(thBase, 'pl-0')}>
+                Account
+              </th>
+              <th scope="col" className={cx(thBase, 'text-right')}>
+                In
+              </th>
+              <th scope="col" className={cx(thBase, 'text-right')}>
+                Out
+              </th>
+              <th scope="col" className={cx(thBase, 'pr-0 text-right')}>
+                Net
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-hairline">
+            {breakdown.rows.map((row) => (
+              <tr key={row.account_id}>
+                <td className={cx(tdBase, 'pl-0 text-ink-2')}>{accountLabel(config.accounts, row.account_id)}</td>
+                <td className={cx(tdBase, 'whitespace-nowrap text-right')}>
+                  <MoneyText value={row.credits} />
+                </td>
+                <td className={cx(tdBase, 'whitespace-nowrap text-right')}>
+                  <MoneyText value={row.debits} />
+                </td>
+                <td className={cx(tdBase, 'whitespace-nowrap pr-0 text-right font-semibold')}>
+                  <MoneyText value={row.net} tone signed />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     );
   }
 

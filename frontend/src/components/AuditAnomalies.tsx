@@ -35,9 +35,10 @@ export function AuditAnomalies({ anomalies }: Props) {
             <span aria-hidden="true" className="mt-2 h-2 w-2 shrink-0 rounded-full bg-warning" />
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-semibold text-ink">{a.merchant}</span>
+                <span className="min-w-0 break-words font-semibold text-ink [overflow-wrap:anywhere]">{a.merchant}</span>
                 <Badge tone={deviationTone(pct)} title="Deviation from baseline" className="tabular">
                   {formatSignedPercent(pct, 0)}
+                  <span className="sr-only"> deviation from baseline</span>
                 </Badge>
               </div>
               <p className="mt-0.5 text-sm text-ink-2">{a.issue}</p>
@@ -47,6 +48,7 @@ export function AuditAnomalies({ anomalies }: Props) {
                   <span title="Standard deviation of the prior periods">
                     {' '}
                     ± <MoneyText value={a.baseline_stddev} />
+                    <span className="sr-only"> standard deviation of the prior periods</span>
                   </span>
                 )}
               </p>

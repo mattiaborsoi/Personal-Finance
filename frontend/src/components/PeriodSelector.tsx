@@ -66,7 +66,10 @@ export function PeriodSelector({ periods, value, onChange, allowCustom = true }:
             <input
               id="period-custom"
               className={cx(inputBase, 'w-40 rounded-r-none shadow-card')}
-              placeholder="or type YYYY-MM"
+              name="period"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="or type 2026-03…"
               inputMode="numeric"
               pattern="\d{4}-\d{2}"
               value={custom}

@@ -58,11 +58,17 @@ export function DashboardPage() {
   const location = useLocation();
   const periods = useAsync(() => api.listPeriods(), 'periods');
   useSharePeriods(periods.data);
-  const [view, setView] = useState<MetricView>(readStoredView);
   const [refreshKey, setRefreshKey] = useState(0);
   /** A confirmation from the page that sent us here (a reset in Settings). */
   const arrivalNotice = readNotice(location.state);
   const [noticeDismissed, setNoticeDismissed] = useState(false);
+
+  // The view lives in the URL (?view=) so a shared link or Back restores it; the last choice is the fallback.
+  const requestedView = searchParams.get('view');
+  const view: MetricView =
+    requestedView === 'macro' || requestedView === 'micro' || requestedView === 'liquidity'
+      ? requestedView
+      : readStoredView();
 
   const requested = searchParams.get('period');
   const period =
@@ -79,12 +85,21 @@ export function DashboardPage() {
   }, [reloadPeriods, bump]);
 
   function changeView(next: MetricView) {
-    setView(next);
     storeView(next);
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      params.set('view', next);
+      return params;
+    });
   }
 
   function changePeriod(next: string) {
-    setSearchParams(next ? { period: next } : {});
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      if (next) params.set('period', next);
+      else params.delete('period');
+      return params;
+    });
   }
 
   return (

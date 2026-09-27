@@ -1,6 +1,6 @@
 import { Calendar, ChevronDown, ChevronUp, CircleCheck, HandCoins, Lock, Receipt, Scale } from 'lucide-react';
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api, errorMessage, type PeriodOut } from '../api';
 import { useCurrency, useNames } from '../config/ConfigContext';
 import { useAsync } from '../hooks/useAsync';
@@ -31,7 +31,9 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
   const names = useNames();
   const symbol = useCurrency();
   const settlement = useAsync(() => api.getSettlement(period), `settlement:${period}:${refreshKey}`);
-  const [expanded, setExpanded] = useState(false);
+  // The open lines panel lives in the URL (?lines=open), so a reload or a shared link keeps it open.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const expanded = searchParams.get('lines') === 'open';
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -59,22 +61,22 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
   const components = data
     ? [
         {
-          label: `${names.secondary}'s share of shared items ${names.primary} paid`,
+          label: `${names.secondary}’s share of shared items ${names.primary} paid`,
           value: data.secondary_share_of_primary_paid_shared,
           sign: '+',
         },
         {
-          label: `${names.primary}'s share of shared items ${names.secondary} paid`,
+          label: `${names.primary}’s share of shared items ${names.secondary} paid`,
           value: data.primary_share_of_secondary_paid_shared,
           sign: '−',
         },
         {
-          label: `${names.secondary}'s personal items on ${names.primary}'s cards`,
+          label: `${names.secondary}’s personal items on ${names.primary}’s cards`,
           value: data.secondary_personal_on_primary_paid,
           sign: '+',
         },
         {
-          label: `${names.primary}'s personal items on ${names.secondary}'s cards`,
+          label: `${names.primary}’s personal items on ${names.secondary}’s cards`,
           value: data.primary_personal_on_secondary_paid,
           sign: '−',
         },
@@ -113,7 +115,7 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
                     <InitialsChip name={names.secondary} size={36} className="ring-2 ring-surface" />
                   </span>
                   <p
-                    className="text-3xl font-semibold leading-tight tracking-tight text-ink sm:text-4xl"
+                    className="text-balance text-3xl font-semibold leading-tight tracking-tight text-ink sm:text-4xl"
                     data-testid="settlement-headline"
                   >
                     {awaiting ? 'Nothing approved yet' : settlementHeadline(data.net_owed_by_secondary, names, symbol)}
@@ -156,7 +158,7 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
             <div className="flex items-center gap-3">
               {settlement.loading && <LoadingState inline />}
               <ConfirmButton
-                confirmLabel={`Mark all of this period's claims as settled?`}
+                confirmLabel="Mark all of this period’s claims as settled?"
                 onConfirm={markSettled}
                 tone="primary"
                 icon={CircleCheck}
@@ -231,7 +233,17 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
                   className={cx(btnGhost, btnSmall)}
                   aria-expanded={expanded}
                   aria-controls="settlement-lines"
-                  onClick={() => setExpanded((e) => !e)}
+                  onClick={() =>
+                    setSearchParams(
+                      (prev) => {
+                        const next = new URLSearchParams(prev);
+                        if (expanded) next.delete('lines');
+                        else next.set('lines', 'open');
+                        return next;
+                      },
+                      { replace: true },
+                    )
+                  }
                 >
                   {expanded ? (
                     <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />

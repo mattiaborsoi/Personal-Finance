@@ -62,7 +62,7 @@ export function MemoryTable({ entries, errors, onDelete }: Props) {
                     <MerchantAvatar name={entry.normalized_merchant} />
                     <div className="min-w-0">
                       <p className="font-semibold text-ink">{entry.normalized_merchant}</p>
-                      <p className="mt-0.5 max-w-xs break-all font-mono text-xs text-ink-3">{entry.raw_pattern}</p>
+                      <p translate="no" className="mt-0.5 max-w-xs break-all font-mono text-xs text-ink-3">{entry.raw_pattern}</p>
                       {errors[key] && (
                         <p role="alert" className="mt-1 text-xs text-critical-ink">
                           {errors[key]}

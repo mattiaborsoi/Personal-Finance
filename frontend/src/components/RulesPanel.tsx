@@ -1,7 +1,9 @@
-import { ArrowDown, ArrowUp, CircleAlert, CircleCheck, CreditCard, FlaskConical, ListChecks, Minus, Plus, Trash2 } from 'lucide-react';
-import { Fragment, useEffect, useId, useState, type FormEvent } from 'react';
+import { ArrowDown, ArrowUp, CircleAlert, CircleCheck, CreditCard, FlaskConical, ListChecks, LoaderCircle, Minus, Plus, Trash2 } from 'lucide-react';
+import { Fragment, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { api, CONFIG_DEFAULTS_MESSAGE, errorMessage, isApiError, type ClaimType, type RuleTestResult, type RulesOut } from '../api';
 import { useConfig, useNames, useReloadConfig } from '../config/ConfigContext';
+import { useFocusFirstProblem } from '../hooks/useFocusFirstProblem';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { accountName, categoryLabel, categoryOptions, claimTypeLabel, plural } from '../lib/format';
 import {
   blankPattern,
@@ -125,6 +127,11 @@ export function RulesPanel() {
   const [testError, setTestError] = useState<string | null>(null);
   const [result, setResult] = useState<RuleTestResult | null>(null);
 
+  const formRef = useRef<HTMLFormElement>(null);
+  const focusFirstProblem = useFocusFirstProblem(formRef, saving || testing);
+  const changed = saved !== null && form !== null && rulesFormChanged(form, saved);
+  useUnsavedChanges(changed);
+
   useEffect(() => {
     let cancelled = false;
     api
@@ -175,9 +182,7 @@ export function RulesPanel() {
   const valid = !hasRulesProblems(own);
   const update = buildRulesUpdate(form, saved);
   const dirty = Object.keys(update).length > 0;
-  const changed = rulesFormChanged(form, saved);
   const busy = saving || testing;
-  const canSave = dirty && valid && !busy;
   const canTest = valid && Boolean(tryText.trim()) && !busy;
   const defaultCategory = config.categories[0] ?? '';
   const defaultClaimType: ClaimType = config.claim_types[0] ?? 'personal';
@@ -208,7 +213,12 @@ export function RulesPanel() {
 
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (!canSave) return;
+    if (busy || !saved) return;
+    if (!valid) {
+      focusFirstProblem();
+      return;
+    }
+    if (!dirty) return;
     setSaving(true);
     setSaveError(null);
     setSavedNotice(false);
@@ -221,8 +231,11 @@ export function RulesPanel() {
       await syncConfig();
     } catch (err) {
       const placed = isApiError(err, 422) ? problemsForError(err, errorMessage(err)) : null;
-      if (placed) setServerProblems(placed);
-      else setSaveError(errorMessage(err));
+      if (placed) {
+        setServerProblems(placed);
+        // Once the controls are enabled again, the one the server refused takes the focus.
+        focusFirstProblem();
+      } else setSaveError(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -271,7 +284,7 @@ export function RulesPanel() {
   const toleranceProblem = own.amount_tolerance ?? serverProblems.amount_tolerance;
 
   return (
-    <form onSubmit={save} noValidate className="space-y-6">
+    <form ref={formRef} onSubmit={save} noValidate className="space-y-6">
       {!saved.stored && (
         <Notice tone="neutral" aria-label="Rules defaults">
           {CONFIG_DEFAULTS_MESSAGE}
@@ -385,7 +398,7 @@ export function RulesPanel() {
                               type="text"
                               className={cx(inputBase, flag('merchant').invalid && inputInvalid)}
                               value={row.merchant}
-                              placeholder="Optional"
+                              placeholder="Optional, e.g. Aquanorth Water…"
                               autoComplete="off"
                               disabled={busy}
                               aria-label={`Merchant for rule ${n}`}
@@ -649,7 +662,9 @@ export function RulesPanel() {
           <button type="button" className={btnSecondary} onClick={discard} disabled={!changed || busy}>
             Discard changes
           </button>
-          <button type="submit" className={btnPrimary} disabled={!canSave}>
+          {/* Enabled while there is a change to send or a problem to point at: pressing it then moves focus to the problem. */}
+          <button type="submit" className={btnPrimary} disabled={busy || (valid && !dirty)}>
+            {saving && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
             {saving ? 'Saving…' : 'Save changes'}
           </button>
         </div>

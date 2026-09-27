@@ -140,6 +140,9 @@ describe('<ApprovalQueue />', () => {
 
     await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true));
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ remember: true });
+    // The focused Approve button left with its row: focus moves to the queue heading and the result is announced.
+    expect(screen.getByRole('heading', { name: 'Approval queue' })).toHaveFocus();
+    expect(await screen.findByText('Approved Uber')).toHaveAttribute('role', 'status');
   });
 
   it('restores the row with the user’s edits and a closed-period message when approval returns 409', async () => {
@@ -237,6 +240,7 @@ describe('<ApprovalQueue />', () => {
       remember: true,
     });
     expect(await screen.findByText('Nothing to review. All caught up.')).toBeInTheDocument();
+    expect(await screen.findByText('2 transactions approved')).toHaveAttribute('role', 'status');
   });
 
   it('disables every approval control and explains why when the period is closed', async () => {
@@ -248,7 +252,8 @@ describe('<ApprovalQueue />', () => {
     renderWithProviders(<ApprovalQueue period="2026-03" closed />);
     await screen.findByRole('button', { name: 'Ocado' });
 
-    expect(screen.getByRole('status')).toHaveTextContent(/this period is closed/i);
+    // The queue's own (empty) announcement region is a status too; the notice is the one with text.
+    expect(screen.getAllByRole('status').some((el) => /this period is closed/i.test(el.textContent ?? ''))).toBe(true);
     screen.getAllByRole('button', { name: /^Approve (Ocado|Uber)$/ }).forEach((b) => expect(b).toBeDisabled());
     screen.getAllByRole('button', { name: /^Split / }).forEach((b) => expect(b).toBeDisabled());
     screen.getAllByRole('checkbox', { name: /as a transfer$/ }).forEach((c) => expect(c).toBeDisabled());
@@ -312,6 +317,8 @@ describe('<ApprovalQueue />', () => {
     expect(screen.getByRole('button', { name: 'Uber' })).toBeInTheDocument();
     expect(screen.getByText('1 transaction pending review')).toBeInTheDocument();
     expect(onChanged).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Split saved and approved')).toHaveAttribute('role', 'status');
+    expect(screen.getByRole('heading', { name: 'Approval queue' })).toHaveFocus();
   });
 
   it('keeps the row and the dialog open when the split is refused', async () => {

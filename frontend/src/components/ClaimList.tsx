@@ -80,7 +80,7 @@ export function ClaimList({
                 <p className="min-w-0 truncate font-semibold text-ink">{claim.merchant}</p>
                 <MoneyText value={claim.amount} className="shrink-0 font-semibold" />
               </div>
-              {claim.description && <p className="text-sm text-ink-2">{claim.description}</p>}
+              {claim.description && <p className="text-sm text-ink-2 [overflow-wrap:anywhere]">{claim.description}</p>}
               <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-ink-3">
                 <InitialsChip name={paidByName(claim.paid_by)} />
                 <span>{paidByName(claim.paid_by)}</span>
@@ -143,8 +143,8 @@ export function ClaimList({
                 <div className="flex items-start gap-3">
                   <MerchantAvatar name={claim.merchant} className="mt-0.5" />
                   <div className="min-w-0">
-                    <p className="font-semibold text-ink">{claim.merchant}</p>
-                    {claim.description && <p className="text-xs text-ink-2">{claim.description}</p>}
+                    <p className="font-semibold text-ink [overflow-wrap:anywhere]">{claim.merchant}</p>
+                    {claim.description && <p className="text-xs text-ink-2 [overflow-wrap:anywhere]">{claim.description}</p>}
                     <p className="mt-0.5 text-xs text-ink-3 tabular">{formatDate(claim.claim_date)}</p>
                     {errors[claim.id] && (
                       <p role="alert" className="mt-1 text-xs text-critical-ink">

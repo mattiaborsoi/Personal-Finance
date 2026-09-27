@@ -43,6 +43,8 @@ export const radioBase = `h-4 w-4 cursor-pointer border-control bg-surface accen
 
 export const labelBase = 'block text-sm font-medium text-ink-2';
 export const eyebrow = 'text-2xs font-semibold uppercase text-ink-3';
+/** "Skip to content": hidden until focused, then pinned top-left above the chrome; targets `<main id="main">`. */
+export const skipLink = `sr-only rounded-lg bg-surface px-3 py-2 text-sm font-medium text-ink shadow-pop focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 ${focusRing}`;
 export const linkBase = `rounded font-medium text-brand hover:text-brand-strong hover:underline ${focusRing}`;
 export const cardBase = 'rounded-2xl border border-hairline bg-surface p-5 shadow-card sm:p-6';
 export const cardInset = 'rounded-xl bg-surface-2 px-4 py-3';
@@ -53,7 +55,7 @@ export const chipSoft =
   'inline-flex max-w-full items-center gap-1 truncate rounded-md bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium leading-4 text-ink-2';
 
 /** Inside `<Modal>`: the scrolling middle of a dialog form, and its pinned footer of buttons. */
-export const dialogBody = 'min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6';
+export const dialogBody = 'min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6';
 export const dialogFooter = 'flex flex-wrap items-center justify-end gap-2 border-t border-hairline px-5 py-4 sm:px-6';
 
 export const tableBase = 'min-w-full divide-y divide-hairline text-sm';

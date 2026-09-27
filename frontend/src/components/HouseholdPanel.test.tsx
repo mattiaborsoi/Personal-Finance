@@ -83,7 +83,7 @@ describe('<HouseholdPanel />', () => {
 
     expect(screen.getByRole('radio', { name: PROPORTIONAL_LABEL })).toBeChecked();
     expect(screen.getByRole('radio', { name: EQUAL_LABEL })).not.toBeChecked();
-    expect(screen.getByText('Alex 55.6 % · Sam 44.4 %')).toBeInTheDocument();
+    expect(screen.getByText('Alex 55.6% · Sam 44.4%')).toBeInTheDocument();
 
     expect(screen.getByLabelText('Settle by')).toHaveValue(1);
     expect(screen.getByLabelText('Rounding')).toHaveValue(2);
@@ -114,7 +114,7 @@ describe('<HouseholdPanel />', () => {
     await user.clear(salary);
     await user.type(salary, '90000');
     // The preview follows the form, not the saved figures.
-    expect(screen.getByText('Alex 52.6 % · Sam 47.4 %')).toBeInTheDocument();
+    expect(screen.getByText('Alex 52.6% · Sam 47.4%')).toBeInTheDocument();
     const day = screen.getByLabelText('Settle by');
     await user.clear(day);
     await user.type(day, '5');
@@ -135,22 +135,28 @@ describe('<HouseholdPanel />', () => {
 
     const alex = await renderPanel();
     await user.click(screen.getByRole('radio', { name: EQUAL_LABEL }));
-    expect(screen.getByText('Alex 50.0 % · Sam 50.0 %')).toBeInTheDocument();
+    expect(screen.getByText('Alex 50.0% · Sam 50.0%')).toBeInTheDocument();
     expect(saveButton()).toBeEnabled();
 
     await user.click(screen.getByRole('radio', { name: PROPORTIONAL_LABEL }));
-    expect(screen.getByText('Alex 55.6 % · Sam 44.4 %')).toBeInTheDocument();
+    expect(screen.getByText('Alex 55.6% · Sam 44.4%')).toBeInTheDocument();
     expect(saveButton()).toBeDisabled();
 
     await user.clear(within(alex).getByLabelText('Annual salary'));
     await user.clear(within(sam()).getByLabelText('Annual salary'));
     expect(screen.getByText(NO_INCOME_MESSAGE)).toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    // Save points at the split the incomes cannot support rather than sending it.
+    await user.click(saveButton());
+    const proportional = screen.getByRole('radio', { name: PROPORTIONAL_LABEL });
+    expect(proportional).toHaveFocus();
+    expect(proportional).toHaveAttribute('aria-invalid', 'true');
+    expect(proportional).toHaveAccessibleDescription(expect.stringContaining(NO_INCOME_MESSAGE));
+    expect(puts(calls)).toHaveLength(0);
 
     // 50–50 needs no incomes, so the same form saves.
     await user.click(screen.getByRole('radio', { name: EQUAL_LABEL }));
     expect(screen.queryByText(NO_INCOME_MESSAGE)).not.toBeInTheDocument();
-    expect(screen.getByText('Alex 50.0 % · Sam 50.0 %')).toBeInTheDocument();
+    expect(screen.getByText('Alex 50.0% · Sam 50.0%')).toBeInTheDocument();
     await user.click(saveButton());
     await waitFor(() => expect(puts(calls)).toHaveLength(1));
     expect(puts(calls)[0].body).toEqual({
@@ -168,19 +174,21 @@ describe('<HouseholdPanel />', () => {
     await user.clear(name);
     expect(within(alex).getByText(BLANK_NAME_MESSAGE)).toBeInTheDocument();
     expect(name).toHaveAttribute('aria-invalid', 'true');
-    expect(saveButton()).toBeDisabled();
+    await user.click(saveButton());
+    expect(name).toHaveFocus();
     // The preview falls back to a role while the name is blank.
-    expect(screen.getByText('Primary 55.6 % · Sam 44.4 %')).toBeInTheDocument();
+    expect(screen.getByText('Primary 55.6% · Sam 44.4%')).toBeInTheDocument();
     await user.type(name, 'Alexandra');
     expect(within(alex).queryByText(BLANK_NAME_MESSAGE)).not.toBeInTheDocument();
-    expect(screen.getByText('Alexandra 55.6 % · Sam 44.4 %')).toBeInTheDocument();
+    expect(screen.getByText('Alexandra 55.6% · Sam 44.4%')).toBeInTheDocument();
     expect(saveButton()).toBeEnabled();
 
     const day = screen.getByLabelText('Settle by');
     await user.clear(day);
     await user.type(day, '31');
     expect(screen.getByText(SETTLEMENT_DAY_MESSAGE)).toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    await user.click(saveButton());
+    expect(day).toHaveFocus();
     await user.clear(day);
     await user.type(day, '1');
     expect(screen.queryByText(SETTLEMENT_DAY_MESSAGE)).not.toBeInTheDocument();
@@ -190,7 +198,8 @@ describe('<HouseholdPanel />', () => {
     await user.type(code, 'gb');
     expect(code).toHaveValue('GB');
     expect(screen.getByText(CURRENCY_CODE_MESSAGE)).toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    await user.click(saveButton());
+    expect(code).toHaveFocus();
     expect(puts(calls)).toHaveLength(0);
   });
 
@@ -224,6 +233,8 @@ describe('<HouseholdPanel />', () => {
     await waitFor(() => expect(within(sam()).getByText('display_name must be at most 64 characters')).toBeInTheDocument());
     expect(name).toHaveAttribute('aria-invalid', 'true');
     expect(name).toHaveAccessibleDescription('display_name must be at most 64 characters');
+    // Focus lands on the refused field once it is enabled again, so its problem is read out.
+    await waitFor(() => expect(name).toHaveFocus());
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(name).toHaveValue(longName);
     expect(saveButton()).toBeEnabled();
@@ -240,6 +251,7 @@ describe('<HouseholdPanel />', () => {
 
     await waitFor(() => expect(code).toHaveAttribute('aria-invalid', 'true'));
     expect(code).toHaveAccessibleDescription('base_currency: GBX is not a currency');
+    await waitFor(() => expect(code).toHaveFocus());
     expect(puts(calls)).toHaveLength(2);
 
     // A refusal that names no field is shown as a plain error.
@@ -249,6 +261,29 @@ describe('<HouseholdPanel />', () => {
     await user.click(saveButton());
     expect(await screen.findByRole('alert')).toHaveTextContent('something the form did not expect');
     expect(configFetches(calls)).toBe(1);
+  });
+
+  it('keeps Save pressable until the request starts, then shows a spinner until it ends', async () => {
+    const user = userEvent.setup();
+    let answer: (response: Response) => void = () => {};
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/config') return jsonResponse(fixtureConfig);
+      if (method === 'GET' && url === URL) return jsonResponse(household());
+      if (method === 'PUT' && url === URL) return new Promise<Response>((resolve) => (answer = resolve));
+      return undefined;
+    });
+
+    await renderPanel();
+    await user.click(screen.getByRole('radio', { name: EQUAL_LABEL }));
+    await user.click(saveButton());
+
+    const saving = await screen.findByRole('button', { name: 'Saving…' });
+    expect(saving).toBeDisabled();
+    expect(saving.querySelector('svg.animate-spin')).not.toBeNull();
+
+    answer(jsonResponse(household({ split_strategy: 'equal_50_50' })));
+    expect(await screen.findByRole('status')).toHaveTextContent(HOUSEHOLD_SAVED_MESSAGE);
+    expect(saveButton().querySelector('svg.animate-spin')).toBeNull();
   });
 
   it('discards edits back to the saved household', async () => {
@@ -273,7 +308,8 @@ describe('<HouseholdPanel />', () => {
 
     // A change that cannot be sent can still be put back.
     await user.clear(within(alex).getByLabelText('Name'));
-    expect(saveButton()).toBeDisabled();
+    // Save stays pressable too, and would point at the blank name.
+    expect(saveButton()).toBeEnabled();
     expect(discardButton()).toBeEnabled();
     await user.click(discardButton());
     expect(within(alex).getByLabelText('Name')).toHaveValue('Alex');

@@ -1,7 +1,9 @@
-import { CalendarDays, Coins, Scale, UserRound, Users } from 'lucide-react';
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { CalendarDays, Coins, LoaderCircle, Scale, UserRound, Users } from 'lucide-react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { api, CONFIG_DEFAULTS_MESSAGE, errorMessage, isApiError, type HouseholdOut, type SplitStrategy } from '../api';
 import { useReloadConfig } from '../config/ConfigContext';
+import { useFocusFirstProblem } from '../hooks/useFocusFirstProblem';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import {
   buildHouseholdUpdate,
   fieldForError,
@@ -165,6 +167,11 @@ export function HouseholdPanel() {
   /** The field the server refused, in its own words; cleared as soon as that field is edited. */
   const [serverProblem, setServerProblem] = useState<{ field: HouseholdField; message: string } | null>(null);
 
+  const formRef = useRef<HTMLFormElement>(null);
+  const focusFirstProblem = useFocusFirstProblem(formRef, saving);
+  const changed = saved !== null && form !== null && householdFormChanged(form, saved);
+  useUnsavedChanges(changed);
+
   useEffect(() => {
     let cancelled = false;
     api
@@ -216,8 +223,6 @@ export function HouseholdPanel() {
   if (serverProblem && !problems[serverProblem.field]) problems[serverProblem.field] = serverProblem.message;
   const update = buildHouseholdUpdate(form, parsed, saved);
   const dirty = Object.keys(update).length > 0;
-  const changed = householdFormChanged(form, saved);
-  const canSave = dirty && valid && !saving;
   const names = {
     primary: form.primary.display_name.trim() || FALLBACK_NAMES.primary,
     secondary: form.secondary.display_name.trim() || FALLBACK_NAMES.secondary,
@@ -237,7 +242,12 @@ export function HouseholdPanel() {
 
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (!canSave) return;
+    if (saving || !saved || !form) return;
+    if (!valid) {
+      focusFirstProblem();
+      return;
+    }
+    if (!dirty) return;
     setSaving(true);
     setSaveError(null);
     setSavedNotice(false);
@@ -250,8 +260,11 @@ export function HouseholdPanel() {
       await syncConfig();
     } catch (err) {
       const field = isApiError(err, 422) ? fieldForError(err, update) : null;
-      if (field) setServerProblem({ field, message: errorMessage(err) });
-      else setSaveError(errorMessage(err));
+      if (field) {
+        setServerProblem({ field, message: errorMessage(err) });
+        // Once the inputs are enabled again, the field the server refused takes the focus.
+        focusFirstProblem();
+      } else setSaveError(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -271,7 +284,7 @@ export function HouseholdPanel() {
   const symbolProblem = problems.currency_symbol;
 
   return (
-    <form onSubmit={save} noValidate className="space-y-6">
+    <form ref={formRef} onSubmit={save} noValidate className="space-y-6">
       {!saved.stored && (
         <Notice tone="neutral" aria-label="Household defaults">
           {CONFIG_DEFAULTS_MESSAGE}
@@ -310,6 +323,7 @@ export function HouseholdPanel() {
             checked={form.split_strategy === 'salary_proportional'}
             disabled={saving}
             label={PROPORTIONAL_LABEL}
+            problemId={problems.split_strategy ? f('split-problem') : undefined}
             hint="Each person pays the share their income is of the household's total."
             onChange={(value) => setField('split_strategy', value)}
           />
@@ -331,7 +345,7 @@ export function HouseholdPanel() {
               {splitPreviewText(preview, names)}
             </p>
           ) : (
-            <p aria-live="polite" className="mt-1 text-sm text-critical-ink">
+            <p id={f('split-problem')} aria-live="polite" className="mt-1 text-sm text-critical-ink">
               {problems.split_strategy ?? NO_INCOME_MESSAGE}
             </p>
           )}
@@ -426,7 +440,9 @@ export function HouseholdPanel() {
           <button type="button" className={btnSecondary} onClick={discard} disabled={!changed || saving}>
             Discard changes
           </button>
-          <button type="submit" className={btnPrimary} disabled={!canSave}>
+          {/* Enabled while there is a change to send or a problem to point at: pressing it then moves focus to the problem. */}
+          <button type="submit" className={btnPrimary} disabled={saving || (valid && !dirty)}>
+            {saving && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
             {saving ? 'Saving…' : 'Save changes'}
           </button>
         </div>

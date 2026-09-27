@@ -1,5 +1,5 @@
 import { ArrowLeftRight, Link2, RefreshCw } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage, type TransferBufferOut } from '../api';
 import { Card } from '../components/Card';
 import { ErrorMessage } from '../components/ErrorMessage';
@@ -29,6 +29,19 @@ export function TransfersPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [mismatch, setMismatch] = useState<Mismatch | null>(null);
+  const matchBtnRef = useRef<HTMLButtonElement>(null);
+  const mismatchCancelRef = useRef<HTMLButtonElement>(null);
+
+  // The mismatch confirmation is an alertdialog: move focus into it (Cancel is the safe default)
+  // so screen readers announce it and its two choices.
+  useEffect(() => {
+    if (mismatch) mismatchCancelRef.current?.focus();
+  }, [mismatch]);
+
+  function cancelMismatch() {
+    setMismatch(null);
+    matchBtnRef.current?.focus();
+  }
 
   function setBusyFor(ids: string[], on: boolean) {
     setBusy((prev) => {
@@ -123,6 +136,7 @@ export function TransfersPage() {
               Rematch
             </button>
             <button
+              ref={matchBtnRef}
               type="button"
               className={btnPrimary}
               onClick={matchSelected}
@@ -144,6 +158,8 @@ export function TransfersPage() {
           tone="warning"
           role="alertdialog"
           aria-label="Amounts differ"
+          aria-describedby="mismatch-msg"
+          messageId="mismatch-msg"
           actions={
             <>
               <button
@@ -154,7 +170,12 @@ export function TransfersPage() {
               >
                 Match anyway
               </button>
-              <button type="button" className={cx(btnSecondary, btnSmall)} onClick={() => setMismatch(null)}>
+              <button
+                ref={mismatchCancelRef}
+                type="button"
+                className={cx(btnSecondary, btnSmall)}
+                onClick={cancelMismatch}
+              >
                 Cancel
               </button>
             </>

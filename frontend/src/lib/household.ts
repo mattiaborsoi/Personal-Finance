@@ -1,4 +1,5 @@
 import { isApiError, type HouseholdOut, type HouseholdUpdate, type HouseholdUser, type HouseholdUserUpdate, type Money, type SplitStrategy } from '../api';
+import { formatPercent } from './format';
 import { normaliseAmountInput } from './money';
 
 /**
@@ -185,9 +186,9 @@ export function splitPreview(form: HouseholdForm): SplitPreview | null {
   return { primary: (primary / total) * 100, secondary: (secondary / total) * 100 };
 }
 
-/** "Alex 55.6 % · Sam 44.4 %". */
+/** "Alex 55.6% · Sam 44.4%" (formatPercent, so the figure never wraps away from its sign). */
 export function splitPreviewText(preview: SplitPreview, names: { primary: string; secondary: string }): string {
-  return `${names.primary} ${preview.primary.toFixed(1)} % · ${names.secondary} ${preview.secondary.toFixed(1)} %`;
+  return `${names.primary} ${formatPercent(preview.primary)} · ${names.secondary} ${formatPercent(preview.secondary)}`;
 }
 
 function sameAmount(a: Money | null, b: Money): boolean {

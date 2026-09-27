@@ -243,11 +243,16 @@ describe('<AccountsPanel />', () => {
     expect(within(dialog).getByLabelText('Institution')).toHaveAttribute('aria-invalid', 'true');
     expect(within(dialog).getByLabelText('Last four digits')).toHaveAttribute('aria-invalid', 'true');
     expect(byMethod(calls, 'POST')).toHaveLength(0);
+    // Focus goes to the first field at fault, which is described by its error.
+    expect(within(dialog).getByLabelText('Institution')).toHaveFocus();
+    expect(within(dialog).getByLabelText('Institution')).toHaveAccessibleDescription('Enter the institution as printed on the statement.');
 
     // Typing into a field clears its complaint.
     await user.type(within(dialog).getByLabelText('Institution'), 'Oakfield');
     expect(within(dialog).queryByText('Enter the institution as printed on the statement.')).not.toBeInTheDocument();
     expect(within(dialog).getByText('Enter the digits printed on the statement.')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Add account' }));
+    expect(within(dialog).getByLabelText('Last four digits')).toHaveFocus();
   });
 
   it('shows a 422 from the server inside the dialog and keeps it open', async () => {

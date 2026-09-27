@@ -2,6 +2,7 @@ import { ArrowDown, ArrowUp, Check, Pencil, Plus, Tags, Trash2, X } from 'lucide
 import { useEffect, useId, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { api, CONFIG_DEFAULTS_MESSAGE, errorMessage, type CategoriesOut, type CategoryOut } from '../api';
 import { useReloadConfig } from '../config/ConfigContext';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import {
   categoryLeaf,
   groupRuns,
@@ -205,6 +206,8 @@ export function CategoriesPanel() {
   const [newName, setNewName] = useState('');
   const [addProblem, setAddProblem] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Every other change saves at once; only a name typed into "New category" and not yet added can be lost.
+  useUnsavedChanges(Boolean(newName.trim()));
 
   useEffect(() => {
     let cancelled = false;
@@ -376,7 +379,7 @@ export function CategoriesPanel() {
                 id={addId}
                 type="text"
                 className={cx(inputBase, 'min-w-0 flex-1 basis-48', addProblem && inputInvalid)}
-                placeholder="Bills:Phone"
+                placeholder="e.g. Bills:Phone…"
                 value={newName}
                 autoComplete="off"
                 spellCheck={false}

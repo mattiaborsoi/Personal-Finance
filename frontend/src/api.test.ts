@@ -34,7 +34,7 @@ describe('request error mapping', () => {
 
   it('never surfaces a non-JSON gateway page as the message', async () => {
     mockFetch(() => htmlResponse('<html><body><h1>502 Bad Gateway</h1></body></html>', 502));
-    await expect(api.listPeriods()).rejects.toMatchObject({ status: 502, message: 'Request failed (502)' });
+    await expect(api.listPeriods()).rejects.toMatchObject({ status: 502, message: 'The server had a problem (502). Try again in a moment.' });
   });
 
   it('still uses a FastAPI detail when there is one', async () => {

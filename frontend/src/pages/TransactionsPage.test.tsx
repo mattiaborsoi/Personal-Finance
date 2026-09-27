@@ -203,7 +203,7 @@ describe('<TransactionsPage />', () => {
     await screen.findByRole('button', { name: 'Ocado' });
     await user.selectOptions(screen.getByLabelText('Claim type for Ocado part 2'), 'shared_equal');
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('This period is closed, so it can no longer be edited.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('This period is closed. It needs reopening from the dashboard before it can change.');
     // Nothing was applied locally.
     expect((screen.getByLabelText('Claim type for Ocado part 2') as HTMLSelectElement).value).toBe('personal');
   });
@@ -299,7 +299,7 @@ describe('<TransactionsPage />', () => {
     await screen.findByRole('button', { name: 'Ocado' });
     await user.selectOptions(screen.getByLabelText('Category for Ocado'), 'Groceries');
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('This period is closed, so it can no longer be edited.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('This period is closed. It needs reopening from the dashboard before it can change.');
   });
 });
 
@@ -408,7 +408,7 @@ describe('renaming a merchant inline', () => {
     await user.click(await screen.findByRole('button', { name: 'Rename Ocado' }));
     await user.type(screen.getByRole('textbox', { name: 'New name for Ocado' }), ' Retail{Enter}');
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('This period is closed, so it can no longer be edited.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('This period is closed. It needs reopening from the dashboard before it can change.');
     expect(screen.getByRole('button', { name: 'Ocado' })).toBeInTheDocument();
   });
 

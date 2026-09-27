@@ -40,7 +40,9 @@ export function Wordmark({ className = '' }: { className?: string }) {
   return (
     <span className={cx('flex items-center gap-2.5', className)}>
       <BrandMark />
-      <span className="text-[15px] font-semibold tracking-tight text-ink">{PRODUCT_NAME}</span>
+      <span className="text-[15px] font-semibold tracking-tight text-ink" translate="no">
+        {PRODUCT_NAME}
+      </span>
     </span>
   );
 }

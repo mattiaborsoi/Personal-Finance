@@ -7,7 +7,7 @@ import { ReviewBadgeContext } from '../hooks/reviewBadge';
 import { useAsync } from '../hooks/useAsync';
 import { initials } from '../lib/format';
 import { reviewBadge } from '../lib/review';
-import { btnIcon, cx } from '../lib/ui';
+import { btnIcon, cx, skipLink } from '../lib/ui';
 import { BrandMark, PRODUCT_NAME, Wordmark } from './BrandMark';
 import { NavLinks } from './NavLinks';
 import { ThemeToggle } from './ThemeToggle';
@@ -53,6 +53,9 @@ export function Layout() {
 
   return (
     <div className="min-h-screen md:flex">
+      <a href="#main" className={skipLink}>
+        Skip to content
+      </a>
       {/* Desktop sidebar */}
       <aside className="hidden w-64 shrink-0 border-r border-hairline bg-surface md:sticky md:top-0 md:flex md:h-screen md:flex-col">
         <div className="px-5 pb-4 pt-5">
@@ -80,7 +83,9 @@ export function Layout() {
           <div className="flex items-center gap-2.5">
             <BrandMark size={26} />
             <div className="leading-tight">
-              <p className="text-sm font-semibold text-ink">{PRODUCT_NAME}</p>
+              <p className="text-sm font-semibold text-ink" translate="no">
+                {PRODUCT_NAME}
+              </p>
               <p className="text-xs text-ink-3">{session.display_name}</p>
             </div>
           </div>
@@ -113,7 +118,7 @@ export function Layout() {
         )}
       </header>
 
-      <main className="min-w-0 flex-1 px-4 py-5 sm:px-8 sm:py-8">
+      <main id="main" tabIndex={-1} className="min-w-0 flex-1 px-4 py-5 focus:outline-none sm:px-8 sm:py-8">
         <div className="mx-auto max-w-6xl animate-rise">
           <ReviewBadgeContext.Provider value={badgeSync}>
             <Outlet />

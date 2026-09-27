@@ -1,5 +1,6 @@
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, LoaderCircle } from 'lucide-react';
 import { useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import {
   api,
   errorMessage,
@@ -163,6 +164,8 @@ export function AccountDialog({ account, onClose, onSaved }: Props) {
   const names = useNames();
   const idBase = useId();
   const firstFieldRef = useRef<HTMLInputElement>(null);
+  const institutionRef = useRef<HTMLInputElement>(null);
+  const last4Ref = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState<Form>(() => initialForm(account, config.users.primary.id));
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [customId, setCustomId] = useState(false);
@@ -182,8 +185,12 @@ export function AccountDialog({ account, onClose, onSaved }: Props) {
   async function submit(event: FormEvent) {
     event.preventDefault();
     const problems = validate(form);
-    setFieldErrors(problems);
-    if (problems.institution || problems.identifier_last4) return;
+    // Committed before focus moves, so the field is already invalid and described by its error when it is read out.
+    flushSync(() => setFieldErrors(problems));
+    if (problems.institution || problems.identifier_last4) {
+      (problems.institution ? institutionRef : last4Ref).current?.focus();
+      return;
+    }
     setError(null);
     setSaving(true);
     try {
@@ -215,7 +222,9 @@ export function AccountDialog({ account, onClose, onSaved }: Props) {
       description={
         account ? (
           <>
-            <span className="font-mono text-xs">{account.id}</span> · {plural(account.transaction_count, 'transaction')}
+            <span translate="no" className="break-all font-mono text-xs">
+              {account.id}
+            </span> · {plural(account.transaction_count, 'transaction')}
           </>
         ) : undefined
       }
@@ -232,7 +241,7 @@ export function AccountDialog({ account, onClose, onSaved }: Props) {
                 id={f('label')}
                 type="text"
                 className={inputBase}
-                placeholder="e.g. HSBC Premier"
+                placeholder="e.g. HSBC Premier…"
                 value={form.label}
                 autoComplete="off"
                 disabled={saving}
@@ -247,6 +256,7 @@ export function AccountDialog({ account, onClose, onSaved }: Props) {
               error={fieldErrors.institution}
             >
               <input
+                ref={institutionRef}
                 id={f('institution')}
                 type="text"
                 className={cx(inputBase, fieldErrors.institution && 'border-critical hover:border-critical')}
@@ -294,11 +304,12 @@ export function AccountDialog({ account, onClose, onSaved }: Props) {
               error={fieldErrors.identifier_last4}
             >
               <input
+                ref={last4Ref}
                 id={f('last4')}
                 type="text"
                 inputMode="numeric"
                 className={cx(inputBase, 'tabular', fieldErrors.identifier_last4 && 'border-critical hover:border-critical')}
-                placeholder="4471"
+                placeholder="e.g. 4471…"
                 maxLength={LAST4_MAX_LENGTH}
                 value={form.identifier_last4}
                 autoComplete="off"
@@ -366,7 +377,7 @@ export function AccountDialog({ account, onClose, onSaved }: Props) {
                       id={f('id')}
                       type="text"
                       className={cx(inputBase, 'font-mono')}
-                      placeholder="acc_checking_hsbc"
+                      placeholder="e.g. acc_checking_hsbc…"
                       value={form.id}
                       autoComplete="off"
                       spellCheck={false}
@@ -388,6 +399,7 @@ export function AccountDialog({ account, onClose, onSaved }: Props) {
             Cancel
           </button>
           <button type="submit" className={btnPrimary} disabled={saving}>
+            {saving && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
             {saving ? 'Saving…' : editing ? 'Save changes' : 'Add account'}
           </button>
         </footer>

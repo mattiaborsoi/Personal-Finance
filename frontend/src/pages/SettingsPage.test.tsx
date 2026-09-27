@@ -1,8 +1,9 @@
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useLocation } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { App } from '../App';
+import { LEAVE_UNSAVED_PROMPT } from '../hooks/useUnsavedChanges';
 import { NavLinks } from '../components/NavLinks';
 import { account, aiSettings, categories, household, rules, systemInfo } from '../test/fixtures';
 import { fixtureConfig, jsonResponse, mockFetch, renderWithProviders, type RecordedCall } from '../test/utils';
@@ -218,6 +219,56 @@ describe('<SettingsPage />', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=accounts');
     await user.keyboard('{ArrowLeft}');
     expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=system');
+  });
+
+  it('asks before a tab switch or a page unload would lose unsaved edits', async () => {
+    const user = userEvent.setup();
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/settings/household') return jsonResponse(household());
+      if (method === 'GET' && url === '/api/settings/rules') return jsonResponse(rules());
+      return undefined;
+    });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const unload = () => {
+      const event = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+
+    renderWithProviders(
+      <>
+        <SettingsPage />
+        <LocationProbe />
+      </>,
+      { route: '/settings?tab=household' },
+    );
+    const alex = await screen.findByRole('region', { name: 'Alex' });
+
+    // Nothing edited: no question either way.
+    expect(unload()).toBe(false);
+    await user.click(screen.getByRole('tab', { name: 'Rules' }));
+    expect(confirm).not.toHaveBeenCalled();
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=rules');
+    await user.click(screen.getByRole('tab', { name: 'Household' }));
+    const name = within(await screen.findByRole('region', { name: 'Alex' })).getByLabelText('Name');
+    expect(alex).not.toBeInTheDocument();
+
+    await user.type(name, 'andra');
+    expect(unload()).toBe(true);
+
+    // Cancelling keeps the tab and the edit.
+    await user.click(screen.getByRole('tab', { name: 'Rules' }));
+    expect(confirm).toHaveBeenCalledWith(LEAVE_UNSAVED_PROMPT);
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=household');
+    expect(name).toHaveValue('Alexandra');
+
+    // Confirming leaves, and with the form gone there is nothing left to warn about.
+    confirm.mockReturnValue(true);
+    await user.click(screen.getByRole('tab', { name: 'Rules' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=rules');
+    expect(await screen.findByLabelText('Pattern for rule 1')).toBeInTheDocument();
+    expect(unload()).toBe(false);
+    confirm.mockRestore();
   });
 
   it('is reachable from the main navigation for the primary user', async () => {

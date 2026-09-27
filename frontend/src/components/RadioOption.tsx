@@ -11,11 +11,13 @@ interface Props<T extends string> {
   label: string;
   /** Describes the choice rather than naming it; read out as the radio's description. */
   hint: ReactNode;
+  /** id of a note saying why this choice cannot be saved as things stand; marks the radio invalid and describes it too. */
+  problemId?: string;
   onChange: (value: T) => void;
 }
 
 /** A radio with a bold label and a one-line hint, for a small set of exclusive choices. */
-export function RadioOption<T extends string>({ id, name, value, checked, disabled = false, label, hint, onChange }: Props<T>) {
+export function RadioOption<T extends string>({ id, name, value, checked, disabled = false, label, hint, problemId, onChange }: Props<T>) {
   return (
     <div className="flex items-start gap-3">
       <input
@@ -26,7 +28,8 @@ export function RadioOption<T extends string>({ id, name, value, checked, disabl
         checked={checked}
         disabled={disabled}
         className={cx(radioBase, 'mt-0.5')}
-        aria-describedby={`${id}-hint`}
+        aria-invalid={problemId ? true : undefined}
+        aria-describedby={problemId ? `${id}-hint ${problemId}` : `${id}-hint`}
         onChange={() => onChange(value)}
       />
       <div className="min-w-0">

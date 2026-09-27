@@ -864,14 +864,14 @@ export function describeDetail(detail: unknown): string {
 export function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message;
   if (err instanceof Error) return err.message;
-  return 'Something went wrong.';
+  return 'Something went wrong. Try again, and reload the page if it keeps happening.';
 }
 
 export function isApiError(err: unknown, status?: number): err is ApiError {
   return err instanceof ApiError && (status === undefined || err.status === status);
 }
 
-export const PERIOD_CLOSED_MESSAGE = 'This period is closed, so it can no longer be edited.';
+export const PERIOD_CLOSED_MESSAGE = 'This period is closed. It needs reopening from the dashboard before it can change.';
 
 /**
  * Like `errorMessage`, for edits to transactions and claims: the backend
@@ -883,7 +883,7 @@ export function editErrorMessage(err: unknown): string {
   return errorMessage(err);
 }
 
-export const FILE_TOO_LARGE_MESSAGE = 'File too large (limit 25 MB).';
+export const FILE_TOO_LARGE_MESSAGE = 'This file is over the 25\u00a0MB limit. Choose a smaller file and try again.';
 
 /** Shown by the settings tabs whose document has `stored: false`. */
 export const CONFIG_DEFAULTS_MESSAGE = 'Nothing saved yet: these are the defaults from config.yaml.';
@@ -967,7 +967,11 @@ async function request<T>(method: string, path: string, options: RequestOptions 
       data && typeof data === 'object' && 'detail' in (data as Record<string, unknown>)
         ? (data as { detail: unknown }).detail
         : data;
-    const message = describeDetail(detail) || `Request failed (${response.status})`;
+    const message =
+      describeDetail(detail) ||
+      (response.status >= 500
+        ? `The server had a problem (${response.status}). Try again in a moment.`
+        : `The request could not be completed (${response.status}). Reload the page and try again.`);
     throw new ApiError(response.status, detail, message);
   }
 

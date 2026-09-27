@@ -18,7 +18,8 @@ describe('<AuditCard />', () => {
 
     expect(await screen.findByText('No audit yet')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    // Only the always-mounted (and empty) run announcement is a status: no loading state is left behind.
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
     expect(screen.getByRole('button', { name: 'Run audit' })).toBeEnabled();
     expect(screen.getByText('Compares this period against its baseline')).toBeInTheDocument();
     expect(consoleError).not.toHaveBeenCalled();
@@ -41,6 +42,8 @@ describe('<AuditCard />', () => {
     expect(screen.queryByText('No audit yet')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Run audit again' })).toBeInTheDocument();
     expect(screen.getByText('Last run 1 Apr 2026, 08:00')).toBeInTheDocument();
+    // Screen readers hear that the run finished, with its headline.
+    expect(screen.getByRole('status')).toHaveTextContent(`Audit complete. ${auditReport().summary_sentence}`);
   });
 
   it('shows an existing report straight away', async () => {

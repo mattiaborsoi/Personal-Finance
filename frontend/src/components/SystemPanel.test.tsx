@@ -155,6 +155,25 @@ describe('<SystemPanel />', () => {
     expect(screen.getByText('Last update log')).toBeInTheDocument();
   });
 
+  it('announces what Check again found, which the badge alone does not', async () => {
+    const user = userEvent.setup();
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/system') return jsonResponse(systemInfo());
+      if (method === 'POST' && url === '/api/system/check') return jsonResponse(behind);
+      return undefined;
+    });
+
+    const { container } = renderPanel();
+    await screen.findByText('Up to date');
+    const region = container.querySelector('p[aria-live="polite"].sr-only');
+    expect(region).toBeEmptyDOMElement();
+
+    await user.click(screen.getByRole('button', { name: 'Check again' }));
+
+    await waitFor(() => expect(region).toHaveTextContent('Update available: 2 commits behind.'));
+    expect(screen.getByText('Update available')).toBeInTheDocument();
+  });
+
   it('disables Check again and says so when update checks are off on the server', async () => {
     mockFetch(({ method, url }) =>
       method === 'GET' && url === '/api/system'

@@ -173,7 +173,10 @@ describe('<RulesPanel />', () => {
     expect(pattern3).toHaveValue('');
     expect(screen.getByText(BLANK_PATTERN_MESSAGE)).toBeInTheDocument();
     expect(pattern3).toHaveAttribute('aria-invalid', 'true');
-    expect(saveButton()).toBeDisabled();
+    // Save points at the blank pattern rather than sending it.
+    await user.click(saveButton());
+    expect(pattern3).toHaveFocus();
+    expect(puts(calls)).toHaveLength(0);
     await user.type(pattern3, '(?i)OCADO');
     await user.selectOptions(screen.getByLabelText('Category for rule 3'), 'Dining');
     await user.selectOptions(screen.getByLabelText('Claim type for rule 3'), 'shared_equal');
@@ -217,7 +220,9 @@ describe('<RulesPanel />', () => {
     expect(account).toHaveAttribute('aria-invalid', 'true');
     expect(account).toHaveAccessibleDescription(MISSING_ACCOUNT_MESSAGE);
     expect(screen.getByLabelText('Pattern for rule 1')).not.toHaveAttribute('aria-invalid');
-    expect(saveButton()).toBeDisabled();
+    await user.click(saveButton());
+    expect(account).toHaveFocus();
+    expect(puts(calls)).toHaveLength(0);
     // Every active account is offered.
     expect(optionLabels(account)).toEqual([
       'Choose the account it goes to',
@@ -448,7 +453,8 @@ describe('<RulesPanel />', () => {
     await user.clear(window);
     await user.type(window, '90');
     expect(screen.getByText(WINDOW_MESSAGE)).toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    await user.click(saveButton());
+    expect(window).toHaveFocus();
     await user.clear(window);
     await user.type(window, '7');
 
@@ -456,7 +462,9 @@ describe('<RulesPanel />', () => {
     const pattern3 = screen.getByLabelText('Payment pattern 3');
     expect(pattern3).toHaveValue('');
     expect(screen.getByText(BLANK_PATTERN_MESSAGE)).toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    await user.click(saveButton());
+    expect(pattern3).toHaveFocus();
+    expect(puts(calls)).toHaveLength(0);
     await user.click(screen.getByRole('button', { name: 'Remove payment pattern 3' }));
     expect(screen.queryByText(BLANK_PATTERN_MESSAGE)).not.toBeInTheDocument();
     expect(saveButton()).toBeDisabled();
@@ -488,7 +496,8 @@ describe('<RulesPanel />', () => {
     const window = screen.getByLabelText('Match window');
     await user.clear(window);
     await user.type(window, '90');
-    expect(saveButton()).toBeDisabled();
+    // Save stays pressable too, and would point at the window.
+    expect(saveButton()).toBeEnabled();
     expect(discardButton()).toBeEnabled();
     await user.click(discardButton());
     expect(window).toHaveValue(7);

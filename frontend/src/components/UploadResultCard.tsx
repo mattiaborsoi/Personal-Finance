@@ -31,7 +31,9 @@ export function UploadResultCard({ result }: Props) {
           <p className="mt-0.5 text-sm text-ink-2">
             Into {accountLabel(config.accounts, result.account_id)} for{' '}
             {periodRangeLabel(result.period_from, result.period_to, result.period_key)}{' '}
-            <span className="text-ink-3">· parser {result.parser}</span>
+            <span className="text-ink-3">
+              · parser <span translate="no">{result.parser}</span>
+            </span>
           </p>
         </div>
       </div>

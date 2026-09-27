@@ -42,7 +42,7 @@ export function InvestmentCard({ refreshKey = 0 }: Props) {
           hint={
             <>
               Add an account with type{' '}
-              <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-xs text-ink">investment_cash</code> to the
+              <code translate="no" className="rounded bg-surface-2 px-1 py-0.5 font-mono text-xs text-ink">investment_cash</code> to the
               configuration to track it here.
             </>
           }

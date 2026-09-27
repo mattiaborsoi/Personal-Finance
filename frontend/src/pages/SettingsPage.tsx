@@ -1,4 +1,5 @@
 import { Cog, Landmark, ListChecks, Sparkles, Tags, Users } from 'lucide-react';
+import { useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AccountsPanel } from '../components/AccountsPanel';
 import { AiPanel } from '../components/AiPanel';
@@ -9,6 +10,7 @@ import { PageHeader } from '../components/PageHeader';
 import { RulesPanel } from '../components/RulesPanel';
 import { SystemPanel } from '../components/SystemPanel';
 import { Tabs, type TabItem } from '../components/Tabs';
+import { LEAVE_UNSAVED_PROMPT, UnsavedChangesContext, type UnsavedChangesGuard } from '../hooks/useUnsavedChanges';
 
 type SettingsTab = 'accounts' | 'household' | 'categories' | 'rules' | 'ai' | 'system';
 
@@ -47,6 +49,22 @@ function panelFor(tab: SettingsTab) {
 export function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = readTab(searchParams);
+  /** The open panel reports unsaved edits here, so switching tab (which unmounts it) asks first. */
+  const dirtyRef = useRef(false);
+  const guard = useMemo<UnsavedChangesGuard>(
+    () => ({
+      setDirty: (dirty) => {
+        dirtyRef.current = dirty;
+      },
+    }),
+    [],
+  );
+
+  function switchTab(next: SettingsTab) {
+    if (next === tab) return;
+    if (dirtyRef.current && !window.confirm(LEAVE_UNSAVED_PROMPT)) return;
+    setSearchParams({ tab: next });
+  }
 
   return (
     <div className="space-y-6">
@@ -54,8 +72,8 @@ export function SettingsPage() {
         title="Settings"
         description={`Your accounts, household, categories and rules, how ${PRODUCT_NAME} uses AI, and the version that is running.`}
       />
-      <Tabs tabs={TABS} active={tab} label="Settings sections" onChange={(next) => setSearchParams({ tab: next })}>
-        {panelFor(tab)}
+      <Tabs tabs={TABS} active={tab} label="Settings sections" onChange={switchTab}>
+        <UnsavedChangesContext.Provider value={guard}>{panelFor(tab)}</UnsavedChangesContext.Provider>
       </Tabs>
     </div>
   );

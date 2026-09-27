@@ -1,12 +1,12 @@
 import { ArrowLeftRight, Eye, EyeOff, Scale, Sparkles, Upload } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { errorMessage, isApiError } from '../api';
 import { useAuth } from '../auth/AuthContext';
-import { BrandMark, PRODUCT_NAME, PRODUCT_SLOGAN } from '../components/BrandMark';
+import { BrandMark, PRODUCT_NAME } from '../components/BrandMark';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { ThemeToggle } from '../components/ThemeToggle';
-import { btnIcon, btnPrimary, cx, inputBase, labelBase } from '../lib/ui';
+import { btnIcon, btnPrimary, cx, inputBase, inputInvalid, labelBase } from '../lib/ui';
 
 const FEATURES = [
   {
@@ -37,6 +37,19 @@ export function LoginPage() {
   const [show, setShow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const passwordRef = useRef<HTMLInputElement>(null);
+
+  // Focus the only field on load where there is a precise pointer (desktop); on touch screens
+  // that would throw the keyboard up over the page before the form has been seen.
+  useEffect(() => {
+    if (window.matchMedia?.('(pointer: fine)').matches) passwordRef.current?.focus();
+  }, []);
+
+  // The field is disabled while signing in, so a failed attempt would leave focus on <body>:
+  // put it back on the password once the error is showing.
+  useEffect(() => {
+    if (error && !busy) passwordRef.current?.focus();
+  }, [error, busy]);
 
   if (session) {
     return <Navigate to={session.role === 'secondary' ? '/claim' : '/'} replace />;
@@ -79,18 +92,21 @@ export function LoginPage() {
         />
         <div className="relative flex items-center gap-3">
           <BrandMark size={36} />
-          <span className="text-lg font-semibold tracking-tight text-ink">{PRODUCT_NAME}</span>
+          <span className="text-lg font-semibold tracking-tight text-ink" translate="no">
+            {PRODUCT_NAME}
+          </span>
         </div>
         <div className="relative max-w-md">
           <p className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-surface px-3 py-1 text-xs font-medium text-ink-2">
             <Sparkles className="h-3.5 w-3.5 text-accent-micro" aria-hidden="true" />
             Self-hosted, private, built for two
           </p>
-          <h1 className="mt-5 text-4xl font-semibold leading-[1.1] tracking-tight text-ink" aria-label={PRODUCT_SLOGAN}>
+          {/* A slogan, not a heading: the form's "Welcome back" is the page's single h1. */}
+          <p className="mt-5 text-balance text-4xl font-semibold leading-[1.1] tracking-tight text-ink">
             Shared money,
             <br />
             <span className="text-brand">settled by AI.</span>
-          </h1>
+          </p>
           <p className="mt-4 text-base text-ink-2">
             {PRODUCT_NAME} reads your bank statements, splits what's shared and tells you who owes whom.
           </p>
@@ -119,7 +135,9 @@ export function LoginPage() {
         <div className="flex items-center justify-between lg:justify-end">
           <span className="flex items-center gap-2.5 lg:hidden">
             <BrandMark size={28} />
-            <span className="text-[15px] font-semibold tracking-tight text-ink">{PRODUCT_NAME}</span>
+            <span className="text-[15px] font-semibold tracking-tight text-ink" translate="no">
+              {PRODUCT_NAME}
+            </span>
           </span>
           <ThemeToggle />
         </div>
@@ -139,12 +157,14 @@ export function LoginPage() {
             </label>
             <div className="relative mt-1.5">
               <input
+                ref={passwordRef}
                 id="password"
                 name="password"
                 type={show ? 'text' : 'password'}
                 autoComplete="current-password"
-                autoFocus
-                className={cx(inputBase, 'py-2.5 pr-11')}
+                aria-invalid={error ? true : undefined}
+                aria-describedby={error ? 'password-error' : undefined}
+                className={cx(inputBase, 'py-2.5 pr-11', error && inputInvalid)}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={busy}
@@ -160,7 +180,7 @@ export function LoginPage() {
               </button>
             </div>
 
-            <ErrorMessage message={error} className="mt-3" />
+            <ErrorMessage id="password-error" message={error} className="mt-3" />
 
             <button type="submit" className={cx(btnPrimary, 'mt-6 w-full py-2.5')} disabled={busy}>
               {busy ? 'Signing in…' : 'Sign in'}

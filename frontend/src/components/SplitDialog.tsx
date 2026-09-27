@@ -1,5 +1,5 @@
 import { CircleAlert, CircleCheck, Plus, TriangleAlert, X, type LucideIcon } from 'lucide-react';
-import { useRef, useState, type FormEvent } from 'react';
+import { useId, useRef, useState, type FormEvent } from 'react';
 import { api, editErrorMessage, UNCATEGORIZED, type ClaimType, type SplitPartInput, type TransactionOut } from '../api';
 import { useConfig, useCurrency, useNames } from '../config/ConfigContext';
 import { formatDate } from '../lib/dates';
@@ -17,6 +17,7 @@ import {
   dialogFooter,
   eyebrow,
   inputBase,
+  inputInvalid,
   selectBase,
 } from '../lib/ui';
 import { ErrorMessage } from './ErrorMessage';
@@ -88,6 +89,8 @@ export function SplitDialog({ transaction: tx, defaults, onClose, onSaved }: Pro
   const names = useNames();
   const symbol = useCurrency();
   const firstAmountRef = useRef<HTMLInputElement>(null);
+  const idBase = useId();
+  const amountId = (key: number) => `${idBase}-amount-${key}`;
   // Initial rows use keys 0..n-1 (n <= MAX_PARTS); added rows count on from here.
   const nextKey = useRef(MAX_PARTS);
   const [rows, setRows] = useState<Row[]>(() => initialRows(tx, defaults));
@@ -195,6 +198,7 @@ export function SplitDialog({ transaction: tx, defaults, onClose, onSaved }: Pro
               const rowPence = pence[i];
               const invalid = row.amount !== '' && rowPence === null;
               const canFill = remainder !== 0 && (rowPence ?? 0) + remainder > 0;
+              const errorId = `${amountId(row.key)}-error`;
               return (
                 <li
                   key={row.key}
@@ -221,17 +225,25 @@ export function SplitDialog({ transaction: tx, defaults, onClose, onSaved }: Pro
                       </span>
                       <input
                         ref={i === 0 ? firstAmountRef : undefined}
+                        id={amountId(row.key)}
                         type="text"
                         inputMode="decimal"
-                        className={cx(inputBase, 'pl-7 tabular', invalid && 'border-critical hover:border-critical')}
+                        autoComplete="off"
+                        className={cx(inputBase, 'pl-7 tabular', invalid && inputInvalid)}
                         placeholder="0.00"
                         value={row.amount}
                         aria-label={`Amount for part ${n}`}
                         aria-invalid={invalid ? true : undefined}
+                        aria-describedby={invalid ? errorId : undefined}
                         disabled={saving}
                         onChange={(e) => updateRow(row.key, { amount: e.target.value })}
                       />
                     </div>
+                    {invalid && (
+                      <p id={errorId} className="mt-1 text-xs text-critical-ink">
+                        Enter an amount above 0, like 12.50
+                      </p>
+                    )}
                     {canFill && (
                       <button
                         type="button"

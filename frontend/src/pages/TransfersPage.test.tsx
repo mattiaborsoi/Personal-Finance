@@ -74,11 +74,15 @@ describe('<TransfersPage /> manual match', () => {
 
     const dialog = await screen.findByRole('alertdialog');
     expect(dialog).toHaveTextContent('Amounts differ: -£45.90 and -£12.00 do not cancel out. Match anyway?');
+    expect(dialog).toHaveAccessibleDescription(/do not cancel out/);
+    // Focus moves into the confirmation so it is announced; Cancel is the safe default.
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
     expect(calls.some((c) => c.method === 'POST')).toBe(false);
 
-    // Cancelling keeps the selection and sends nothing.
+    // Cancelling keeps the selection, sends nothing and returns focus to the trigger.
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Match selected (2/2)' })).toHaveFocus();
     expect(calls.some((c) => c.method === 'POST')).toBe(false);
 
     await user.click(screen.getByRole('button', { name: 'Match selected (2/2)' }));

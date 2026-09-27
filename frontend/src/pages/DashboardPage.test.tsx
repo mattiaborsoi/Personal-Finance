@@ -1,4 +1,6 @@
 import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { useLocation } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import type { PeriodOut } from '../api';
 import { period } from '../test/fixtures';
@@ -48,5 +50,28 @@ describe('<DashboardPage />', () => {
     expect(await screen.findByRole('option', { name: 'July 2026' })).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Waiting for review' })).not.toBeInTheDocument();
     expect(screen.queryByText(/waiting for review/)).not.toBeInTheDocument();
+  });
+
+  it('reads the metric view from ?view= and writes a new choice back, keeping the period', async () => {
+    const user = userEvent.setup();
+    mockFetch(({ method, url }) => (method === 'GET' && url === '/api/periods' ? jsonResponse(periodsWith(0)) : undefined));
+    function Search() {
+      return <output data-testid="search">{useLocation().search}</output>;
+    }
+
+    renderWithProviders(
+      <>
+        <DashboardPage />
+        <Search />
+      </>,
+      { route: '/?period=2026-07&view=liquidity' },
+    );
+
+    const group = await screen.findByRole('group', { name: 'Metric view' });
+    expect(within(group).getByRole('button', { name: /Cash flow/ })).toHaveAttribute('aria-pressed', 'true');
+
+    await user.click(within(group).getByRole('button', { name: /Personal/ }));
+    expect(within(group).getByRole('button', { name: /Personal/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('search')).toHaveTextContent('?period=2026-07&view=micro');
   });
 });

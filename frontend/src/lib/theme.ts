@@ -23,11 +23,22 @@ export function storeTheme(theme: Theme): void {
   }
 }
 
-/** Stamp the choice on <html>; the CSS tokens react to it (system = no stamp). */
+/** Browser-chrome colours; keep in sync with --color-bg in src/index.css (light 247 247 244, dark 15 15 14). */
+const THEME_COLOR = { light: '#f7f7f4', dark: '#0f0f0e' } as const;
+
+/**
+ * Stamp the choice on <html>; the CSS tokens react to it (system = no stamp).
+ * The theme-color metas in index.html are keyed to prefers-color-scheme, so an explicit
+ * choice overrides both of them; "system" puts each back to its own scheme's colour.
+ */
 export function applyTheme(theme: Theme): void {
   const root = document.documentElement;
   if (theme === 'system') root.removeAttribute('data-theme');
   else root.setAttribute('data-theme', theme);
+  document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach((meta) => {
+    const osDefault = (meta.getAttribute('media') ?? '').includes('dark') ? THEME_COLOR.dark : THEME_COLOR.light;
+    meta.setAttribute('content', theme === 'system' ? osDefault : THEME_COLOR[theme]);
+  });
 }
 
 export function resolveTheme(theme: Theme): 'light' | 'dark' {

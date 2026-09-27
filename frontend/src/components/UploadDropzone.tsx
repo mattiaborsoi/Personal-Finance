@@ -24,8 +24,8 @@ export const SUPPORTED_FORMATS = 'PDF, CSV, XLSX or XLS';
 const FORMAT_CHIPS = ['PDF', 'CSV', 'XLSX', 'XLS'];
 
 function formatSize(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}\u00a0MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))}\u00a0KB`;
 }
 
 /** Drag-and-drop area with a keyboard-accessible file input fallback. */
@@ -85,8 +85,8 @@ export function UploadDropzone({ file, onFile, disabled = false }: Props) {
         </span>
         {file ? (
           <p className="mt-4 text-sm text-ink">
-            <span className="font-semibold">{file.name}</span>{' '}
-            <span className="text-ink-3">({formatSize(file.size)})</span>
+            <span className="font-semibold [overflow-wrap:anywhere]">{file.name}</span>{' '}
+            <span className="whitespace-nowrap text-ink-3">({formatSize(file.size)})</span>
           </p>
         ) : (
           <p className="mt-4 text-sm font-medium text-ink">{`Drag a ${SUPPORTED_FORMATS} statement here`}</p>
@@ -101,17 +101,25 @@ export function UploadDropzone({ file, onFile, disabled = false }: Props) {
           </ul>
         )}
         <div className="mt-5 flex flex-wrap justify-center gap-2">
-          <label htmlFor="statement-file" className={cx(btnSecondary, btnSmall, 'cursor-pointer')}>
-            {file ? 'Choose a different file' : 'Choose a file'}
-          </label>
+          {/* The input comes first so its focus and disabled state can style the label (a label never takes focus itself). */}
           <input
             id="statement-file"
             type="file"
             accept={ACCEPT}
-            className="sr-only"
+            className="peer sr-only"
             onChange={onInput}
             disabled={disabled}
           />
+          <label
+            htmlFor="statement-file"
+            className={cx(
+              btnSecondary,
+              btnSmall,
+              'cursor-pointer peer-focus-visible:ring-2 peer-focus-visible:ring-brand peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-surface peer-disabled:cursor-not-allowed peer-disabled:opacity-50',
+            )}
+          >
+            {file ? 'Choose a different file' : 'Choose a file'}
+          </label>
           {file && (
             <button
               type="button"

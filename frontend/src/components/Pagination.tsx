@@ -1,4 +1,5 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { formatCount } from '../lib/money';
 import { btnSecondary, btnSmall, cx } from '../lib/ui';
 
 interface Props {
@@ -17,7 +18,7 @@ export function Pagination({ total, limit, offset, onChange }: Props) {
   return (
     <nav aria-label="Pagination" className="flex flex-wrap items-center justify-between gap-3 text-xs text-ink-3">
       <span className="tabular">
-        Showing {from}&ndash;{to} of {total}
+        Showing {formatCount(from)}&ndash;{formatCount(to)} of {formatCount(total)}
       </span>
       <span className="flex items-center gap-2">
         <button
@@ -30,7 +31,7 @@ export function Pagination({ total, limit, offset, onChange }: Props) {
           Previous
         </button>
         <span aria-current="page" className="tabular px-1">
-          Page {page} of {pages}
+          Page {formatCount(page)} of {formatCount(pages)}
         </span>
         <button
           type="button"

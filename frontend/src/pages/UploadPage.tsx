@@ -1,4 +1,4 @@
-import { CircleAlert, History, Upload } from 'lucide-react';
+import { CircleAlert, History, LoaderCircle, Upload } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { FILE_TOO_LARGE_MESSAGE, api, describeDetail, errorMessage, isApiError, type UploadResult } from '../api';
 import { Card } from '../components/Card';
@@ -96,11 +96,18 @@ export function UploadPage() {
     <div className="space-y-6">
       <PageHeader
         title="Upload statement"
-        description={`${SUPPORTED_FORMATS}, up to 25 MB. Duplicates are detected by file hash.`}
+        description={`${SUPPORTED_FORMATS}, up to 25\u00a0MB. Duplicates are detected by file hash.`}
       />
       <Card icon={Upload} title="New statement">
         <form onSubmit={submit} className="space-y-4">
-          <UploadDropzone file={file} onFile={setFile} disabled={busy} />
+          <UploadDropzone
+            file={file}
+            onFile={(f) => {
+              setFile(f);
+              setError(null);
+            }}
+            disabled={busy}
+          />
           <div className={cx(cardInset, 'flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between')}>
             <div>
               <label htmlFor="upload-account" className={labelBase}>
@@ -142,8 +149,12 @@ export function UploadPage() {
               )}
             </div>
           )}
-          <button type="submit" className={btnPrimary} disabled={busy || !file}>
-            <Upload className="h-4 w-4" aria-hidden="true" />
+          <button type="submit" className={btnPrimary} disabled={busy}>
+            {busy ? (
+              <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Upload className="h-4 w-4" aria-hidden="true" />
+            )}
             {busy ? 'Uploading…' : 'Upload and import'}
           </button>
         </form>

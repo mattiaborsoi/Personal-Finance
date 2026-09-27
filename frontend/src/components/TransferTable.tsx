@@ -3,7 +3,8 @@ import type { TransferBufferOut } from '../api';
 import { useConfig } from '../config/ConfigContext';
 import { formatDate } from '../lib/dates';
 import { accountLabel } from '../lib/format';
-import { btnGhost, btnSmall, checkboxBase, chipSoft, cx, tableBase, tableFlush, tdBase, thBase, trHover } from '../lib/ui';
+import { checkboxBase, chipSoft, cx, tableBase, tableFlush, tdBase, thBase, trHover } from '../lib/ui';
+import { ConfirmButton } from './ConfirmButton';
 import { EmptyState } from './EmptyState';
 import { MoneyText } from './MoneyText';
 
@@ -13,7 +14,8 @@ interface Props {
   busy: Set<string>;
   errors: Record<string, string>;
   onToggle: (id: string) => void;
-  onIgnore: (row: TransferBufferOut) => void;
+  /** Ignoring cannot be undone (there is no un-ignore), so it runs only after an inline confirmation. */
+  onIgnore: (row: TransferBufferOut) => Promise<void> | void;
 }
 
 /** Unmatched transfer legs; designed to sit inside `<Card flush>`. */
@@ -90,15 +92,17 @@ export function TransferTable({ rows, selected, busy, errors, onToggle, onIgnore
                   <MoneyText value={row.amount} tone />
                 </td>
                 <td className={cx(tdBase, 'text-right align-middle')}>
-                  <button
-                    type="button"
-                    className={cx(btnGhost, btnSmall)}
+                  <ConfirmButton
+                    tone="secondary"
+                    small
+                    icon={Ban}
                     disabled={isBusy}
-                    onClick={() => onIgnore(row)}
+                    ariaLabel={`Ignore ${row.description || 'transfer'}`}
+                    confirmLabel="Ignore this transfer? It won’t come back to this list."
+                    onConfirm={() => onIgnore(row)}
                   >
-                    <Ban className="h-3.5 w-3.5" aria-hidden="true" />
                     Ignore
-                  </button>
+                  </ConfirmButton>
                 </td>
               </tr>
             );

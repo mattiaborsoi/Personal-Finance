@@ -11,6 +11,8 @@ import {
   NO_EMBEDDING_MODEL_MESSAGE,
   BUNDLED_PROXY_DOWN_MESSAGE,
   EXTERNAL_PROXY_LABEL,
+  MODEL_BLANK_MESSAGE,
+  PROXY_URL_BLANK_MESSAGE,
   PROXY_URL_PLACEHOLDER,
   PROXY_URL_SCHEME_MESSAGE,
   SAVED_MESSAGE,
@@ -182,9 +184,13 @@ describe('<AiPanel />', () => {
         'Changing how merchants are remembered resets the merchant memory (8 learnt merchants). They will be learnt again as you approve transactions.',
       ),
     ).toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    // Save stays pressable; without the box ticked it points at the box instead of sending.
+    const clear = screen.getByRole('checkbox', { name: 'Clear the merchant memory and switch' });
+    await user.click(saveButton());
+    expect(clear).toHaveFocus();
+    expect(byMethod(calls, 'PUT')).toHaveLength(0);
 
-    await user.click(screen.getByRole('checkbox', { name: 'Clear the merchant memory and switch' }));
+    await user.click(clear);
     expect(saveButton()).toBeEnabled();
     await user.click(saveButton());
 
@@ -236,7 +242,9 @@ describe('<AiPanel />', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(detail);
     expect(refused).toBe(true);
     expect(screen.getByText(/resets the merchant memory/)).toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    await user.click(saveButton());
+    expect(screen.getByRole('checkbox', { name: 'Clear the merchant memory and switch' })).toHaveFocus();
+    expect(byMethod(calls, 'PUT')).toHaveLength(1);
 
     await user.click(screen.getByRole('checkbox', { name: 'Clear the merchant memory and switch' }));
     await user.click(saveButton());
@@ -322,9 +330,12 @@ describe('<AiPanel />', () => {
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
 
     await user.clear(chat);
-    // A blank name cannot be saved.
-    expect(saveButton()).toBeDisabled();
     expect(chat).toHaveAttribute('aria-invalid', 'true');
+    expect(chat).toHaveAccessibleDescription(MODEL_BLANK_MESSAGE);
+    // A blank name cannot be saved: Save moves focus to it instead.
+    await user.click(saveButton());
+    expect(chat).toHaveFocus();
+    expect(byMethod(calls, 'PUT')).toHaveLength(0);
     await user.type(chat, 'my-chat');
     await user.click(saveButton());
 
@@ -356,8 +367,10 @@ describe('<AiPanel />', () => {
     await user.type(examples, '50');
     expect(screen.getByText('Enter a whole number between 1 and 10.')).toBeInTheDocument();
     expect(examples).toHaveAttribute('aria-invalid', 'true');
-    expect(saveButton()).toBeDisabled();
     expect(testButton()).toBeDisabled();
+    await user.click(saveButton());
+    expect(examples).toHaveFocus();
+    expect(byMethod(calls, 'PUT')).toHaveLength(0);
 
     await user.clear(examples);
     await user.type(examples, '5');
@@ -393,10 +406,14 @@ describe('<AiPanel />', () => {
     // The models on screen came from the bundled proxy, so they are typed until the new one is saved.
     expect(screen.getByText(STALE_MODEL_LIST_MESSAGE)).toBeInTheDocument();
     expect(screen.getByLabelText('Categorising transactions')).toHaveAttribute('type', 'text');
-    // Without a URL there is nothing to save yet, but no complaint before anything is typed.
-    expect(saveButton()).toBeDisabled();
+    // Without a URL there is nothing to save yet, but no complaint before Save is pressed.
     expect(testButton()).toBeDisabled();
     expect(url).not.toHaveAttribute('aria-invalid');
+    await user.click(saveButton());
+    expect(url).toHaveFocus();
+    expect(url).toHaveAttribute('aria-invalid', 'true');
+    expect(url).toHaveAccessibleDescription(PROXY_URL_BLANK_MESSAGE);
+    expect(byMethod(calls, 'PUT')).toHaveLength(0);
 
     await user.type(url, EXTERNAL_URL);
     await user.type(key, 'sk-test');
@@ -425,7 +442,7 @@ describe('<AiPanel />', () => {
     await renderPanel();
     expect(screen.getByRole('radio', { name: EXTERNAL_PROXY_LABEL })).toBeChecked();
     expect(screen.getByLabelText('Proxy URL')).toHaveValue(EXTERNAL_URL);
-    expect(screen.getByLabelText('API key')).toHaveAttribute('placeholder', 'Master key of your proxy');
+    expect(screen.getByLabelText('API key')).toHaveAttribute('placeholder', 'Master key of your proxy…');
     expect(screen.getByText('No key')).toBeInTheDocument();
     expect(screen.queryByText(STALE_MODEL_LIST_MESSAGE)).not.toBeInTheDocument();
 
@@ -546,8 +563,10 @@ describe('<AiPanel />', () => {
 
     expect(screen.getByText(PROXY_URL_SCHEME_MESSAGE)).toBeInTheDocument();
     expect(url).toHaveAttribute('aria-invalid', 'true');
-    expect(saveButton()).toBeDisabled();
     expect(testButton()).toBeDisabled();
+    await user.click(saveButton());
+    expect(url).toHaveFocus();
+    expect(byMethod(calls, 'PUT')).toHaveLength(0);
 
     await user.clear(url);
     await user.type(url, 'http://10.0.0.5:4000');

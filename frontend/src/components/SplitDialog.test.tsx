@@ -84,6 +84,18 @@ describe('<SplitDialog />', () => {
     expect(saveButton()).toBeDisabled();
   });
 
+  it('explains an unreadable amount next to the field', async () => {
+    const user = userEvent.setup();
+    mockFetch(() => undefined);
+    renderWithProviders(<SplitDialog transaction={tx} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    await user.type(amountFor(2), 'abc');
+    expect(amountFor(2)).toHaveAttribute('aria-invalid', 'true');
+    expect(amountFor(2)).toHaveAccessibleDescription('Enter an amount above 0, like 12.50');
+    expect(amountFor(1)).not.toHaveAttribute('aria-invalid');
+    expect(saveButton()).toBeDisabled();
+  });
+
   it('fills a row from the remainder', async () => {
     const user = userEvent.setup();
     mockFetch(() => undefined);
@@ -187,7 +199,7 @@ describe('<SplitDialog />', () => {
 
     await user.click(saveButton());
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('This period is closed, so it can no longer be edited.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('This period is closed. It needs reopening from the dashboard before it can change.');
   });
 
   it('closes on Escape, on Cancel and on the close button', async () => {

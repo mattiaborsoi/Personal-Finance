@@ -5,13 +5,14 @@ import {
   CircleAlert,
   CircleCheck,
   Info,
+  LoaderCircle,
   Minus,
   PlugZap,
   Server,
   SlidersHorizontal,
   Sparkles,
 } from 'lucide-react';
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   api,
   errorMessage,
@@ -27,6 +28,8 @@ import {
   type EmbeddingProvider,
   type ProxyMode,
 } from '../api';
+import { useFocusFirstProblem } from '../hooks/useFocusFirstProblem';
+import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { plural } from '../lib/format';
 import { btnPrimary, btnSecondary, cardInset, checkboxBase, cx, eyebrow, focusRing, inputBase, inputInvalid, selectBase } from '../lib/ui';
 import { Badge } from './Badge';
@@ -46,6 +49,8 @@ export const STALE_MODEL_LIST_MESSAGE = 'Save to refresh the list of models.';
 export const NO_EMBEDDING_MODEL_MESSAGE =
   'This proxy lists no embedding model, so merchants are matched offline. Add one to your LiteLLM (text-embedding-3-small, say) and save to use AI here.';
 export const PROXY_URL_PLACEHOLDER = 'http://host.docker.internal:4000';
+export const PROXY_URL_BLANK_MESSAGE = 'Enter the proxy URL, e.g. http://litellm:4000.';
+export const MODEL_BLANK_MESSAGE = 'Enter a model name.';
 /** The two proxies on offer, nothing in between: the container that ships with the app, or one the user already runs. */
 export const BUNDLED_PROXY_LABEL = `${PRODUCT_NAME}'s own LiteLLM`;
 export const EXTERNAL_PROXY_LABEL = 'A LiteLLM I already run';
@@ -219,6 +224,11 @@ function buildUpdate(form: AiForm, parsed: Parsed, saved: AiSettings): AiUpdate 
   return body;
 }
 
+/** True when the form differs from the saved settings at all, an edit that cannot be sent included. */
+function aiFormChanged(form: AiForm, saved: AiSettings): boolean {
+  return JSON.stringify(form) !== JSON.stringify(formFrom(saved));
+}
+
 /** Everything on the form, for the connection test. */
 function fullBody(form: AiForm, parsed: Parsed): AiUpdate {
   return {
@@ -275,19 +285,21 @@ interface ModelRowProps {
   id: string;
   label: string;
   hint: string;
+  /** The model name is blank: the hint gives way to what to do about it. */
+  invalid?: boolean;
   children: ReactNode;
 }
 
 /** A job: its bold name and one-line hint on the left, the control on the right. */
-function ModelRow({ id, label, hint, children }: ModelRowProps) {
+function ModelRow({ id, label, hint, invalid = false, children }: ModelRowProps) {
   return (
     <div className="grid gap-2 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] sm:items-center sm:gap-6">
       <div className="min-w-0">
         <label htmlFor={id} className="text-sm font-semibold text-ink">
           {label}
         </label>
-        <p id={`${id}-hint`} className="mt-0.5 text-xs text-ink-3">
-          {hint}
+        <p id={`${id}-hint`} className={cx('mt-0.5 text-xs', invalid ? 'text-critical-ink' : 'text-ink-3')}>
+          {invalid ? MODEL_BLANK_MESSAGE : hint}
         </p>
       </div>
       <div className="space-y-2">{children}</div>
@@ -301,12 +313,14 @@ interface ModelControlProps {
   options: Option[];
   /** When the proxy's list cannot be trusted, the name is typed instead of chosen. */
   typed: boolean;
+  /** An example name for the job, shown while the typed field is empty. */
+  placeholder: string;
   disabled: boolean;
   invalid: boolean;
   onChange: (value: string) => void;
 }
 
-function ModelControl({ id, value, options, typed, disabled, invalid, onChange }: ModelControlProps) {
+function ModelControl({ id, value, options, typed, placeholder, disabled, invalid, onChange }: ModelControlProps) {
   if (typed) {
     return (
       <input
@@ -314,7 +328,7 @@ function ModelControl({ id, value, options, typed, disabled, invalid, onChange }
         type="text"
         className={cx(inputBase, 'font-mono', invalid && inputInvalid)}
         value={value}
-        placeholder="model name"
+        placeholder={placeholder}
         autoComplete="off"
         spellCheck={false}
         disabled={disabled}
@@ -359,8 +373,8 @@ function TestLine({ job, result }: { job: AiJob; result: AiTestResult[AiJob] }) 
     );
   }
   const parts = [label, result.model];
-  if (result.ms !== null) parts.push(`${result.ms} ms`);
-  if ('dimensions' in result && result.dimensions !== null) parts.push(`${result.dimensions} dimensions`);
+  if (result.ms !== null) parts.push(`${result.ms}\u00a0ms`);
+  if ('dimensions' in result && result.dimensions !== null) parts.push(`${result.dimensions}\u00a0dimensions`);
   return (
     <li className="flex items-start gap-2">
       {result.ok ? (
@@ -377,7 +391,7 @@ function TestLine({ job, result }: { job: AiJob; result: AiTestResult[AiJob] }) 
 }
 
 const switchTrack = `relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`;
-const switchKnob = 'inline-block h-5 w-5 rounded-full bg-surface shadow-sm transition-transform';
+const switchKnob = 'inline-block h-5 w-5 rounded-full bg-surface shadow-sm motion-safe:transition-transform';
 
 // ---------------------------------------------------------------------------
 // The panel
@@ -405,6 +419,14 @@ export function AiPanel() {
   const [testError, setTestError] = useState<string | null>(null);
   const [results, setResults] = useState<AiTestResult | null>(null);
   const [tuningOpen, setTuningOpen] = useState(false);
+  /** Save was pressed with a blank proxy URL, so the field now says so rather than waiting quietly. */
+  const [attempted, setAttempted] = useState(false);
+
+  const formRef = useRef<HTMLFormElement>(null);
+  const clearMemoryRef = useRef<HTMLInputElement>(null);
+  const focusFirstProblem = useFocusFirstProblem(formRef, saving);
+  const changed = saved !== null && form !== null && aiFormChanged(form, saved);
+  useUnsavedChanges(changed);
 
   useEffect(() => {
     let cancelled = false;
@@ -467,7 +489,6 @@ export function AiPanel() {
   const dirty = Object.keys(update).length > 0;
   const showGuard = conflict || (embeddingChanged(form, saved) && saved.memory_rows > 0);
   const clearing = showGuard && clearMemory;
-  const canSave = dirty && valid && !saving && (!showGuard || clearing);
   const reachable = saved.proxy.reachable;
   const staleList = proxyChanged(form, saved);
   /** The proxy's list is only worth offering when it came from the proxy the form points at. */
@@ -483,7 +504,17 @@ export function AiPanel() {
 
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (!canSave) return;
+    if (saving || !saved) return;
+    if (!valid) {
+      setAttempted(true);
+      focusFirstProblem();
+      return;
+    }
+    if (showGuard && !clearing) {
+      clearMemoryRef.current?.focus();
+      return;
+    }
+    if (!dirty) return;
     setSaving(true);
     setSaveError(null);
     setSavedNotice(false);
@@ -494,6 +525,7 @@ export function AiPanel() {
       setSavedNotice(true);
       setClearMemory(false);
       setConflict(false);
+      setAttempted(false);
     } catch (err) {
       if (isApiError(err, 409)) setConflict(true);
       setSaveError(errorMessage(err));
@@ -519,9 +551,11 @@ export function AiPanel() {
   const similarityReadout = `${form.thresholds.similarity}%`;
   const problem = (field: ThresholdField) => (parsed.problems.thresholds.includes(field) ? rangeProblem(field) : undefined);
   const badScheme = parsed.problems.proxyUrl === 'scheme';
+  const blankUrl = attempted && parsed.problems.proxyUrl === 'blank';
+  const urlProblem = badScheme ? PROXY_URL_SCHEME_MESSAGE : blankUrl ? PROXY_URL_BLANK_MESSAGE : undefined;
 
   return (
-    <form onSubmit={save} noValidate className="space-y-6">
+    <form ref={formRef} onSubmit={save} noValidate className="space-y-6">
       <Card
         icon={Sparkles}
         title="AI"
@@ -560,7 +594,11 @@ export function AiPanel() {
             as="dl-item"
             label="Proxy reachable"
             value={reachable ? 'Yes' : 'No'}
-            hint={<span className="font-mono">{saved.proxy.url}</span>}
+            hint={
+              <span translate="no" className="break-all font-mono">
+                {saved.proxy.url}
+              </span>
+            }
           />
           <StatTile as="dl-item" label="Models available" value={saved.available_models.length} />
           <StatTile as="dl-item" label="Learnt merchants" value={saved.memory_rows} />
@@ -579,9 +617,9 @@ export function AiPanel() {
             label={BUNDLED_PROXY_LABEL}
             hint={
               <>
-                The container that ships with {PRODUCT_NAME} (<code className="font-mono">docker compose</code>, profile{' '}
-                <code className="font-mono">bundled-litellm</code>), at <code className="font-mono">{saved.proxy.bundled_url}</code>.
-                Provider keys go in <code className="font-mono">.env</code>.
+                The container that ships with {PRODUCT_NAME} (<code translate="no" className="font-mono">docker compose</code>, profile{' '}
+                <code translate="no" className="font-mono">bundled-litellm</code>), at <code translate="no" className="font-mono">{saved.proxy.bundled_url}</code>.
+                Provider keys go in <code translate="no" className="font-mono">.env</code>.
               </>
             }
             onChange={chooseProxy}
@@ -599,7 +637,7 @@ export function AiPanel() {
                 {envUrl && (
                   <>
                     {' '}
-                    <code className="font-mono">.env</code> suggests <code className="font-mono">{envUrl}</code>.
+                    <code translate="no" className="font-mono">.env</code> suggests <code translate="no" className="font-mono">{envUrl}</code>.
                   </>
                 )}
               </>
@@ -610,8 +648,8 @@ export function AiPanel() {
         {bundledDown && (
           <Notice tone="warning" className="mt-4">
             <p>
-              {BUNDLED_PROXY_DOWN_MESSAGE} Set <code className="font-mono">COMPOSE_PROFILES=bundled-litellm</code> in{' '}
-              <code className="font-mono">.env</code> and run <code className="font-mono">docker compose up -d</code> to start it, or
+              {BUNDLED_PROXY_DOWN_MESSAGE} Set <code translate="no" className="font-mono">COMPOSE_PROFILES=bundled-litellm</code> in{' '}
+              <code translate="no" className="font-mono">.env</code> and run <code translate="no" className="font-mono">docker compose up -d</code> to start it, or
               choose a LiteLLM you already run.
             </p>
           </Notice>
@@ -622,19 +660,19 @@ export function AiPanel() {
               id={f('proxy-url')}
               label="Proxy URL"
               help={`Use host.docker.internal for a LiteLLM running on the same machine as ${PRODUCT_NAME}'s containers.`}
-              problem={badScheme ? PROXY_URL_SCHEME_MESSAGE : undefined}
+              problem={urlProblem}
             >
               <input
                 id={f('proxy-url')}
                 type="url"
                 inputMode="url"
-                className={cx(inputBase, 'font-mono', badScheme && inputInvalid)}
+                className={cx(inputBase, 'font-mono', urlProblem && inputInvalid)}
                 placeholder={envUrl ?? PROXY_URL_PLACEHOLDER}
                 value={form.proxy.url}
                 autoComplete="off"
                 spellCheck={false}
                 disabled={busy}
-                aria-invalid={badScheme ? true : undefined}
+                aria-invalid={urlProblem ? true : undefined}
                 aria-describedby={`${f('proxy-url')}-help`}
                 onChange={(e) => setProxy({ url: e.target.value })}
               />
@@ -653,7 +691,7 @@ export function AiPanel() {
                 id={f('proxy-key')}
                 type="password"
                 className={cx(inputBase, 'font-mono')}
-                placeholder={saved.proxy.has_key ? 'Leave blank to keep the saved key' : 'Master key of your proxy'}
+                placeholder={saved.proxy.has_key ? 'Leave blank to keep the saved key' : 'Master key of your proxy…'}
                 value={form.proxy.api_key}
                 autoComplete="off"
                 spellCheck={false}
@@ -683,16 +721,18 @@ export function AiPanel() {
             const id = f(row.job);
             const chatJob = row.job !== 'embedding';
             const offline = !chatJob && form.embedding_provider === 'hash';
+            const invalid = parsed.problems.models.includes(row.job);
             return (
-              <ModelRow key={row.job} id={id} label={row.label} hint={row.hint}>
+              <ModelRow key={row.job} id={id} label={row.label} hint={row.hint} invalid={invalid}>
                 {!offline && (
                   <ModelControl
                     id={id}
                     value={form.models[row.job]}
                     options={optionsFor(saved.available_models, row.mode, form.models[row.job])}
                     typed={typedModels}
+                    placeholder={row.mode === 'embedding' ? 'e.g. text-embedding-3-small…' : 'e.g. cheap-chat…'}
                     disabled={busy || (chatJob && !form.enabled)}
-                    invalid={parsed.problems.models.includes(row.job)}
+                    invalid={invalid}
                     onChange={(value) => setModel(row.job, value)}
                   />
                 )}
@@ -837,6 +877,7 @@ export function AiPanel() {
             actions={
               <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium">
                 <input
+                  ref={clearMemoryRef}
                   type="checkbox"
                   className={checkboxBase}
                   checked={clearMemory}
@@ -857,7 +898,9 @@ export function AiPanel() {
             <PlugZap className={cx('h-4 w-4', testing && 'animate-pulse')} aria-hidden="true" />
             {testing ? 'Testing…' : 'Test connection'}
           </button>
-          <button type="submit" className={btnPrimary} disabled={!canSave}>
+          {/* Enabled while there is a change to send or a problem to point at: pressing it then moves focus to the problem. */}
+          <button type="submit" className={btnPrimary} disabled={saving || (valid && !dirty)}>
+            {saving && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
             {saving ? 'Saving…' : 'Save changes'}
           </button>
         </div>
@@ -868,16 +911,19 @@ export function AiPanel() {
           </Notice>
         )}
         <ErrorMessage message={testError} onDismiss={() => setTestError(null)} />
-        {results && (
-          <div className={cardInset}>
-            <p className={eyebrow}>Connection test</p>
-            <ul aria-label="Connection test results" className="mt-2 space-y-2 text-sm">
-              {JOBS.map((row) => (
-                <TestLine key={row.job} job={row.job} result={results[row.job]} />
-              ))}
-            </ul>
-          </div>
-        )}
+        {/* Always mounted, so the results are announced when they arrive. */}
+        <div aria-live="polite">
+          {results && (
+            <div className={cardInset}>
+              <p className={eyebrow}>Connection test</p>
+              <ul aria-label="Connection test results" className="mt-2 space-y-2 text-sm">
+                {JOBS.map((row) => (
+                  <TestLine key={row.job} job={row.job} result={results[row.job]} />
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
       </div>
 
       <p className="text-xs text-ink-3">
@@ -888,9 +934,9 @@ export function AiPanel() {
           </>
         ) : (
           <>
-            API keys never appear here. They live in <code className="font-mono">.env</code> on the server and the list of models in{' '}
-            <code className="font-mono">litellm/config.yaml</code>; after changing either, run{' '}
-            <code className="font-mono">docker compose up -d litellm</code>.
+            API keys never appear here. They live in <code translate="no" className="font-mono">.env</code> on the server and the list of models in{' '}
+            <code translate="no" className="font-mono">litellm/config.yaml</code>; after changing either, run{' '}
+            <code translate="no" className="font-mono">docker compose up -d litellm</code>.
           </>
         )}
       </p>

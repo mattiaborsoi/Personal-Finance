@@ -23,10 +23,10 @@ describe('household form', () => {
 
   it('previews the split from the incomes on the form, or 50–50', () => {
     const form = householdFormFrom(household());
-    expect(splitPreviewText(splitPreview(form)!, { primary: 'Alex', secondary: 'Sam' })).toBe('Alex 55.6 % · Sam 44.4 %');
+    expect(splitPreviewText(splitPreview(form)!, { primary: 'Alex', secondary: 'Sam' })).toBe('Alex 55.6% · Sam 44.4%');
     // Other income counts towards the share.
     const withBonus = { ...form, secondary: { ...form.secondary, additional_income_pa: '20000' } };
-    expect(splitPreviewText(splitPreview(withBonus)!, { primary: 'Alex', secondary: 'Sam' })).toBe('Alex 50.0 % · Sam 50.0 %');
+    expect(splitPreviewText(splitPreview(withBonus)!, { primary: 'Alex', secondary: 'Sam' })).toBe('Alex 50.0% · Sam 50.0%');
     expect(splitPreview({ ...form, split_strategy: 'equal_50_50' })).toEqual({ primary: 50, secondary: 50 });
     const noIncome = { ...form, primary: { ...form.primary, base_salary_pa: '' }, secondary: { ...form.secondary, base_salary_pa: '0' } };
     expect(splitPreview(noIncome)).toBeNull();

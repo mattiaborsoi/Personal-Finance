@@ -96,10 +96,29 @@ describe('<SettlementBanner />', () => {
     expect(screen.getByText('Settle by 1 Apr 2026')).toBeInTheDocument();
     expect(screen.getByText(/55\.6% Alex \/ 44\.4% Sam/)).toBeInTheDocument();
     expect(screen.getByText(/3 transactions are still pending review/)).toBeInTheDocument();
-    expect(screen.getByText("Sam's share of shared items Alex paid")).toBeInTheDocument();
-    expect(screen.getByText("Alex's personal items on Sam's cards")).toBeInTheDocument();
+    expect(screen.getByText('Sam’s share of shared items Alex paid')).toBeInTheDocument();
+    expect(screen.getByText('Alex’s personal items on Sam’s cards')).toBeInTheDocument();
     expect(screen.getByText('£24.10')).toBeInTheDocument();
     expect(screen.queryByTestId('settlement-snapshot')).not.toBeInTheDocument();
+  });
+
+  it('opens the lines panel from the button and from ?lines=open in the URL', async () => {
+    const user = userEvent.setup();
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/settlement/2026-03') return jsonResponse(settlement());
+      return undefined;
+    });
+
+    const view = renderWithProviders(<SettlementBanner period="2026-03" />, { route: '/?period=2026-03' });
+    const toggle = await screen.findByRole('button', { name: /^Show / });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+    expect(screen.getByRole('button', { name: /^Hide / })).toHaveAttribute('aria-expanded', 'true');
+    expect(document.getElementById('settlement-lines')).toBeInTheDocument();
+
+    view.unmount();
+    renderWithProviders(<SettlementBanner period="2026-03" />, { route: '/?period=2026-03&lines=open' });
+    expect(await screen.findByRole('button', { name: /^Hide / })).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('renders the reverse phrasing for a negative net and "Settled up" for zero', async () => {
@@ -136,7 +155,7 @@ describe('<SettlementBanner />', () => {
     // The queue has its own page now, on the same period.
     expect(screen.getByRole('link', { name: 'Review the queue' })).toHaveAttribute('href', '/review?period=2026-03');
     // The zero sums and the empty line list would only dress up a figure that does not exist.
-    expect(screen.queryByText("Sam's share of shared items Alex paid")).not.toBeInTheDocument();
+    expect(screen.queryByText('Sam’s share of shared items Alex paid')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /show 0 lines/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/still pending review/)).not.toBeInTheDocument();
   });

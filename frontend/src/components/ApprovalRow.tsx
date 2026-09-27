@@ -86,14 +86,17 @@ export function ApprovalRow({
     <>
       <tr className={cx(trHover, selected && 'bg-brand-soft/30 hover:bg-brand-soft/40', busy && 'opacity-60')}>
         <td className="w-10 px-3 py-3 align-middle">
-          <input
-            type="checkbox"
-            className={checkboxBase}
-            checked={selected}
-            onChange={onToggle}
-            aria-label={`Select ${merchant}`}
-            disabled={locked}
-          />
+          {/* The label turns the cell's padding into a 40px hit area for the 16px box. */}
+          <label className={cx('-m-3 inline-flex p-3 align-middle', locked ? 'cursor-not-allowed' : 'cursor-pointer')}>
+            <input
+              type="checkbox"
+              className={checkboxBase}
+              checked={selected}
+              onChange={onToggle}
+              aria-label={`Select ${merchant}`}
+              disabled={locked}
+            />
+          </label>
         </td>
         <td className="w-full min-w-[15rem] max-w-0 px-2 py-3 align-middle">
           <div className="flex items-start gap-3">
