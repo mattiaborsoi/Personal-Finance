@@ -38,6 +38,10 @@ Design notes
   transaction on the target (e.g. investment) account and links the pair, which is
   what drives net-invested-capital tracking without a broker statement. Mirror rows
   are recognisable by ``raw_description`` starting with :data:`MIRROR_PREFIX`.
+* **Provenance**: the ``statement_uploads`` row is written before the lines and
+  every inserted line carries its id in ``upload_id``, as do the mirror legs written
+  for them (and, later, the parts of a split line), so deleting the upload removes
+  exactly what it brought in (:mod:`app.services.statement_uploads`).
 """
 
 from __future__ import annotations
@@ -231,6 +235,25 @@ def ingest_statement(
     for key in sorted(period_keys):
         get_or_create_period(db, key)
 
+    # The upload row goes in first so every line (and mirror leg) can point at it:
+    # deleting the upload later removes exactly what it brought in.
+    all_keys = {period_key_for(line.date) for line, _, _ in resolved}
+    provenance_key = max(all_keys) if all_keys else None
+    if provenance_key:
+        get_or_create_period(db, provenance_key)
+    upload = StatementUpload(
+        account_id=default_account.id if default_account else (resolved[0][1].id if resolved else None),
+        period_key=provenance_key,
+        period_from=min(all_keys) if all_keys else None,
+        period_to=provenance_key,
+        filename=filename[:255],
+        sha256=sha,
+        parser=parsed.parser_name[:64],
+        transaction_count=0,
+    )
+    db.add(upload)
+    db.flush()
+
     inserted = pending = auto = 0
     state = guesser.UploadState()
     for line, acc, fp in new_lines:
@@ -258,6 +281,7 @@ def ingest_statement(
             classification_confidence=Decimal(str(round(cls.confidence, 3))),
             fingerprint=fp,
             source_file=filename[:255],
+            upload_id=upload.id,
         )
         db.add(txn)
         db.flush()
@@ -278,21 +302,7 @@ def ingest_statement(
     matched = transfers.match_pending(db, config)
     warnings.extend(ai_warnings(state))
 
-    all_keys = {period_key_for(line.date) for line, _, _ in resolved}
-    provenance_key = max(all_keys) if all_keys else None
-    upload = StatementUpload(
-        account_id=default_account.id if default_account else (resolved[0][1].id if resolved else None),
-        period_key=provenance_key,
-        period_from=min(all_keys) if all_keys else None,
-        period_to=provenance_key,
-        filename=filename[:255],
-        sha256=sha,
-        parser=parsed.parser_name[:64],
-        transaction_count=inserted,
-    )
-    if provenance_key:
-        get_or_create_period(db, provenance_key)
-    db.add(upload)
+    upload.transaction_count = inserted
     db.flush()
 
     return UploadResult(
@@ -385,6 +395,7 @@ def create_mirror(
             classification_confidence=Decimal("1.000"),
             fingerprint=fp,
             source_file=filename[:255],
+            upload_id=txn.upload_id,
         )
         db.add(mirror)
         db.flush()

@@ -152,6 +152,11 @@ class Transaction(Base):
     split_index: Mapped[int | None] = mapped_column(Integer)
 
     source_file: Mapped[str | None] = mapped_column(String(255))
+    # The statement upload that brought the line in; its mirror legs and split parts
+    # carry the same id. NULL on lines ingested before uploads were linked.
+    upload_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("statement_uploads.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     account: Mapped[Account | None] = relationship(back_populates="transactions")

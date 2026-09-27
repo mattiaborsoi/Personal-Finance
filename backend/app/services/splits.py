@@ -8,7 +8,7 @@ personal item. The ledger records this as:
   settlement, macro/micro metrics and the auditor skip it;
 * one ``transactions`` row per part with ``split_parent_id`` pointing at the parent
   and ``split_index`` for ordering. A part copies the parent's period, account,
-  date, merchant and description and has its own ``amount``, ``category``,
+  date, merchant, description and upload and has its own ``amount``, ``category``,
   ``claim_type`` and allocations. Parts have no fingerprint and never enter the
   transfer buffer.
 
@@ -144,6 +144,7 @@ def split_transaction(
                 classification_source="manual",
                 classification_confidence=Decimal("1.000"),
                 source_file=txn.source_file,
+                upload_id=txn.upload_id,
                 split_index=index,
             )
         )

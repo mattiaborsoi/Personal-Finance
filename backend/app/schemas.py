@@ -223,6 +223,8 @@ class StatementUploadOut(BaseModel):
     parser: str | None
     transaction_count: int
     created_at: datetime | None
+    deletable: bool = True
+    """False only for an upload recorded before lines were linked whose filename another such upload shares."""
 
 
 # --------------------------------------------------------------------------- #
@@ -452,6 +454,33 @@ class MemoryOut(BaseModel):
     default_claim_type: str
     review_count: int
     last_updated: datetime | None
+
+
+# --------------------------------------------------------------------------- #
+# System reset
+# --------------------------------------------------------------------------- #
+
+
+class ResetRequest(BaseModel):
+    """``POST /system/reset``: ``confirm`` must be ``DELETE TRANSACTIONS`` / ``DELETE EVERYTHING``."""
+
+    scope: Literal["transactions", "everything"]
+    confirm: str = ""
+
+
+class ResetCounts(BaseModel):
+    transactions: int = 0
+    uploads: int = 0
+    claims: int = 0
+    periods: int = 0
+    memory: int = 0
+    accounts: int = 0
+    settings: int = 0
+
+
+class ResetOut(BaseModel):
+    scope: Literal["transactions", "everything"]
+    deleted: ResetCounts
 
 
 class HealthOut(BaseModel):

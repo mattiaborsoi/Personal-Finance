@@ -12,10 +12,10 @@ Send `Authorization: Bearer <token>` on every other request. Tokens expire after
 are invalidated when the role's password changes. After 5 wrong passwords from one address
 the login endpoint answers **429** (with `Retry-After`) for 1 minute, doubling on repeats.
 
-| role        | may call                                                                 |
-|-------------|--------------------------------------------------------------------------|
-| `primary`   | everything                                                               |
-| `secondary` | `GET /auth/me`, `GET /config`, `GET/POST /claims`, `GET /settlement/{p}` |
+| role        | may call                                                                                                   |
+|-------------|------------------------------------------------------------------------------------------------------------|
+| `primary`   | everything                                                                                                 |
+| `secondary` | `GET /auth/me`, `GET /config`, `GET/POST /claims`, `DELETE /claims/{id}` (own, unsettled), `GET /settlement/{p}` |
 
 `GET /api/auth/me` → `{ role, user_id, display_name }`
 
@@ -27,12 +27,12 @@ the login endpoint answers **429** (with `Retry-After`) for 1 minute, doubling o
   "base_currency": "GBP", "currency_symbol": "£",
   "users": { "primary": {"id","display_name"}, "secondary": {"id","display_name"} },
   "split": { "strategy", "primary_ratio", "secondary_ratio", "rounding_decimals", "settlement_day_of_month" },
-  "accounts": [ {"id","institution","label","account_type","owner","identifier_last4","default_claim_type","billed_to"} ],
+  "accounts": [ {"id","institution","label","account_type","owner","identifier_last4","default_claim_type","billed_to","is_active"} ],
   "categories": ["Bills:Water", "..."],
   "claim_types": ["personal","shared_proportional","shared_equal","secondary_personal","primary_personal"]
 }
 ```
-`label` is the optional display name from `config.yaml` (`null` when unset; the UI then shows institution and account type).
+`label` is the optional display name set under Settings → Accounts (`null` when unset; the UI then shows institution and account type). `billed_to` here is the resolved payer, never `null`: the account's own `billed_to`, else the primary user for a `credit_supplementary` card, else the owner (unlike `AccountOut.billed_to`, which is `null` when unset). Archived accounts are included with `is_active: false`.
 
 ## Accounts (Settings → Accounts)
 
@@ -44,9 +44,9 @@ AccountOut: `id, institution, label, account_type, owner_user_id, identifier_las
 
 `POST /api/accounts` `{ id?, institution, label?, account_type, owner, identifier_last4, default_claim_type?, billed_to? }` → **201** AccountOut. `id` is generated (`acc_<institution>_<type>_<last4>`) when omitted; if given it must be 2–64 lowercase letters, digits, `_` or `-`. **422** for an unknown `owner`/`billed_to`, blank fields, or another active account at the same institution with the same digits (a main card and its supplementary card are allowed to share digits); **409** when the `id` exists.
 
-`PATCH /api/accounts/{id}` `{ institution?, label?, account_type?, owner?, identifier_last4?, default_claim_type?, billed_to?, is_active? }` → AccountOut. Omitted fields are untouched; `null` clears `label` / `billed_to`. `is_active: false` archives the account: it keeps its history but is no longer offered for uploads.
+`PATCH /api/accounts/{id}` `{ institution?, label?, account_type?, owner?, identifier_last4?, default_claim_type?, billed_to?, is_active? }` → AccountOut. Omitted fields are untouched; `null` clears `label` / `billed_to`. `is_active: false` archives the account: it keeps its history but is no longer offered for uploads. **404** for an unknown id; **422** under the same rules as `POST` (unknown `owner`/`billed_to`, blank `institution`/`identifier_last4`, and, whenever the account is active after the change, another active account at the same institution with the same digits).
 
-`DELETE /api/accounts/{id}` → 204. **409** when the account has transactions or uploads, or a `config.yaml` rule sends transfers to it (archive it instead).
+`DELETE /api/accounts/{id}` → 204. **404** for an unknown id; **409** when the account has transactions or uploads (archive it instead), or a rule (Settings → Rules) sends transfers to it.
 
 ## AI (Settings → AI)
 
@@ -67,7 +67,7 @@ Which proxy and models Settl uses, and the thresholds behind them. Defaults come
 ```
 `models.chat` categorises transactions, `extraction` reads PDFs the parsers cannot, `audit` writes the monthly summary, `embedding` turns merchants into vectors (`embedding_provider: "hash"` = offline, no AI). `available_models` is what the selected LiteLLM proxy lists (`/model/info`, falling back to `/v1/models`), cached for a minute; `proxy.mode` is `bundled` (Settl's own LiteLLM container: `bundled_url` with `LITELLM_MASTER_KEY`) or `external` (a LiteLLM you already run, at `proxy.url` with a key stored server-side and never returned; `env_url` is what `LITELLM_URL` in `.env` offers for it, and when that is set `external` is the default mode with that URL and `LITELLM_API_KEY`). `stored: false` means nothing has been saved yet.
 
-`PUT /api/ai` body: any subset of `{ enabled, embedding_provider, models: {chat?, extraction?, audit?, embedding?}, thresholds: {...}, proxy: {mode?, url?, api_key?}, clear_memory }` → the same body as `GET`. A blank or omitted `api_key` keeps the stored one. **422** for out-of-range thresholds (similarity 0.5–0.99, top_k 1–10, deviation 0.05–1.0, look-back 1–12), a model the proxy does not list or lists with the wrong kind, or `mode: external` without an `http(s)://` URL. **409** when the embedding model or provider changes while `memory_rows > 0` and `clear_memory` is not `true`: the stored vectors would no longer be comparable; with `clear_memory: true` the merchant memory is emptied and the change saved.
+`PUT /api/ai` body: any subset of `{ enabled, embedding_provider, models: {chat?, extraction?, audit?, embedding?}, thresholds: {...}, proxy: {mode?, url?, api_key?}, clear_memory }` → the same body as `GET`. A blank or omitted `api_key` keeps the stored one. **422** for out-of-range thresholds (similarity 0.5–0.99, top_k 1–10, deviation 0.05–1.0, look-back 1–12), a model the proxy does not list or lists with the wrong kind (only checked when the proxy answers with a model list; with the proxy unreachable or listing nothing, the names are saved as typed), or `mode: external` without an `http(s)://` URL. **409** when the embedding model or provider changes while `memory_rows > 0` and `clear_memory` is not `true`: the stored vectors would no longer be comparable; with `clear_memory: true` the merchant memory is emptied and the change saved.
 
 `POST /api/ai/test` body: the same shape as `PUT` (the values on the form, saved or not) → `{ "chat": {ok, ms, model, error} | null, "extraction": ..., "audit": ..., "embedding": {ok, ms, model, dimensions, error} }`. Each chat job is one tiny completion; the embedding test also checks the vector has the schema's 1536 dimensions. `null` for a job that is switched off; never a 5xx.
 
@@ -94,6 +94,16 @@ Which proxy and models Settl uses, and the thresholds behind them. Defaults come
 
 `POST /api/system/update` → **202** `{ state: "running", started_at }`. The updater runs `git pull --ff-only` and `docker compose up -d --build` for the app services; poll `GET /api/system` (expect a short outage while the backend restarts). **409** while an update is running, **503** when the updater container is not deployed or not reachable.
 
+`POST /api/system/reset` body `{ "scope": "transactions" | "everything", "confirm": "<phrase>" }` →
+```json
+{ "scope": "transactions",
+  "deleted": { "transactions": 17, "uploads": 2, "claims": 0, "periods": 1, "memory": 0, "accounts": 0, "settings": 0 } }
+```
+- `transactions` (confirm with `DELETE TRANSACTIONS`) wipes the ledger: every transaction (split parts and mirror legs included), every transfer-buffer row, statement upload, audit report and settlement snapshot, and every period that no partner claim files under (closed ones included). Partner claims (and their periods), merchant memory, accounts and the app settings (AI, household, categories, rules) are kept.
+- `everything` (confirm with `DELETE EVERYTHING`) also deletes partner claims, every period, merchant memory, the app settings and the accounts, then seeds the accounts from `config.yaml` again exactly as on first start, so the installation looks like day one. Logins stay valid (the passwords live in `.env`).
+
+One database transaction; `deleted` counts the rows removed (`accounts` counts those deleted before the re-seed). **422** `type DELETE TRANSACTIONS to confirm` / `type DELETE EVERYTHING to confirm` when `confirm` (trimmed, case-sensitive) is not the scope's phrase; **422** for an unknown `scope`.
+
 `GET /api/health` → `{ status, database }` (no auth; reachable through the web port, so it reports only whether the app and its database are up)
 
 ## Periods
@@ -115,9 +125,11 @@ While a period is closed, `PATCH`/`approve`/`approve-batch`/`DELETE`/`split` on 
 ```
 `period_from` / `period_to` are the earliest and latest month (`YYYY-MM`) among the file's lines, skipped duplicates included; `period_key` is the latest month, kept for compatibility. `warnings` lists parser notes and, when the AI could not classify some lines, why: `AI unavailable (connection refused): 3 lines left uncategorised; approve them in the queue or retry the upload later` (the proxy refused, timed out or answered with an error; the rest of the file was not sent to it) or `AI gave an unusable answer for 1 line, left uncategorised; …`. No warning is raised when AI is switched off in Settings → AI.
 
-Errors: **422** when the account cannot be determined (`detail` is `{message, candidates}`), **422** when the file cannot be parsed or is too large to be a statement (more than 60 pages / 20 LLM chunks), **409** when the file (same sha256) was already ingested, **409** when new lines would land in a closed period. Lines that already exist are skipped, not refused. The uploaded file is deleted after ingestion unless `KEEP_UPLOADED_FILES=true`.
+Errors: **422** when the account cannot be determined (`detail` is `{message, candidates}`), **422** when the file cannot be parsed or is too large to be a statement (more than 60 pages / 20 LLM chunks), **409** when the file (same sha256) was already ingested, **409** when new lines would land in a closed period, **413** when the file is larger than 25 MB, **422** when the extension is not `.pdf`, `.csv`, `.xlsx` or `.xls`, the file is empty or `account_id` is unknown. Lines that already exist are skipped, not refused. The uploaded file is deleted after ingestion unless `KEEP_UPLOADED_FILES=true`.
 
-`GET /api/statements` → `[ {id, account_id, period_key, period_from, period_to, filename, sha256, parser, transaction_count, created_at} ]` (`period_from` / `period_to` are `null` on uploads recorded before they existed)
+`GET /api/statements` → `[ {id, account_id, period_key, period_from, period_to, filename, sha256, parser, transaction_count, created_at, deletable} ]` (`period_from` / `period_to` are `null` on uploads recorded before they existed; `deletable` is `false` only in the last case described under `DELETE` below, so the UI can grey the button out)
+
+`DELETE /api/statements/{upload_id}` → **204**. Deletes every transaction the upload brought in (each line carries its `upload_id`, and so do the mirror legs written for its investment transfers and the parts of its split lines), with their transfer-buffer rows. A counterpart that was matched to one of them is unlinked and its buffer row goes back to `unmatched`. The upload row is removed, so the same file can be uploaded again; periods are left in place. **404** `upload not found`; **409** `period 2026-08 is closed; reopen it first` when any of those transactions sits in a closed period (nothing is changed). Uploads recorded before lines were linked to them fall back to the unlinked lines whose `source_file` is the upload's filename, when no other such upload (one that inserted lines, none of which carries its id) has the same filename; otherwise **409** `this upload was recorded before lines were linked to uploads; delete its transactions from the Transactions page`.
 
 ## Transactions
 
@@ -143,7 +155,7 @@ The list never contains parts: a split transaction appears once, as its parent, 
 
 `POST /api/transactions/{id}/approve` body `{ ...same optional corrections..., remember: true }` → TransactionOut with `review_status = manual_approved`. When `remember` is true the confirmed classification is written to merchant memory (learning loop); transfers, `Uncategorized` answers and split transactions are never remembered.
 
-`POST /api/transactions/approve-batch` `{ ids: [...], remember: true }` → `{ approved, items }`
+`POST /api/transactions/approve-batch` `{ ids: [...], remember: true }` → `{ approved, items }`. **404** (naming the ids) when any id is unknown, and **409** when any of them is in a closed period; either way nothing is approved.
 
 `DELETE /api/transactions/{id}` → 204 (also removes buffer entries / links; a split parent takes its parts with it). Deleting a part answers **409**: remove the split instead.
 
@@ -162,32 +174,34 @@ Each part gets its own category, claim type and allocations; the parent keeps th
 
 Rules (**422** otherwise): between 2 and 20 parts; every `amount` non-zero, signed like the transaction and no larger than it; the amounts sum exactly to the transaction amount; every `category` one of the configured `categories` or `Uncategorized` (matched ignoring case, stored in the configured spelling; the 422 names the offending value). **409** when the period is closed, when the transaction is an internal transfer, or when it is itself a part.
 
-`DELETE /api/transactions/{id}/split` → TransactionOut (`is_split: false`, `parts: []`; the transaction stays approved). **409** in a closed period.
+`DELETE /api/transactions/{id}/split` → TransactionOut (`is_split: false`, `parts: []`; the transaction stays approved). **409** in a closed period or when the id is a part (remove the split on its parent). Calling it on a transaction that is not split is a no-op.
 
 ## Transfers (reconciliation buffer)
 
 `GET /api/transfers/unmatched` → `[ {id, transaction_id, account_id, amount, transaction_date, match_status, resolved_at, description} ]`
 
+`GET /api/transfers` → `[TransferBufferOut]` (the same shape: every buffer entry whatever its `match_status`, newest `transaction_date` first)
+
 `POST /api/transfers/rematch` → `{ matched }`
 
-`POST /api/transfers/{buffer_id}/ignore` → TransferBufferOut
+`POST /api/transfers/{buffer_id}/ignore` → TransferBufferOut (**404** for an unknown id; **409** when the entry is already `matched`; ignoring twice is a no-op)
 
-`POST /api/transfers/match` `{ buffer_id_a, buffer_id_b }` → `[TransferBufferOut, TransferBufferOut]` (manual link; 409 if either already matched)
+`POST /api/transfers/match` `{ buffer_id_a, buffer_id_b }` → `[TransferBufferOut, TransferBufferOut]` (manual link; **409** when either entry is not `unmatched` (matched or ignored), either transaction is already linked, or both are on the same account; **422** when the two ids are the same; **404** for an unknown id)
 
 ## Partner claims (mobile `/claim` form)
 
-`POST /api/claims` `{ claim_date, amount (>0), merchant, description?, claim_type, paid_by? }` → ClaimOut.
-A `secondary` session always records `paid_by = secondary user`. A `primary` session may set `paid_by` (defaults to secondary — i.e. logging a claim on the partner's behalf). Amounts are rounded half-up to the configured decimals; a `claim_date` in the future or more than 12 months ago is **422**.
+`POST /api/claims` `{ claim_date, amount (>0), merchant, description?, claim_type? (default shared_proportional), paid_by? }` → **201** ClaimOut.
+A `secondary` session always records `paid_by = secondary user`. A `primary` session may set `paid_by` (defaults to secondary — i.e. logging a claim on the partner's behalf); it must be one of the two configured user ids (**422**). Amounts are rounded half-up to the configured decimals; a `claim_date` in the future or more than 12 months ago is **422**; a claim dated in a closed period is **409**.
 
 ClaimOut: `id, period_key, claim_date, paid_by, merchant, description, amount, claim_type, primary_owes, secondary_owes, is_settled, created_at`
 
-`GET /api/claims?period=YYYY-MM&settled=false` → `[ClaimOut]` (both roles)
+`GET /api/claims?period=YYYY-MM&settled=false&limit=200` → `[ClaimOut]` (both roles; newest `claim_date` first, at most `limit` rows, max 1000)
 
-`DELETE /api/claims/{id}` → 204 (primary; secondary may delete their own unsettled claims). When the claim was the only thing filed under its month (no transactions, other claims, uploads, audit reports or settlement snapshot) and the period is open, the empty period is removed with it, so a claim typed with the wrong date leaves no stray month behind.
+`DELETE /api/claims/{id}` → 204 (primary; a secondary session may delete only its own unsettled claims and gets **403** otherwise). **404** for an unknown id; **409** when the claim's period is closed. When the claim was the only thing filed under its month (no transactions, other claims, uploads, audit reports or settlement snapshot) and the period is open, the empty period is removed with it, so a claim typed with the wrong date leaves no stray month behind.
 
 ## Settlement
 
-`GET /api/settlement/{period_key}` → 
+`GET /api/settlement/{period_key}` →
 ```json
 {
   "period_key", "primary_user_id", "secondary_user_id", "primary_ratio", "secondary_ratio",
@@ -219,7 +233,7 @@ ClaimOut: `id, period_key, claim_date, paid_by, merchant, description, amount, c
 ```
 `macro.by_category` is gross debits per category plus a `Partner claims` row when the period has claims, so the rows add up exactly to `household_burn`; categories with no debit are left out. `macro.refunds` is the total of credits in spend categories for the period, reported for display and never deducted from the burn.
 
-`GET /api/metrics/trends?periods=6` → `[ {period_key, household_burn, true_net_expense, net_cash_flow} ]` (oldest first)
+`GET /api/metrics/trends?periods=6&ending=YYYY-MM` → `[ {period_key, household_burn, true_net_expense, net_cash_flow} ]` (oldest first; `periods` 1–36; `ending` is the last month of the window, by default the newest period, **422** when malformed; months with no data are zeros)
 
 `GET /api/metrics/investment` → `{ accounts: [{account_id, total_deposits, total_withdrawals, net_invested_capital, realized_gain}], total_deposits, total_withdrawals, net_invested_capital, realized_gain }`
 

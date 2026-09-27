@@ -128,17 +128,23 @@ CREATE TABLE IF NOT EXISTS transactions (
 
     -- Auditing & Search
     source_file VARCHAR(255),
+    -- The statement upload that brought the line in (its mirror legs and split parts
+    -- carry it too); NULL on lines ingested before uploads were linked.
+    upload_id UUID REFERENCES statement_uploads(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 -- Upgrades for databases created before split transactions existed.
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_split BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS split_parent_id UUID REFERENCES transactions(id) ON DELETE CASCADE;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS split_index INT;
+-- Upgrade for databases created before lines were linked to their upload.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS upload_id UUID REFERENCES statement_uploads(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS ix_transactions_period ON transactions (period_key);
 CREATE INDEX IF NOT EXISTS ix_transactions_account_date ON transactions (account_id, transaction_date);
 CREATE INDEX IF NOT EXISTS ix_transactions_review_status ON transactions (review_status);
 CREATE INDEX IF NOT EXISTS ix_transactions_merchant ON transactions (cleaned_merchant);
 CREATE INDEX IF NOT EXISTS ix_transactions_split_parent ON transactions (split_parent_id);
+CREATE INDEX IF NOT EXISTS ix_transactions_upload ON transactions (upload_id);
 
 -- Vector Memory Store for Agent 2 (Few-Shot Retrieval) ---------------------
 CREATE TABLE IF NOT EXISTS merchant_memory (

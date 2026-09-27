@@ -4,7 +4,7 @@ import re
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,7 @@ from app.database import get_db
 from app.deps import get_effective_config, get_settings
 from app.models import StatementUpload
 from app.schemas import StatementUploadOut, UploadResult
+from app.services import statement_uploads
 from app.services.embeddings import EmbeddingClient
 from app.services.ingestion import AccountResolutionError, DuplicateUploadError, ingest_statement
 from app.services.llm import LLMClient
@@ -100,5 +101,29 @@ def upload_statement(
 
 
 @router.get("", response_model=list[StatementUploadOut])
-def list_uploads(db: Session = Depends(get_db)) -> list[StatementUpload]:
-    return list(db.scalars(select(StatementUpload).order_by(StatementUpload.created_at.desc())).all())
+def list_uploads(db: Session = Depends(get_db)) -> list[StatementUploadOut]:
+    rows = list(db.scalars(select(StatementUpload).order_by(StatementUpload.created_at.desc())).all())
+    deletable = statement_uploads.deletable_flags(db, rows)
+    return [StatementUploadOut.model_validate(row).model_copy(update={"deletable": deletable[row.id]}) for row in rows]
+
+
+@router.delete("/{upload_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_upload(upload_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
+    """Delete an upload and every transaction it brought in, so the file can be uploaded again.
+
+    Its lines, their split parts and mirror legs go with their transfer-buffer rows;
+    a counterpart matched to one of them is unlinked and waits in the buffer again.
+    Periods stay. **409** when any of those lines sits in a closed period, or for an
+    upload recorded before lines were linked whose filename another such upload
+    shares (``deletable: false`` in the listing).
+    """
+    upload = db.get(StatementUpload, upload_id)
+    if upload is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "upload not found")
+    try:
+        statement_uploads.delete_upload(db, upload)
+    except (PeriodClosedError, statement_uploads.UploadNotDeletable) as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
