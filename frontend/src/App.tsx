@@ -4,6 +4,7 @@ import { Layout } from './components/Layout';
 import { ConfigProvider } from './config/ConfigProvider';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { ReviewPage } from './pages/ReviewPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 import { UploadPage } from './pages/UploadPage';
 import { TransfersPage } from './pages/TransfersPage';
@@ -30,6 +31,7 @@ export function App() {
           <Route path="/claim" element={<ClaimPage />} />
           <Route element={<RequireAuth roles={['primary']} />}>
             <Route path="/" element={<DashboardPage />} />
+            <Route path="/review" element={<ReviewPage />} />
             <Route path="/transactions" element={<TransactionsPage />} />
             <Route path="/upload" element={<UploadPage />} />
             <Route path="/transfers" element={<TransfersPage />} />

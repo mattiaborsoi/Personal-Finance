@@ -177,6 +177,11 @@ export interface StatementOut {
   parser: string;
   transaction_count: number;
   created_at: string;
+  /**
+   * False for an upload recorded before lines were linked to uploads whose filename
+   * another such upload shares: its lines cannot be told apart, so DELETE answers 409.
+   */
+  deletable: boolean;
 }
 
 export interface TransactionOut {
@@ -517,6 +522,40 @@ export interface SystemInfo {
 export interface UpdateStarted {
   state: 'running';
   started_at: string;
+}
+
+/**
+ * `transactions` empties the ledger (transactions, uploads, audit reports, settlement
+ * snapshots, periods without claims) and keeps claims, merchant memory, accounts and
+ * settings; `everything` empties all of it and sets the accounts up again from config.yaml.
+ */
+export type ResetScope = 'transactions' | 'everything';
+
+/** The phrase `confirm` must carry, exactly, for each scope. */
+export const RESET_PHRASES: Record<ResetScope, string> = {
+  transactions: 'DELETE TRANSACTIONS',
+  everything: 'DELETE EVERYTHING',
+};
+
+export interface ResetBody {
+  scope: ResetScope;
+  confirm: string;
+}
+
+/** Rows removed, per kind. */
+export interface ResetCounts {
+  transactions: number;
+  uploads: number;
+  claims: number;
+  periods: number;
+  memory: number;
+  accounts: number;
+  settings: number;
+}
+
+export interface ResetOut {
+  scope: ResetScope;
+  deleted: ResetCounts;
 }
 
 /** "hash" turns merchants into vectors offline, without an AI call. */
@@ -977,6 +1016,12 @@ export const api = {
     return request<UploadResult>('POST', '/statements/upload', { form });
   },
   listStatements: () => request<StatementOut[]>('GET', '/statements'),
+  /**
+   * Removes the upload with every line it brought in (split parts and mirror legs included),
+   * so the same file can be uploaded again. 409 while a line sits in a closed period, or for
+   * an upload with `deletable: false`; 404 unknown.
+   */
+  deleteStatement: (id: string) => request<void>('DELETE', `/statements/${enc(id)}`),
 
   // Transactions
   listTransactions: (query: TransactionQuery) =>
@@ -1037,6 +1082,8 @@ export const api = {
   checkForUpdates: () => request<SystemInfo>('POST', '/system/check'),
   /** 202 once started; 409 when an update is already running, 503 when the updater is unavailable. */
   startUpdate: () => request<UpdateStarted>('POST', '/system/update'),
+  /** 422 when `confirm` is not the scope's phrase (`RESET_PHRASES`); logins stay valid either way. */
+  resetSystem: (body: ResetBody) => request<ResetOut>('POST', '/system/reset', { body }),
 
   // AI setup (primary only)
   getAi: () => request<AiSettings>('GET', '/ai'),

@@ -9,6 +9,7 @@ import { SUPPORTED_FORMATS, UploadDropzone } from '../components/UploadDropzone'
 import { UploadHistory } from '../components/UploadHistory';
 import { UploadResultCard } from '../components/UploadResultCard';
 import { useConfig } from '../config/ConfigContext';
+import { useRefreshReviewBadge } from '../hooks/reviewBadge';
 import { useAsync } from '../hooks/useAsync';
 import { accountLabel } from '../lib/format';
 import { btnPrimary, btnSecondary, btnSmall, cardInset, cx, labelBase, selectBase } from '../lib/ui';
@@ -55,6 +56,7 @@ export function UploadPage() {
   // Archived accounts stay in the config for history but take no new statements.
   const activeAccounts = config.accounts.filter((a) => a.is_active !== false);
   const history = useAsync(() => api.listStatements(), 'statements');
+  const refreshReviewBadge = useRefreshReviewBadge();
   const [file, setFile] = useState<File | null>(null);
   const [accountId, setAccountId] = useState('');
   const [busy, setBusy] = useState(false);
@@ -75,11 +77,19 @@ export function UploadPage() {
       setResult(res);
       setFile(null);
       history.reload();
+      refreshReviewBadge();
     } catch (err) {
       setError(toUploadError(err));
     } finally {
       setBusy(false);
     }
+  }
+
+  /** A deleted upload leaves the list, and takes its import summary with it. */
+  function uploadDeleted(id: string) {
+    history.reload();
+    refreshReviewBadge();
+    setResult((prev) => (prev && prev.upload_id === id ? null : prev));
   }
 
   return (
@@ -154,7 +164,7 @@ export function UploadPage() {
             <LoadingState rows={4} />
           </div>
         )}
-        {history.data && <UploadHistory statements={history.data} />}
+        {history.data && <UploadHistory statements={history.data} onDeleted={uploadDeleted} />}
       </Card>
     </div>
   );

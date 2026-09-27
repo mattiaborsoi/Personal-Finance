@@ -194,6 +194,7 @@ export function statement(overrides: Partial<StatementOut> = {}): StatementOut {
     parser: 'amex_pdf',
     transaction_count: 12,
     created_at: '2026-08-02T09:15:00Z',
+    deletable: true,
     ...overrides,
   };
 }

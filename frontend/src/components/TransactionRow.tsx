@@ -1,10 +1,21 @@
-import { CircleAlert, CornerDownRight, Scissors, Trash2, Ungroup } from 'lucide-react';
-import { useState } from 'react';
+import { CircleAlert, CornerDownRight, Pencil, Scissors, Trash2, Ungroup } from 'lucide-react';
+import { useRef, useState, type KeyboardEvent } from 'react';
 import { UNCATEGORIZED, type ClaimType, type TransactionOut, type TransactionPart, type TransactionPatch } from '../api';
 import { useConfig, useNames } from '../config/ConfigContext';
 import { formatDate } from '../lib/dates';
 import { accountLabel, categoryLabel, categoryOptions, claimTypeLabel, plural, reviewStatusLabel } from '../lib/format';
-import { btnIcon, chipSoft, cx, focusRing, selectCategory, selectCompact, tdBase, trHover } from '../lib/ui';
+import {
+  btnIcon,
+  btnIconSmall,
+  chipSoft,
+  cx,
+  focusRing,
+  inputCompact,
+  selectCategory,
+  selectCompact,
+  tdBase,
+  trHover,
+} from '../lib/ui';
 import { Badge, type BadgeTone } from './Badge';
 import { ConfirmButton } from './ConfirmButton';
 import { MerchantAvatar } from './MerchantAvatar';
@@ -65,6 +76,12 @@ export function TransactionRow({
   const [saving, setSaving] = useState(false);
   const [savingPart, setSavingPart] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
+  /** The name being typed while the merchant is renamed inline; null when not renaming. */
+  const [renameDraft, setRenameDraft] = useState<string | null>(null);
+  /** Set once Enter, Escape or blur has ended a rename, so the blur that follows the swap does not save twice. */
+  const renameEnded = useRef(false);
+  /** Focus goes back to the rename button when the rename ended from the keyboard. */
+  const refocusRename = useRef(false);
 
   async function patch(change: TransactionPatch) {
     setSaving(true);
@@ -86,6 +103,31 @@ export function TransactionRow({
 
   const id = tx.id;
   const merchant = tx.cleaned_merchant || tx.raw_description;
+  // A split part never names itself: its parent carries the merchant (the server refuses the rename with 409).
+  const canRename = !tx.split_parent_id;
+
+  function startRename() {
+    if (saving) return;
+    renameEnded.current = false;
+    setRenameDraft(merchant);
+  }
+
+  /** Saves a changed, non-blank name through the row's PATCH (its errors show under the row); anything else just closes. */
+  function endRename(save: boolean) {
+    if (renameEnded.current || renameDraft === null) return;
+    renameEnded.current = true;
+    const name = renameDraft.trim();
+    setRenameDraft(null);
+    if (save && name && name !== merchant) void patch({ cleaned_merchant: name });
+  }
+
+  function renameKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== 'Enter' && event.key !== 'Escape') return;
+    event.preventDefault();
+    refocusRename.current = true;
+    endRename(event.key === 'Enter');
+  }
+
   const hasRawLine = Boolean(tx.raw_description) && tx.raw_description !== merchant;
   const categories = categoryOptions(config.categories, tx.category);
   const locked = saving || readOnly;
@@ -99,15 +141,53 @@ export function TransactionRow({
             <MerchantAvatar name={merchant} className="mt-0.5" />
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-2">
-                <button
-                  type="button"
-                  className={cx('min-w-0 max-w-[18rem] truncate rounded text-left font-semibold text-ink hover:underline', focusRing)}
-                  title={tx.raw_description}
-                  aria-expanded={showRaw}
-                  onClick={() => setShowRaw((s) => !s)}
-                >
-                  {merchant}
-                </button>
+                {renameDraft !== null ? (
+                  <input
+                    className={cx(inputCompact, 'w-full max-w-[18rem] font-semibold')}
+                    aria-label={`New name for ${merchant}`}
+                    value={renameDraft}
+                    maxLength={255}
+                    autoFocus
+                    onFocus={(e) => e.currentTarget.select()}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onKeyDown={renameKeyDown}
+                    onBlur={() => endRename(true)}
+                  />
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className={cx(
+                        'min-w-0 max-w-[18rem] truncate rounded text-left font-semibold text-ink hover:underline',
+                        focusRing,
+                      )}
+                      title={tx.raw_description}
+                      aria-expanded={showRaw}
+                      onClick={() => setShowRaw((s) => !s)}
+                    >
+                      {merchant}
+                    </button>
+                    {canRename && (
+                      <button
+                        type="button"
+                        ref={(el) => {
+                          if (el && refocusRename.current) {
+                            refocusRename.current = false;
+                            el.focus();
+                          }
+                        }}
+                        className={cx(btnIconSmall, 'self-center')}
+                        aria-label={`Rename ${merchant}`}
+                        title={readOnly ? 'This period is closed' : 'Rename the merchant'}
+                        // Not locked while saving, so focus can come back here after Enter; a click then is ignored.
+                        disabled={readOnly}
+                        onClick={startRename}
+                      >
+                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                      </button>
+                    )}
+                  </>
+                )}
                 <span className="shrink-0 text-xs text-ink-3 tabular">{formatDate(tx.transaction_date)}</span>
               </div>
               {hasRawLine && (

@@ -59,9 +59,10 @@ Rules:
 * Buttons: `btnPrimary` (brand), `btnSecondary` (surface + hairline), `btnGhost`,
   `btnDanger` (quiet `critical/10` wash — destructive actions are calm until the
   inline confirm step), `btnIcon` (32px square, icon only, needs `aria-label`),
-  `btnSmall` modifier.
+  `btnIconSmall` (24px, inline with a line of text, e.g. the rename pencil beside a
+  merchant), `btnSmall` modifier.
 * Inputs/selects: `inputBase` / `selectBase` (add `inputTall` for the 44px mobile claim
-  form); labels `labelBase`; checkboxes `checkboxBase`; radios `radioBase`; text links
+  form; `inputCompact` is the 32px field for editing a value in place inside a row); labels `labelBase`; checkboxes `checkboxBase`; radios `radioBase`; text links
   `linkBase`; any custom control includes `focusRing` (the shared focus-visible ring);
   `inputInvalid` on a control whose value cannot be sent, always with `aria-invalid`.
 * Forms: `Field` (label over a control; `help` under it gives way to a `problem`;
@@ -91,6 +92,15 @@ Rules:
   so first/last cells line up with the header inside `<Card flush>`.
 * Row controls with a short visible label ("Approve", "Delete") name the row for
   screen readers via `aria-label` ("Approve Waitrose"), as the selects already do.
+* Renaming in place: a `btnIconSmall` pencil ("Rename Waitrose") swaps the name for an
+  `inputCompact` field pre-filled with it; Enter or blur saves a changed, non-blank
+  value through the row's own PATCH (its errors show under the row), Escape cancels,
+  and focus returns to the pencil after Enter or Escape.
+* Navigation counts: a nav item may carry a small `warning/15` count pill (the lines
+  waiting on Review) with the count spelt out for screen readers ("Review (12
+  pending)"). It comes from one request in `Layout` that pages keep current by sharing
+  what they load (`useSharePeriods`) or asking once after a change
+  (`useRefreshReviewBadge`); never poll for it.
 * Messages: `Notice` (neutral/good/warning/critical wash + icon; closed-period
   notes, confirmations), `ErrorMessage` (critical, with Retry/Dismiss),
   `EmptyState` (icon circle, title, hint, action), `LoadingState` (inline
@@ -101,6 +111,13 @@ Rules:
   `ConfirmPrompt` (exported from `ConfirmButton.tsx`), the same Confirm · Cancel
   step on its own for a form whose first step is its submit button (the claim
   form's "That is £1,500.00. Log it?").
+* Danger zone: irreversible, whole-installation actions sit in a last card titled
+  "Danger zone" (`accentClass="bg-critical"`, a `TriangleAlert` icon) with quiet
+  `btnDanger` openers. Each opens an inline panel that lists what goes and what stays,
+  then asks for a typed phrase ("DELETE TRANSACTIONS"); Confirm is enabled only when
+  the phrase matches exactly, and a server refusal shows inside the panel. A result
+  that ends on another page travels there as location state (`noticeState` in
+  `src/lib/navNotice.ts`) and is shown as a dismissible `Notice tone="good"`.
 * Dialogs and tabs: `Modal` (portal, backdrop, labelled `role="dialog"`, focus
   trap, Escape to close, focus returned to the opener; `busy` locks closing while a
   request is in flight; `size` `md` for a form, `lg` for a wide row editor); build

@@ -133,7 +133,8 @@ describe('<SettlementBanner />', () => {
     expect(await screen.findByTestId('settlement-headline')).toHaveTextContent('Nothing approved yet');
     expect(screen.queryByText('Settled up')).not.toBeInTheDocument();
     expect(screen.getByTestId('settlement-awaiting')).toHaveTextContent('3 lines are waiting for review');
-    expect(screen.getByRole('link', { name: 'Review the queue' })).toHaveAttribute('href', '#approval-queue');
+    // The queue has its own page now, on the same period.
+    expect(screen.getByRole('link', { name: 'Review the queue' })).toHaveAttribute('href', '/review?period=2026-03');
     // The zero sums and the empty line list would only dress up a figure that does not exist.
     expect(screen.queryByText("Sam's share of shared items Alex paid")).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /show 0 lines/i })).not.toBeInTheDocument();

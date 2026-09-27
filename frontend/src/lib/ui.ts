@@ -16,6 +16,8 @@ export const btnDanger = `${btnBase} border-transparent bg-critical/10 text-crit
 export const btnGhost = `${btnBase} border-transparent bg-transparent text-ink-2 hover:bg-surface-2 hover:text-ink`;
 export const btnSmall = 'px-2.5 py-1.5 text-xs';
 export const btnIcon = `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`;
+/** 24px icon button that sits inline with a line of text (the rename pencil beside a merchant name); needs `aria-label`. */
+export const btnIconSmall = `inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-transparent text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`;
 
 /** Controls carry a `border-control` edge (3:1 against the card) so the field is visible without relying on its background. */
 const controlBase = `rounded-lg border border-control bg-surface text-ink transition-colors placeholder:text-ink-3 hover:border-ink-3 disabled:bg-surface-2 disabled:text-ink-3 ${focusRing}`;
@@ -25,6 +27,8 @@ export const selectBase = `${inputBase} cursor-pointer pr-8`;
 export const inputInvalid = 'border-critical hover:border-critical';
 /** 32px select for inline row editing (matches `btnSmall` buttons and `btnIcon`); set its width explicitly. */
 export const selectCompact = `block h-8 cursor-pointer py-1 pl-2.5 pr-7 text-xs ${controlBase}`;
+/** 32px text input for editing a value in place inside a row (a merchant name); set its width explicitly. */
+export const inputCompact = `block h-8 px-2.5 py-1 text-sm ${controlBase}`;
 /**
  * Width for a row's category select: as wide as its longest option (so
  * "Subscriptions:Software" is not clipped), never narrower than the claim-type

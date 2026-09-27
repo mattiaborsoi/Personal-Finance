@@ -1,10 +1,12 @@
 import { Calendar, ChevronDown, ChevronUp, CircleCheck, HandCoins, Lock, Receipt, Scale } from 'lucide-react';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, errorMessage, type PeriodOut } from '../api';
 import { useCurrency, useNames } from '../config/ConfigContext';
 import { useAsync } from '../hooks/useAsync';
 import { formatDate, periodLabel } from '../lib/dates';
 import { formatPercent, plural, ratioToPercent } from '../lib/format';
+import { reviewPath } from '../lib/review';
 import { awaitingFirstApproval, settlementDirection, settlementHeadline, snapshotDiffers } from '../lib/settlement';
 import { btnGhost, btnSmall, cardBase, cardInset, chip, cx, eyebrow, linkBase } from '../lib/ui';
 import { ConfirmButton } from './ConfirmButton';
@@ -121,9 +123,9 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
                   <p className="mt-3 text-sm text-ink-2" data-testid="settlement-awaiting">
                     There is no figure until something is approved.{' '}
                     {plural(data.pending_review_count, 'line is', 'lines are')} waiting for review.{' '}
-                    <a href="#approval-queue" className={linkBase}>
+                    <Link to={reviewPath(period)} className={linkBase}>
                       Review the queue
-                    </a>
+                    </Link>
                   </p>
                 )}
                 <ul className="mt-4 flex flex-wrap gap-2">

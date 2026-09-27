@@ -1,9 +1,12 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
-import type { SystemInfo } from '../api';
+import { useLocation } from 'react-router-dom';
+import { describe, expect, it, vi } from 'vitest';
+import type { ResetCounts, SystemInfo } from '../api';
+import { App } from '../App';
+import { ReloadConfigContext } from '../config/ConfigContext';
 import { COMMIT_LATEST, systemInfo } from '../test/fixtures';
-import { jsonResponse, mockFetch, renderWithProviders, type RecordedCall } from '../test/utils';
+import { fixtureConfig, jsonResponse, mockFetch, renderWithProviders, type RecordedCall } from '../test/utils';
 import {
   MANUAL_UPDATE_COMMANDS,
   SystemPanel,
@@ -344,5 +347,209 @@ describe('<SystemPanel />', () => {
     expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Update now' })).toBeEnabled();
     expect(systemGets(calls)).toBe(polls);
+  });
+});
+
+const NONE: ResetCounts = { transactions: 0, uploads: 0, claims: 0, periods: 0, memory: 0, accounts: 0, settings: 0 };
+
+/** Shows where the router is, since a MemoryRouter never touches window.location. */
+function LocationProbe() {
+  const location = useLocation();
+  return <span data-testid="location">{`${location.pathname}${location.search}`}</span>;
+}
+
+function resets(calls: RecordedCall[]): RecordedCall[] {
+  return calls.filter((c) => c.method === 'POST' && c.url === '/api/system/reset');
+}
+
+/** The panel with a spy for `useReloadConfig()`, and a probe of the router's location. */
+function renderDangerZone(reload = vi.fn(() => Promise.resolve())) {
+  renderWithProviders(
+    <ReloadConfigContext.Provider value={reload}>
+      <SystemPanel pollIntervalMs={10} />
+      <LocationProbe />
+    </ReloadConfigContext.Provider>,
+    { route: '/settings?tab=system' },
+  );
+  return reload;
+}
+
+describe('<SystemPanel /> danger zone', () => {
+  it('sits at the foot of the panel, quiet, with the way to remove one statement instead', async () => {
+    mockFetch(({ method, url }) => (method === 'GET' && url === '/api/system' ? jsonResponse(systemInfo()) : undefined));
+
+    renderDangerZone();
+    await screen.findByText('Up to date');
+
+    const zone = screen.getByRole('region', { name: 'Danger zone' });
+    expect(within(zone).getByRole('button', { name: 'Delete all transactions' })).toHaveAttribute('aria-expanded', 'false');
+    expect(within(zone).getByRole('button', { name: 'Reset Settl to day one' })).toHaveAttribute('aria-expanded', 'false');
+    expect(within(zone).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(zone).toHaveTextContent('To remove one statement, use Delete under Previous uploads on the Upload page.');
+    expect(within(zone).getByRole('link', { name: 'Upload page' })).toHaveAttribute('href', '/upload');
+    // Last on the page.
+    const regions = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'));
+    expect(regions[regions.length - 1]).toBe('Danger zone');
+  });
+
+  it('is there even when the version information does not load', async () => {
+    mockFetch(({ method, url }) =>
+      method === 'GET' && url === '/api/system' ? jsonResponse({ detail: 'GitHub is down' }, 500) : undefined,
+    );
+
+    renderDangerZone();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('GitHub is down');
+    expect(screen.getByRole('button', { name: 'Delete all transactions' })).toBeEnabled();
+  });
+
+  it('deletes all transactions once the phrase is typed exactly, then shows the counts and reloads the config', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/system') return jsonResponse(systemInfo());
+      if (method === 'POST' && url === '/api/system/reset') {
+        return jsonResponse({ scope: 'transactions', deleted: { ...NONE, transactions: 412, uploads: 9, periods: 3 } });
+      }
+      return undefined;
+    });
+
+    const reload = renderDangerZone();
+    await user.click(await screen.findByRole('button', { name: 'Delete all transactions' }));
+    expect(screen.getByRole('button', { name: 'Delete all transactions' })).toHaveAttribute('aria-expanded', 'true');
+
+    const form = screen.getByRole('form', { name: 'Confirm: Delete all transactions' });
+    // It says exactly what goes and what stays.
+    expect(form).toHaveTextContent('Every transaction, split part and transfer leg');
+    expect(form).toHaveTextContent('Every statement upload');
+    expect(form).toHaveTextContent('Periods with no partner claims in them');
+    expect(form).toHaveTextContent('Partner claims, and the periods they are in');
+    expect(form).toHaveTextContent('Merchant memory');
+    expect(form).toHaveTextContent('Settings: household, categories, rules and AI');
+
+    const phrase = within(form).getByLabelText('Type DELETE TRANSACTIONS to confirm');
+    const confirm = within(form).getByRole('button', { name: 'Confirm' });
+    expect(confirm).toBeDisabled();
+    await user.type(phrase, 'delete transactions');
+    expect(confirm).toBeDisabled();
+    await user.clear(phrase);
+    await user.type(phrase, 'DELETE TRANSACTION');
+    expect(confirm).toBeDisabled();
+    await user.type(phrase, 'S');
+    expect(confirm).toBeEnabled();
+    expect(resets(calls)).toEqual([]);
+
+    await user.click(confirm);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Deleted 412 transactions, 9 uploads and 3 periods.');
+    expect(resets(calls)).toHaveLength(1);
+    expect(resets(calls)[0].body).toEqual({ scope: 'transactions', confirm: 'DELETE TRANSACTIONS' });
+    expect(resets(calls)[0].headers.Authorization).toBe('Bearer primary-token');
+    expect(reload).toHaveBeenCalledTimes(1);
+    // The confirmation closes; this scope stays on the page.
+    expect(screen.queryByRole('form')).not.toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=system');
+  });
+
+  it('shows the server’s 422 when it does not accept the phrase, and keeps the confirmation open', async () => {
+    const user = userEvent.setup();
+    const reload = vi.fn(() => Promise.resolve());
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/system') return jsonResponse(systemInfo());
+      if (method === 'POST' && url === '/api/system/reset') {
+        return jsonResponse({ detail: 'type DELETE EVERYTHING to confirm' }, 422);
+      }
+      return undefined;
+    });
+
+    renderDangerZone(reload);
+    await user.click(await screen.findByRole('button', { name: 'Reset Settl to day one' }));
+    const form = screen.getByRole('form', { name: 'Confirm: Reset Settl to day one' });
+    await user.type(within(form).getByLabelText('Type DELETE EVERYTHING to confirm'), 'DELETE EVERYTHING{Enter}');
+
+    expect(await within(form).findByRole('alert')).toHaveTextContent('Type DELETE EVERYTHING to confirm');
+    expect(within(form).getByRole('button', { name: 'Confirm' })).toBeEnabled();
+    expect(reload).not.toHaveBeenCalled();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=system');
+  });
+
+  it('cancels without a request, and opening one action closes the other', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockFetch(({ method, url }) => (method === 'GET' && url === '/api/system' ? jsonResponse(systemInfo()) : undefined));
+
+    renderDangerZone();
+    await user.click(await screen.findByRole('button', { name: 'Delete all transactions' }));
+    await user.type(screen.getByLabelText('Type DELETE TRANSACTIONS to confirm'), 'DELETE TRANSACTIONS');
+    await user.click(screen.getByRole('button', { name: 'Reset Settl to day one' }));
+
+    expect(screen.queryByLabelText('Type DELETE TRANSACTIONS to confirm')).not.toBeInTheDocument();
+    const form = screen.getByRole('form', { name: 'Confirm: Reset Settl to day one' });
+    expect(form).toHaveTextContent('Both logins: the passwords live in .env');
+    expect(within(form).getByRole('button', { name: 'Confirm' })).toBeDisabled();
+    await user.click(within(form).getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByRole('form')).not.toBeInTheDocument();
+    expect(resets(calls)).toEqual([]);
+  });
+
+  it('resets everything, reloads the config and lands on the dashboard with the counts', async () => {
+    const user = userEvent.setup();
+    let wiped = false;
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/config') return jsonResponse(fixtureConfig);
+      if (method === 'GET' && url === '/api/system') return jsonResponse(systemInfo());
+      if (method === 'GET' && url === '/api/periods') return jsonResponse([]);
+      if (method === 'POST' && url === '/api/system/reset') {
+        wiped = true;
+        return jsonResponse({
+          scope: 'everything',
+          deleted: { transactions: 412, uploads: 9, claims: 4, periods: 6, memory: 30, accounts: 6, settings: 4 },
+        });
+      }
+      return undefined;
+    });
+
+    renderWithProviders(<App />, { route: '/settings?tab=system' });
+    await user.click(await screen.findByRole('button', { name: 'Reset Settl to day one' }));
+    await user.type(screen.getByLabelText('Type DELETE EVERYTHING to confirm'), 'DELETE EVERYTHING');
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Dashboard' })).toBeInTheDocument();
+    expect(wiped).toBe(true);
+    expect(resets(calls)[0].body).toEqual({ scope: 'everything', confirm: 'DELETE EVERYTHING' });
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Settl is back to day one. Deleted 412 transactions, 9 uploads, 4 partner claims, 6 periods, 30 remembered merchants, 6 accounts and 4 saved settings. The accounts in config.yaml are set up again.',
+    );
+    // The config was fetched again after the reset, before leaving Settings.
+    const configFetches = calls.filter((c) => c.method === 'GET' && c.url === '/api/config');
+    expect(configFetches).toHaveLength(2);
+    expect(calls.indexOf(configFetches[1])).toBeGreaterThan(calls.indexOf(resets(calls)[0]));
+    expect(await screen.findByText('Upload a statement to get started, or type a period above.')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('stays on Settings and says so when the config cannot be reloaded after a reset', async () => {
+    const user = userEvent.setup();
+    const reload = vi.fn(() => Promise.reject(new Error('Could not reach the server.')));
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/system') return jsonResponse(systemInfo());
+      if (method === 'POST' && url === '/api/system/reset') {
+        return jsonResponse({ scope: 'everything', deleted: { ...NONE, transactions: 2, accounts: 6 } });
+      }
+      return undefined;
+    });
+
+    renderDangerZone(reload);
+    await user.click(await screen.findByRole('button', { name: 'Reset Settl to day one' }));
+    await user.type(screen.getByLabelText('Type DELETE EVERYTHING to confirm'), 'DELETE EVERYTHING');
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Settl is back to day one. Deleted 2 transactions and 6 accounts.');
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Reset, but the rest of Settl shows the old settings until you reload the page: Could not reach the server.',
+    );
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=system');
   });
 });

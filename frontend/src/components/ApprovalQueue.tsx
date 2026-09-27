@@ -15,7 +15,7 @@ interface Props {
   period: string;
   /** The period is closed: list the queue but allow no approvals. */
   closed?: boolean;
-  /** Called after any approval succeeds so the rest of the dashboard can refresh. */
+  /** Called after any approval succeeds so the page can count the periods again. */
   onChanged?: () => void;
 }
 

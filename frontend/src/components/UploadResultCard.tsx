@@ -4,6 +4,7 @@ import type { UploadResult } from '../api';
 import { useConfig } from '../config/ConfigContext';
 import { periodRangeLabel } from '../lib/dates';
 import { accountLabel } from '../lib/format';
+import { reviewPath } from '../lib/review';
 import { btnSecondary, btnSmall, cx } from '../lib/ui';
 import { Notice } from './Notice';
 import { StatTile } from './StatTile';
@@ -49,11 +50,8 @@ export function UploadResultCard({ result }: Props) {
         </Notice>
       )}
       {result.pending_review > 0 && (
-        <Link
-          to={`/?period=${encodeURIComponent(result.period_key)}`}
-          className={cx(btnSecondary, btnSmall, 'mt-4')}
-        >
-          Review the {result.pending_review} pending on the dashboard
+        <Link to={reviewPath(result.period_key)} className={cx(btnSecondary, btnSmall, 'mt-4')}>
+          Review the {result.pending_review} pending
           <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
         </Link>
       )}

@@ -4,6 +4,7 @@ import {
   CirclePlus,
   HandCoins,
   LayoutDashboard,
+  ListChecks,
   Receipt,
   Settings,
   Upload,
@@ -11,6 +12,9 @@ import {
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import type { Role } from '../api';
+import { periodLabel } from '../lib/dates';
+import { plural } from '../lib/format';
+import { reviewPath } from '../lib/review';
 import { cx, focusRing } from '../lib/ui';
 
 interface NavItem {
@@ -20,8 +24,11 @@ interface NavItem {
   icon: LucideIcon;
 }
 
+const REVIEW_PATH = '/review';
+
 const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Dashboard', roles: ['primary'], icon: LayoutDashboard },
+  { to: REVIEW_PATH, label: 'Review', roles: ['primary'], icon: ListChecks },
   { to: '/transactions', label: 'Transactions', roles: ['primary'], icon: Receipt },
   { to: '/upload', label: 'Upload statement', roles: ['primary'], icon: Upload },
   { to: '/transfers', label: 'Transfers', roles: ['primary'], icon: ArrowLeftRight },
@@ -34,17 +41,23 @@ const NAV_ITEMS: NavItem[] = [
 interface Props {
   role: Role;
   onNavigate?: () => void;
+  /** The period the Review link opens on and counts (see `reviewBadge`); null for the page's default. */
+  reviewPeriod?: string | null;
+  /** Lines waiting for review in that period; the badge shows only above zero. */
+  reviewCount?: number;
 }
 
-export function NavLinks({ role, onNavigate }: Props) {
+export function NavLinks({ role, onNavigate, reviewPeriod = null, reviewCount = 0 }: Props) {
   return (
     <ul className="flex flex-col gap-0.5">
       {NAV_ITEMS.filter((item) => item.roles.includes(role)).map((item) => {
         const Icon = item.icon;
+        const isReview = item.to === REVIEW_PATH;
+        const count = isReview ? reviewCount : 0;
         return (
           <li key={item.to}>
             <NavLink
-              to={item.to}
+              to={isReview ? reviewPath(reviewPeriod) : item.to}
               end={item.to === '/'}
               onClick={onNavigate}
               className={({ isActive }) =>
@@ -65,6 +78,16 @@ export function NavLinks({ role, onNavigate }: Props) {
                     aria-hidden="true"
                   />
                   {item.label}
+                  {count > 0 && ' '}
+                  {count > 0 && (
+                    <span
+                      className="ml-auto rounded-full bg-warning/15 px-1.5 py-px text-2xs font-semibold leading-4 tabular text-warning-ink"
+                      title={`${plural(count, 'line')} waiting for review${reviewPeriod ? ` in ${periodLabel(reviewPeriod)}` : ''}`}
+                    >
+                      <span aria-hidden="true">{count}</span>
+                      <span className="sr-only">{`(${count} pending)`}</span>
+                    </span>
+                  )}
                 </>
               )}
             </NavLink>

@@ -1,9 +1,10 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { PeriodOut } from '../api';
+import { TransactionRow } from '../components/TransactionRow';
 import { ID_OCADO, ID_PART_A, ID_PART_B, ID_UBER, part, transaction } from '../test/fixtures';
-import { jsonResponse, mockFetch, renderWithProviders } from '../test/utils';
+import { jsonResponse, mockFetch, renderWithProviders, type RecordedCall } from '../test/utils';
 import { TransactionsPage } from './TransactionsPage';
 
 const rows = [
@@ -299,5 +300,168 @@ describe('<TransactionsPage />', () => {
     await user.selectOptions(screen.getByLabelText('Category for Ocado'), 'Groceries');
 
     expect(await screen.findByRole('alert')).toHaveTextContent('This period is closed, so it can no longer be edited.');
+  });
+});
+
+function patches(calls: RecordedCall[]): RecordedCall[] {
+  return calls.filter((c) => c.method === 'PATCH');
+}
+
+describe('renaming a merchant inline', () => {
+  it('saves the new name on Enter and keeps the statement description underneath', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse([]);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      if (method === 'PATCH' && url === `/api/transactions/${ID_OCADO}`) {
+        return jsonResponse(transaction({ id: ID_OCADO, cleaned_merchant: 'Ocado Retail', review_status: 'auto_approved' }));
+      }
+      return undefined;
+    });
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions' });
+    await user.click(await screen.findByRole('button', { name: 'Rename Ocado' }));
+
+    const input = screen.getByRole('textbox', { name: 'New name for Ocado' });
+    expect(input).toHaveValue('Ocado');
+    expect(input).toHaveFocus();
+    // The name is swapped for the field; the raw line stays where it was.
+    expect(screen.queryByRole('button', { name: 'Ocado' })).not.toBeInTheDocument();
+    expect(screen.getByText('OCADO RETAIL LTD LONDON')).toBeInTheDocument();
+
+    await user.clear(input);
+    await user.type(input, '  Ocado Retail {Enter}');
+
+    await waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(patches(calls)[0].url).toBe(`/api/transactions/${ID_OCADO}`);
+    expect(patches(calls)[0].body).toEqual({ cleaned_merchant: 'Ocado Retail' });
+    expect(await screen.findByRole('button', { name: 'Ocado Retail' })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: /New name for/ })).not.toBeInTheDocument();
+    expect(screen.getByText('OCADO RETAIL LTD LONDON')).toBeInTheDocument();
+    // Focus comes back to the pencil, and the blur of the removed field saved nothing more.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Rename Ocado Retail' })).toHaveFocus());
+    expect(patches(calls)).toHaveLength(1);
+  });
+
+  it('cancels on Escape without a request', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse([]);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      return undefined;
+    });
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions' });
+    await user.click(await screen.findByRole('button', { name: 'Rename Ocado' }));
+    await user.type(screen.getByRole('textbox', { name: 'New name for Ocado' }), 'Waitrose{Escape}');
+
+    expect(screen.queryByRole('textbox', { name: 'New name for Ocado' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Ocado' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Rename Ocado' })).toHaveFocus();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(patches(calls)).toEqual([]);
+  });
+
+  it('saves on blur, and sends nothing for a blank or unchanged name', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse([]);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      if (method === 'PATCH' && url === `/api/transactions/${ID_UBER}`) {
+        return jsonResponse(transaction({ id: ID_UBER, cleaned_merchant: 'Uber Eats', raw_description: 'UBER *TRIP', amount: '-12.00' }));
+      }
+      return undefined;
+    });
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions' });
+
+    // Unchanged, then blank: both just close the field.
+    await user.click(await screen.findByRole('button', { name: 'Rename Uber' }));
+    await user.keyboard('{Enter}');
+    await user.click(screen.getByRole('button', { name: 'Rename Uber' }));
+    await user.clear(screen.getByRole('textbox', { name: 'New name for Uber' }));
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('button', { name: 'Uber' })).toBeInTheDocument();
+    expect(patches(calls)).toEqual([]);
+
+    // A changed name is saved when focus moves on.
+    await user.click(screen.getByRole('button', { name: 'Rename Uber' }));
+    await user.clear(screen.getByRole('textbox', { name: 'New name for Uber' }));
+    await user.type(screen.getByRole('textbox', { name: 'New name for Uber' }), 'Uber Eats');
+    await user.click(screen.getByLabelText('Search'));
+
+    await waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(patches(calls)[0].body).toEqual({ cleaned_merchant: 'Uber Eats' });
+    expect(await screen.findByRole('button', { name: 'Uber Eats' })).toBeInTheDocument();
+  });
+
+  it('shows the refusal under the row and keeps the old name', async () => {
+    const user = userEvent.setup();
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse([]);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      if (method === 'PATCH') return jsonResponse({ detail: 'period 2026-03 is closed' }, 409);
+      return undefined;
+    });
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions' });
+    await user.click(await screen.findByRole('button', { name: 'Rename Ocado' }));
+    await user.type(screen.getByRole('textbox', { name: 'New name for Ocado' }), ' Retail{Enter}');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('This period is closed, so it can no longer be edited.');
+    expect(screen.getByRole('button', { name: 'Ocado' })).toBeInTheDocument();
+  });
+
+  it('offers the rename on a split parent only, never on its parts', async () => {
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse([]);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: splitRows, total: 2 });
+      return undefined;
+    });
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions' });
+    await screen.findByRole('button', { name: 'Ocado' });
+
+    expect(screen.getByLabelText('Category for Ocado part 2')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^Rename / }).map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Rename Ocado',
+      'Rename Uber',
+    ]);
+  });
+
+  it('gives a row that is itself a split part no rename button', () => {
+    mockFetch(() => undefined);
+    renderWithProviders(
+      <table>
+        <tbody>
+          <TransactionRow
+            transaction={transaction({ id: ID_PART_A, split_parent_id: ID_OCADO, cleaned_merchant: 'Ocado' })}
+            onPatch={vi.fn()}
+            onDelete={vi.fn()}
+            onSplit={vi.fn()}
+            onUnsplit={vi.fn()}
+            onPatchPart={vi.fn()}
+          />
+        </tbody>
+      </table>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Ocado' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Rename Ocado' })).not.toBeInTheDocument();
+  });
+
+  it('disables the rename in a closed period', async () => {
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse(periods);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      return undefined;
+    });
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions?period=2026-03' });
+    await screen.findByText(/March 2026 is closed/);
+
+    const rename = screen.getByRole('button', { name: 'Rename Ocado' });
+    expect(rename).toBeDisabled();
+    expect(rename).toHaveAttribute('title', 'This period is closed');
   });
 });

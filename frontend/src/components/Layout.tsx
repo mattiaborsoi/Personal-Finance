@@ -1,8 +1,12 @@
 import { LogOut, Menu, X } from 'lucide-react';
-import { useState } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { useCallback, useMemo, useState } from 'react';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { api, type PeriodOut } from '../api';
 import { useAuth } from '../auth/AuthContext';
+import { ReviewBadgeContext } from '../hooks/reviewBadge';
+import { useAsync } from '../hooks/useAsync';
 import { initials } from '../lib/format';
+import { reviewBadge } from '../lib/review';
 import { btnIcon, cx } from '../lib/ui';
 import { BrandMark, PRODUCT_NAME, Wordmark } from './BrandMark';
 import { NavLinks } from './NavLinks';
@@ -13,9 +17,19 @@ const ROLE_LABEL = { primary: 'Primary account', secondary: 'Partner' } as const
 export function Layout() {
   const { session, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  // One GET /api/periods for the Review badge; pages that load the periods again share theirs, so no polling.
+  const periods = useAsync(() => api.listPeriods(), 'nav-periods', session?.role === 'primary');
+  const { setData: setPeriods, reload: refreshPeriods } = periods;
+  const share = useCallback((list: PeriodOut[]) => setPeriods(() => list), [setPeriods]);
+  const badgeSync = useMemo(() => ({ share, refresh: refreshPeriods }), [share, refreshPeriods]);
 
   if (!session) return null;
+
+  // On the dashboard and the Review page the URL names the period being looked at.
+  const onPeriodPage = location.pathname === '/' || location.pathname === '/review';
+  const review = reviewBadge(periods.data, onPeriodPage ? new URLSearchParams(location.search).get('period') : null);
 
   function handleLogout() {
     logout();
@@ -45,7 +59,7 @@ export function Layout() {
           <Wordmark />
         </div>
         <nav aria-label="Main" className="flex-1 overflow-y-auto px-3 py-2">
-          <NavLinks role={session.role} />
+          <NavLinks role={session.role} reviewPeriod={review.period} reviewCount={review.count} />
         </nav>
         <div className="border-t border-hairline p-3">
           <div className="flex items-center justify-between gap-2 rounded-xl px-2 py-2">
@@ -89,14 +103,21 @@ export function Layout() {
         </div>
         {menuOpen && (
           <nav id="mobile-nav" aria-label="Main" className="border-t border-hairline px-3 py-2 animate-rise">
-            <NavLinks role={session.role} onNavigate={() => setMenuOpen(false)} />
+            <NavLinks
+              role={session.role}
+              onNavigate={() => setMenuOpen(false)}
+              reviewPeriod={review.period}
+              reviewCount={review.count}
+            />
           </nav>
         )}
       </header>
 
       <main className="min-w-0 flex-1 px-4 py-5 sm:px-8 sm:py-8">
         <div className="mx-auto max-w-6xl animate-rise">
-          <Outlet />
+          <ReviewBadgeContext.Provider value={badgeSync}>
+            <Outlet />
+          </ReviewBadgeContext.Provider>
         </div>
       </main>
     </div>

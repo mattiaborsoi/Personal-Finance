@@ -7,6 +7,7 @@ import { btnPrimary, btnSecondary, cx, eyebrow } from '../lib/ui';
 import { Badge, type BadgeTone } from './Badge';
 import { Card } from './Card';
 import { ConfirmButton } from './ConfirmButton';
+import { DangerZone } from './DangerZone';
 import { ErrorMessage } from './ErrorMessage';
 import { LoadingState } from './LoadingState';
 import { Notice } from './Notice';
@@ -38,8 +39,19 @@ function UpdateLog({ log }: { log: string | null }) {
   );
 }
 
-/** The System tab of Settings: the running version, the latest on GitHub, and self-update. */
+/** The System tab of Settings: the running version, the latest on GitHub, self-update, and the danger zone. */
 export function SystemPanel({ pollIntervalMs = 3000 }: Props) {
+  // The danger zone keeps its place (and its state) while the version information loads, and is there if it fails.
+  return (
+    <div className="space-y-6">
+      <VersionAndUpdate pollIntervalMs={pollIntervalMs} />
+      <DangerZone />
+    </div>
+  );
+}
+
+/** The Version and Update cards. */
+function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -176,7 +188,7 @@ export function SystemPanel({ pollIntervalMs = 3000 }: Props) {
       : 'Recent changes on GitHub';
 
   return (
-    <div className="space-y-6">
+    <>
       <Card
         icon={Cog}
         title="Version"
@@ -311,6 +323,6 @@ export function SystemPanel({ pollIntervalMs = 3000 }: Props) {
           </p>
         )}
       </Card>
-    </div>
+    </>
   );
 }

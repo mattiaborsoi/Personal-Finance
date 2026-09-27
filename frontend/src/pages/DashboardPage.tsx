@@ -1,8 +1,7 @@
-import { Upload } from 'lucide-react';
+import { ArrowRight, ListChecks, Upload } from 'lucide-react';
 import { useCallback, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
-import { ApprovalQueue } from '../components/ApprovalQueue';
 import { AuditCard } from '../components/AuditCard';
 import { Badge } from '../components/Badge';
 import { Card } from '../components/Card';
@@ -12,27 +11,65 @@ import { ErrorMessage } from '../components/ErrorMessage';
 import { InvestmentCard } from '../components/InvestmentCard';
 import { LoadingState } from '../components/LoadingState';
 import { MetricsSection } from '../components/MetricsSection';
+import { Notice } from '../components/Notice';
 import { PageHeader } from '../components/PageHeader';
 import { PeriodSelector } from '../components/PeriodSelector';
 import { SettlementBanner } from '../components/SettlementBanner';
 import { UnmatchedTransfersLink } from '../components/UnmatchedTransfersLink';
 import { ViewToggleBar } from '../components/ViewToggleBar';
+import { useSharePeriods } from '../hooks/reviewBadge';
 import { useAsync } from '../hooks/useAsync';
 import { defaultPeriodKey, isPeriodKey, periodLabel } from '../lib/dates';
-import { btnPrimary } from '../lib/ui';
+import { plural } from '../lib/format';
+import { readNotice } from '../lib/navNotice';
+import { reviewPath } from '../lib/review';
+import { btnPrimary, btnSecondary, btnSmall, cardBase, cx } from '../lib/ui';
 import { readStoredView, storeView, type MetricView } from '../lib/views';
+
+/** The period's lines still waiting for review, with the way to the Review page. */
+function PendingReviewCard({ period, count }: { period: string; count: number }) {
+  return (
+    <section
+      aria-label="Waiting for review"
+      className={cx(cardBase, 'flex flex-wrap items-center justify-between gap-3 py-4 sm:py-4')}
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <span
+          aria-hidden="true"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-warning/15 text-warning-ink"
+        >
+          <ListChecks className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-base font-semibold tracking-tight text-ink">{plural(count, 'line')} waiting for review</p>
+          <p className="mt-0.5 text-xs text-ink-3">The figures below may change until they are approved.</p>
+        </div>
+      </div>
+      <Link to={reviewPath(period)} className={cx(btnSecondary, btnSmall)}>
+        Review now
+        <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+      </Link>
+    </section>
+  );
+}
 
 export function DashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const periods = useAsync(() => api.listPeriods(), 'periods');
+  useSharePeriods(periods.data);
   const [view, setView] = useState<MetricView>(readStoredView);
   const [refreshKey, setRefreshKey] = useState(0);
+  /** A confirmation from the page that sent us here (a reset in Settings). */
+  const arrivalNotice = readNotice(location.state);
+  const [noticeDismissed, setNoticeDismissed] = useState(false);
 
   const requested = searchParams.get('period');
   const period =
     requested && isPeriodKey(requested) ? requested : periods.data ? defaultPeriodKey(periods.data) : null;
   const periodInfo = periods.data?.find((p) => p.period_key === period) ?? null;
   const closed = periodInfo?.is_closed ?? false;
+  const pending = periodInfo?.pending_review_count ?? 0;
 
   const reloadPeriods = periods.reload;
   const bump = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -71,6 +108,20 @@ export function DashboardPage() {
         }
       />
 
+      {arrivalNotice && !noticeDismissed && (
+        <Notice
+          tone="good"
+          role="status"
+          actions={
+            <button type="button" className={cx(btnSecondary, btnSmall)} onClick={() => setNoticeDismissed(true)}>
+              Dismiss
+            </button>
+          }
+        >
+          {arrivalNotice}
+        </Notice>
+      )}
+
       {periods.error && <ErrorMessage message={periods.error.message} onRetry={periods.reload} />}
       {!periods.data && !periods.error && <LoadingState label="Loading periods" />}
 
@@ -99,11 +150,11 @@ export function DashboardPage() {
 
       {period && (
         <>
+          {pending > 0 && <PendingReviewCard period={period} count={pending} />}
           <MetricsSection period={period} view={view} refreshKey={refreshKey} />
           <SettlementBanner period={period} periodInfo={periodInfo} refreshKey={refreshKey} onChanged={bump} />
           <InvestmentCard refreshKey={refreshKey} />
           <AuditCard period={period} refreshKey={refreshKey} />
-          <ApprovalQueue period={period} closed={closed} onChanged={onPeriodChanged} />
         </>
       )}
     </div>
