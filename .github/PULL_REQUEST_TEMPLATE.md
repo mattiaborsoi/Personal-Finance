@@ -4,8 +4,9 @@
 
 ## How it was checked
 
-- [ ] `cd backend && ruff check . && pytest -v`
-- [ ] `cd frontend && npm run lint && npm test && npm run build`
+- [ ] `cd backend && ruff check . && pytest -v` (against a pgvector database, or in the container)
+- [ ] `ruff check --config backend/pyproject.toml updater && python -m py_compile updater/updater.py` (if `updater/` changed)
+- [ ] `cd frontend && npm run lint && npx tsc --noEmit && npm test && npm run build`
 - [ ] Tried it in the running app (say what you did)
 
 ## Notes for the reviewer

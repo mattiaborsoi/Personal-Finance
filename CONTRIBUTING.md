@@ -17,11 +17,16 @@ issue, even partially: describe the shape of the data instead.
 2. Make the change with tests. The gates that CI runs are:
 
    ```bash
-   cd backend && ruff check . && pytest -v          # needs PostgreSQL with pgvector, see docs/TECHNICAL.md
-   cd frontend && npm ci && npm run lint && npm test && npm run build
+   cd backend && ruff check . && pytest -v
+   ruff check --config backend/pyproject.toml updater && python -m py_compile updater/updater.py
+   cd frontend && npm ci && npm run lint && npx tsc --noEmit && npm test && npm run build
    ```
 
-   Backend tests can also run in the container: `docker compose exec backend pytest -v`.
+   Most backend tests need PostgreSQL with pgvector: without a `DATABASE_URL` they
+   are skipped and `pytest` still exits 0, so a green run on a laptop without a
+   database is not the CI gate. Run them in the container instead
+   (`docker compose exec backend pytest -v`) or point `DATABASE_URL` at a pgvector
+   database (see docs/TECHNICAL.md, "Development setup").
 3. Keep pull requests focused: one change per PR, with a short description of
    what and why. The PR template asks for the same.
 4. Open the pull request against `main`. CI runs automatically; a maintainer

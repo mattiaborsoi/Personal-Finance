@@ -43,14 +43,18 @@ The backend never sees provider API keys: it talks to LiteLLM with
 `LITELLM_MASTER_KEY` and refers to models only by the logical names `default-chat`,
 `cheap-chat` and `default-embedding`. Swapping providers is a LiteLLM config change.
 
-Startup (`app/main.py` lifespan): load `config.yaml` (fail fast with a `ConfigError`),
-run the security guard on the secrets, check `EMBEDDING_DIMENSIONS` matches the
-`vector(1536)` column, execute `schema.sql` (every statement idempotent, so it doubles
-as the migration mechanism) and, only when the `accounts` table is empty, seed it from
-the accounts in `config.yaml`. From then on the table is the source of truth: accounts
-are added, edited, archived and deleted under Settings → Accounts, and every request
-overlays the rows on the file configuration (`app/deps.py: get_effective_config`), so
-users, rules and categories still come from the file while accounts come from the app.
+Startup (`app/main.py` lifespan): load `config.yaml` if there is one (a missing file,
+or the empty directory Docker leaves in its place, means built-in defaults and a
+warning; an invalid file still fails fast with a `ConfigError`), run the security
+guard on the secrets, check `EMBEDDING_DIMENSIONS` matches the `vector(1536)` column,
+execute `schema.sql` (every statement idempotent, so it doubles as the migration
+mechanism) and, only when the `accounts` table is empty, seed it from the accounts in
+`config.yaml`. From then on the app is the source of truth: accounts live in their
+own table, and the household (names, incomes, split, currency), the categories, the
+rules and card-payment patterns, and the AI setup are documents in `app_settings`
+edited under Settings. Every request overlays all of that on the file configuration
+(`app/deps.py: get_effective_config`), so `config.yaml` only ever supplies defaults
+for what has not been saved in the app.
 
 ## 2. Deployment
 
@@ -72,21 +76,29 @@ over the LAN. This is the long version of the README's "Run it in five minutes".
 
 ```bash
 git clone https://github.com/mattiaborsoi/personal-finance settl && cd settl
-cp config.example.yaml config.yaml
-cp .env.example .env
+cp .env.example .env                  # then edit it (section ".env" below)
+cp config.example.yaml config.yaml    # optional: seeds the defaults described next
 ```
 
-### `config.yaml`
+### Setting up the household: Settings, or `config.yaml`
 
-`config.yaml` is git-ignored and holds everything personal; the field-by-field
-reference is in section 11. Working through `config.example.yaml` from the top:
+Everything personal is set up in the app under **Settings** and stored in the
+database: **Household** (the two names, incomes, split strategy, settle-by day,
+rounding and currency), **Accounts**, **Categories**, **Rules** (deterministic rules
+and card-payment patterns) and **AI**. `config.yaml` is optional: when present it
+seeds the defaults for all of that before anything is saved, and the accounts are
+imported from it once. Whatever is saved in Settings wins, and edits to the file are
+not read again for a section that has been saved in the app. The field-by-field
+reference is in section 11; working through `config.example.yaml` from the top:
 
-* **`users`**: the two of you, each with an `id`, a `display_name`, a
-  `base_salary_pa` and an `additional_income_pa`. The incomes exist only to set the
-  split ratio (the example's 100,000 and 80,000 give 0.555556 / 0.444444) and are
-  never shown to the secondary login: `GET /api/config` strips them.
+* **`users`**: the two of you, each with an `id` (fixed once chosen; it is stored on
+  every claim), a `display_name`, a `base_salary_pa` and an `additional_income_pa`.
+  The incomes exist only to set the split ratio (the example's 100,000 and 80,000
+  give 0.555556 / 0.444444) and are never shown to the secondary login:
+  `GET /api/config` strips them. Editable later under Settings → Household.
 * **`settlement`**: `salary_proportional` or `equal_50_50`, the rounding, and the day
-  of the following month by which you settle (`settlement_day_of_month`).
+  of the following month by which you settle (`settlement_day_of_month`). Also under
+  Settings → Household.
 * **`accounts`**: one entry per account or card, imported the first time Settl starts
   and managed in the app afterwards (Settings → Accounts; edits to this section are
   not applied again). `institution` and `identifier_last4`
@@ -106,13 +118,15 @@ reference is in section 11. Working through `config.example.yaml` from the top:
   replace them with what your own statements print. Two rules are worth keeping in
   some form: the `Transfers:Settlement` rule that recognises your partner's
   settlement transfer, and the `Transfers:Investment` rule with `transfer_to_account`
-  that tracks cash moved into the investment account.
+  that tracks cash moved into the investment account. Settings → Rules edits them,
+  with a "Try it" box that shows which rule a description would hit.
 * **`transfers.payment_patterns`**: how a card payment is described on your
   current-account and card statements, so the two legs are matched to each other and
-  never counted as spending.
-* **`llm`, `auditor`, `categories`**: the similarity threshold and few-shot count, the
-  Auditor's thresholds, and the category taxonomy offered to the classifier and the
-  UI. The defaults are fine to start with.
+  never counted as spending. Also under Settings → Rules ("Card payments").
+* **`categories`**: the taxonomy offered to the classifier and the UI; Settings →
+  Categories adds, reorders, renames (everywhere at once) and removes unused ones.
+* **`llm`, `auditor`**: the models, the similarity threshold and few-shot count and
+  the Auditor's thresholds; Settings → AI. The defaults are fine to start with.
 
 #### Claim types: who bears what
 
@@ -131,8 +145,8 @@ the table below. The difference between the two is what ends up in the settlemen
 
 A supplementary card is treated as spent by its holder but paid by the main
 cardholder, which is exactly the case Settl was built to untangle. The income ratio
-comes from the salaries in `config.yaml`; switch to `equal_50_50` if you prefer a
-straight split.
+comes from the incomes under Settings → Household (or `config.yaml` until something
+is saved there); switch to `equal_50_50` if you prefer a straight split.
 
 ### `.env`
 
@@ -356,8 +370,9 @@ The **LLM layout extractor** (`llm_extractor.py`) is a fallback only:
 
 Precedence for each raw description:
 
-1. **Deterministic rule** from `config.yaml` (first match wins) → `source=rule`,
-   `auto_approved`; may carry `is_internal_transfer` / `transfer_to_account`.
+1. **Deterministic rule** (Settings → Rules, seeded from `config.yaml`; first match
+   wins) → `source=rule`, `auto_approved`; may carry `is_internal_transfer` /
+   `transfer_to_account`.
 2. **Card-payment pattern** (`transfers.payment_patterns`) → `Transfers:Internal`,
    `is_internal_transfer`, `source=transfer`, `auto_approved`.
 3. **Merchant-key memory match** (`memory.lookup_by_key`): the *merchant key* is the
@@ -631,7 +646,13 @@ Reports are appended to `audit_reports`; closing a period runs one automatically
 
 ## 11. Configuration
 
-### `config.yaml` (untracked; start from `config.example.yaml`)
+### `config.yaml` (optional, untracked; start from `config.example.yaml`)
+
+Every section below is a *default*: the app stores what you save under Settings in
+`app_settings` (documents `household`, `categories`, `rules`, `ai`) and the
+`accounts` table, and overlays them on the file per request. Without a file the
+built-in defaults are two users (`user_primary`, `user_secondary`) splitting 50/50,
+the standard categories and card-payment patterns, no rules and no accounts.
 
 | section               | what it drives                                                                              |
 |-----------------------|---------------------------------------------------------------------------------------------|
@@ -645,10 +666,12 @@ Reports are appended to `audit_reports`; closing a period runs one automatically
 | `auditor`             | `deviation_threshold`, `lookback_periods`                                                   |
 | `categories`          | the taxonomy offered to the classifier and the UI (`Uncategorized` is always appended)      |
 
-Validation at load: distinct user ids, unique account ids, owners and `billed_to`
-must be configured users, `transfer_to_account` must name an account, regexes must
-compile, and `salary_proportional` needs a positive combined income.
-`GET /api/config` exposes a sanitised subset (no incomes, no rules).
+Validation at load, and again on every save from Settings: distinct user ids, unique
+account ids, owners and `billed_to` must be configured users, `transfer_to_account`
+must name an account, regexes must compile, categories on rules must be in the
+taxonomy, and `salary_proportional` needs a positive combined income.
+`GET /api/config` exposes a sanitised subset (no incomes, no rules); the full
+documents are under `/api/settings/*` for the primary login (docs/API.md).
 
 ### `.env` (read by Docker Compose and the backend)
 

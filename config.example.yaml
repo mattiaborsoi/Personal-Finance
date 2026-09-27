@@ -1,7 +1,9 @@
-# Sanitised example configuration.
-# Copy to config.yaml (git-ignored) and replace every value with your own.
-# All identities, incomes, account mappings, split formulas and classification
-# rules live here. The codebase itself contains no personal data.
+# Optional starting configuration. Settl starts without this file: everything in
+# it is set up under Settings in the app (Household, Accounts, Categories, Rules,
+# AI) and stored in the database. Copy it to config.yaml (git-ignored) only if you
+# would rather seed those defaults from a file before the first start; whatever is
+# saved in Settings afterwards wins, and edits to this file are not read again for
+# sections that have been saved in the app. The values below are sanitised examples.
 
 app:
   base_currency: "GBP"

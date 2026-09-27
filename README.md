@@ -22,9 +22,10 @@ each with their own accounts and cards, who would rather not keep a spreadsheet.
 * **One figure, settled.** Your partner logs the cash they paid from their phone, card
   payments and transfers cancel themselves out, and at month end Settl shows who owes
   whom, by when, with every line behind it.
-* **Looks after itself.** Add or change your accounts and cards in Settings, pick
-  which AI model does what (or plug in a LiteLLM you already run), and update Settl
-  to the latest version from GitHub with one click.
+* **Looks after itself.** The two of you, your accounts and cards, your categories,
+  your rules and which AI model does what (or a LiteLLM you already run) are all set
+  up in Settings, not in a config file, and Settl updates itself from GitHub with one
+  click.
 
 ## See it
 
@@ -61,13 +62,16 @@ You need a machine with Docker that stays on; a Mac mini or a NAS is ideal.
 
 ```bash
 git clone https://github.com/mattiaborsoi/personal-finance settl && cd settl
-cp config.example.yaml config.yaml   # the two of you, your accounts, your rules
-cp .env.example .env                 # passwords and keys (the app refuses placeholders)
+cp .env.example .env     # then open .env and set the passwords and keys
 docker compose up -d --build
 ```
 
-Open http://localhost, sign in with `PRIMARY_PASSWORD`; your partner opens
-http://localhost/claim with `SECONDARY_PASSWORD`.
+The app refuses to start with the placeholder passwords, so do edit `.env` before
+the last command. Open http://localhost, sign in with `PRIMARY_PASSWORD`, and set up
+the two of you, your accounts and your categories under Settings; your partner opens
+http://localhost/claim with `SECONDARY_PASSWORD`. Prefer a file? Copy
+`config.example.yaml` to `config.yaml` before the first start and it seeds those
+defaults; whatever you change in Settings afterwards wins.
 
 It works with no AI key at all: set `LLM_PROVIDER=none` and `EMBEDDING_PROVIDER=hash`
 in `.env` and Settl runs on your rules and the merchants it has already learned.
@@ -77,14 +81,15 @@ Everything else â€” updating, backups, running without an LLM, what goes where â
 
 ## Under the bonnet
 
-Four containers on one box: the web front, the app, a database that doubles as the
-merchant memory, and a small proxy to whichever AI provider you choose. How they fit
-together, the settlement maths and the security model are in
-[docs/TECHNICAL.md](docs/TECHNICAL.md).
+Five containers on one box: the web front, the app, a database that doubles as the
+merchant memory, a small proxy to whichever AI provider you choose (or none, if you
+already run one), and an updater that pulls new versions. How they fit together, the
+settlement maths and the security model are in [docs/TECHNICAL.md](docs/TECHNICAL.md).
 
-**Private by design.** Settl runs on your machine and your statements never leave it;
-the only thing that goes out is a handful of small, anonymised questions to the AI, and
-even those can be switched off.
+**Private by design.** Settl runs on your machine and your statement files never leave
+it. What goes out: short merchant lines for the AI to categorise, the page text of a
+PDF only when the built-in parsers cannot read it, and one request to GitHub to check
+for updates. Each of those can be switched off in Settings or `.env`.
 
 * [docs/TECHNICAL.md](docs/TECHNICAL.md): architecture, deployment, the maths,
   configuration, schema and development setup.
