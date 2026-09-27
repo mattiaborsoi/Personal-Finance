@@ -20,7 +20,8 @@ export function MetricsHeadline({ figures, hint, signed = false, accentClass = '
         {figures.headlineLabel}
       </p>
       <p className="mt-2 text-[2.75rem] font-semibold leading-none tracking-tight text-ink sm:text-5xl">
-        <MoneyText value={figures.headline} tone={signed} signed={signed} className="!font-variant-normal" />
+        {/* The hero figure reads in proportional numerals (DESIGN.md); MoneyText's `.tabular` is for columns. */}
+        <MoneyText value={figures.headline} tone={signed} signed={signed} className="!normal-nums" />
       </p>
       <p className="mt-3 max-w-xs text-sm text-ink-2">{hint}</p>
       <dl className="mt-5 grid grid-cols-2 gap-3">
