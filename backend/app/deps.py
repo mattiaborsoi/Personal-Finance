@@ -23,7 +23,11 @@ def get_settings() -> Settings:
 
 @lru_cache(maxsize=1)
 def get_config() -> AppConfig:
-    """The configuration file as loaded at startup (users, rules, categories...)."""
+    """``config.yaml`` as loaded at startup (built-in defaults when there is no file).
+
+    Only the defaults: what the app manages (accounts, household, categories, rules,
+    AI) is overlaid per request by :func:`get_effective_config`.
+    """
     return load_config(get_settings().config_path)
 
 
@@ -45,15 +49,18 @@ def get_effective_config(
 ) -> AppConfig:
     """The file configuration with what the app manages overlaid.
 
-    ``accounts`` come from the database rows (edited under Settings -> Accounts) and
-    the ``llm`` / ``auditor`` choices from the AI settings (Settings -> AI), so routers
-    always see the current values. Users, split strategy, rules and categories still
-    come from the file.
+    ``accounts`` come from the database rows (Settings -> Accounts); the household
+    (names, incomes, split, currency), the category taxonomy and the deterministic
+    rules from their ``app_settings`` documents (Settings -> Household / Categories /
+    Rules); the ``llm`` / ``auditor`` choices from the AI settings (Settings -> AI).
+    Routers therefore always see the current values. The accounts go on first so the
+    rules are checked against the real account list.
     """
-    from app.services import ai_settings
+    from app.services import ai_settings, site_settings
     from app.services.accounts import load_account_configs
 
-    return ai_settings.apply(base.with_accounts(load_account_configs(db)), ai)
+    config = site_settings.apply_all(db, base.with_accounts(load_account_configs(db)))
+    return ai_settings.apply(config, ai)
 
 
 def reset_caches() -> None:

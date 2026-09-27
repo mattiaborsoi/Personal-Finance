@@ -12,8 +12,10 @@ mode share one set of components.
 | `bg-bg` | page plane (warm off-white / near-black) |
 | `bg-surface`, `bg-surface-2`, `bg-surface-3` | cards; inset tiles & hover washes; pressed/selected washes |
 | `text-ink`, `text-ink-2`, `text-ink-3` | primary, secondary, muted text (axis labels, eyebrows, placeholders) |
-| `border-hairline`, `border-hairline-strong`, `divide-hairline` | 1px rules; stronger for inputs on hover |
-| `bg-brand`, `bg-brand-strong`, `bg-brand-soft`, `text-brand`, `text-brand-strong` | the one action colour (primary buttons, links, active nav) |
+| `border-hairline`, `border-hairline-strong`, `divide-hairline` | 1px rules between things; never the only edge of a form control |
+| `border-control` | the edge of inputs, selects, checkboxes and radios: 3:1 against a card in both modes, so a field is visible without relying on its fill |
+| `bg-brand`, `bg-brand-strong`, `bg-brand-soft`, `text-brand`, `text-brand-strong` | the one action colour (primary buttons, links, active nav); 5.2:1 as text on a card in light mode, 4.8:1 in dark |
+| `text-on-brand` | text on a brand fill: white in light mode, near-black on the lighter dark-mode blue (never `text-white`) |
 | `bg-accent-macro` / `-micro` / `-liquidity` (+ `text-…`, `/10` washes) | identity of the three dashboard views only (blue / orange / aqua, CVD-validated) |
 | `text-good-ink`, `bg-good/10`, `text-warning-ink`, `bg-warning/15`, `text-critical-ink`, `bg-critical/10` | status: money in, pending/caution, money out & destructive |
 | `shadow-card`, `shadow-pop` | resting card; floating tooltip/menu |
@@ -24,8 +26,12 @@ Rules:
   `amber-*`, `violet-*`, `gray-*`, `bg-white`, `text-black`). Map them:
   `slate-50/100` → `surface-2`, `slate-200` → `hairline`, `slate-300` → `hairline-strong`,
   `slate-400/500` → `ink-3`, `slate-600/700` → `ink-2`, `slate-800/900` → `ink`,
-  `white` → `surface`, `brand-*`/`blue-*` → `brand`, `emerald` → `good`, `rose` → `critical`,
-  `amber` → `warning`, `violet` (LLM badge) → `accent-micro`.
+  `white` → `surface`, `text-white` on a brand fill → `text-on-brand`, `brand-*`/`blue-*` → `brand`,
+  `emerald` → `good`, `rose` → `critical`, `amber` → `warning`, `violet` (LLM badge) → `accent-micro`.
+* Contrast is checked, not guessed: every text token clears WCAG AA (4.5:1) on the
+  surfaces it is used on, in both modes (`ink-3` hints included), and control edges
+  clear 3:1. `.animate-rise` and `animate-pulse` switch off under
+  `prefers-reduced-motion`; spinners stay.
 * Text never wears an accent colour for emphasis; a coloured **dot, bar or icon
   beside** the text carries identity. Money in/out uses the status inks via
   `moneyTone` only where the sign matters (net figures, amounts in lists).

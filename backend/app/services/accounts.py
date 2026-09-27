@@ -271,6 +271,8 @@ def delete_account(db: Session, config: AppConfig, row: Account) -> None:
         raise AccountConflict("statements have been uploaded to this account; archive it instead of deleting it")
     for rule in config.deterministic_rules:
         if rule.transfer_to_account == row.id:
-            raise AccountConflict(f"a rule in config.yaml ({rule.pattern!r}) sends transfers to this account")
+            raise AccountConflict(
+                f"a rule ({rule.pattern!r}) sends transfers to this account; change it under Settings -> Rules first"
+            )
     db.delete(row)
     db.flush()

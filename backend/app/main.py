@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +27,7 @@ from app.routers import (
     periods,
     reference,
     settlement,
+    site_settings,
     statements,
     system,
     transactions,
@@ -41,6 +43,7 @@ ROUTERS = (
     reference.router,
     accounts.router,
     ai.router,
+    site_settings.router,
     periods.router,
     statements.router,
     transactions.router,
@@ -57,7 +60,8 @@ ROUTERS = (
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
-    config = get_config()  # fails fast with a helpful ConfigError when config.yaml is missing
+    # Built-in defaults when config.yaml is absent; a ConfigError (fail fast) when it is invalid.
+    config = get_config()
     validate_security_settings(settings)
     if settings.embedding_dimensions != EMBEDDING_DIMENSIONS:
         raise ConfigError(
@@ -69,8 +73,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     with get_session_factory()() as db:
         changed = seed_accounts(db, config)
         db.commit()
+    if Path(settings.config_path).is_file():
+        source = f"defaults from {settings.config_path}"
+    else:
+        source = (
+            "built-in defaults (no config file: set the household, categories, rules and accounts up under Settings)"
+        )
     log.info(
-        "startup complete: %d account(s) seeded or upgraded from config.yaml, llm_provider=%s embedding_provider=%s",
+        "startup complete: %s, %d account(s) seeded or upgraded from them, llm_provider=%s embedding_provider=%s",
+        source,
         changed,
         settings.llm_provider,
         settings.embedding_provider,

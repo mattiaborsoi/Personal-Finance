@@ -78,7 +78,7 @@ export function UploadDropzone({ file, onFile, disabled = false }: Props) {
           aria-hidden="true"
           className={cx(
             'flex h-14 w-14 items-center justify-center rounded-full transition-colors',
-            dragging ? 'bg-brand text-white' : 'bg-surface-2 text-ink-2',
+            dragging ? 'bg-brand text-on-brand' : 'bg-surface-2 text-ink-2',
           )}
         >
           <FileUp className="h-6 w-6" />

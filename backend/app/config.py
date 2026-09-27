@@ -8,12 +8,19 @@ Two layers of configuration exist:
   split strategy, deterministic rules and thresholds. Nothing personal is hard-coded
   anywhere in the codebase; ``config.example.yaml`` is a sanitised template.
 
+The file is optional. It supplies *defaults*: the accounts seed their table on first
+start and the household, categories, rules and AI choices seed the documents edited
+under Settings in the app (see ``app.services.site_settings`` / ``ai_settings``).
+Without a file the app starts from :func:`default_config` and everything is set up
+in the app. Only the two user ids are fixed for the life of a database.
+
 Split ratios are derived from the configured incomes at load time and exposed as
 ``AppConfig.primary_ratio`` / ``AppConfig.secondary_ratio`` (exact ``Decimal``).
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from decimal import Decimal
 from pathlib import Path
@@ -80,9 +87,16 @@ DEFAULT_CATEGORIES: list[str] = [
 UNCATEGORIZED = "Uncategorized"
 TRANSFER_CATEGORY_PREFIX = "Transfers:"
 
+# The users a database is created with when there is no config.yaml. Every row
+# names one of these ids, so they never change afterwards; the names do.
+DEFAULT_PRIMARY_USER_ID = "user_primary"
+DEFAULT_SECONDARY_USER_ID = "user_secondary"
+
+log = logging.getLogger(__name__)
+
 
 class ConfigError(ValueError):
-    """Raised when config.yaml is missing or invalid."""
+    """Raised when config.yaml exists but is invalid (or the runtime settings are)."""
 
 
 # --------------------------------------------------------------------------- #
@@ -414,14 +428,38 @@ class AppConfig(BaseModel):
         }
 
 
+def default_config() -> AppConfig:
+    """What Settl starts from without a ``config.yaml``.
+
+    Two users with no income (so the equal split is the one that validates), the
+    default taxonomy and card-payment patterns, no rules and no accounts: everything
+    is then set up under Settings in the app.
+    """
+    return AppConfig(
+        users=UsersSection(
+            primary=UserConfig(id=DEFAULT_PRIMARY_USER_ID, display_name="Primary"),
+            secondary=UserConfig(id=DEFAULT_SECONDARY_USER_ID, display_name="Secondary"),
+        ),
+        settlement=SettlementSection(split_strategy="equal_50_50"),
+    )
+
+
 def load_config(path: str | Path) -> AppConfig:
-    """Load and validate ``config.yaml`` from *path*."""
+    """Load and validate ``config.yaml`` from *path*, or the built-in defaults when there is none.
+
+    A missing file is not an error: the app runs on :func:`default_config` and
+    everything is set up under Settings. A *directory* at the path counts as missing
+    too (Docker creates one when a bind-mounted file does not exist on the host). A
+    file that exists but cannot be parsed or validated still raises :class:`ConfigError`.
+    """
     p = Path(path)
-    if not p.exists():
-        raise ConfigError(
-            f"config file not found at {p}. Copy config.example.yaml to config.yaml and edit it, "
-            "or set CONFIG_PATH."
+    if not p.exists() or p.is_dir():
+        log.warning(
+            "no config file at %s; starting with built-in defaults. The household, categories, rules and "
+            "accounts can all be set up under Settings in the app (config.example.yaml shows the file format).",
+            p,
         )
+        return default_config()
     try:
         raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:

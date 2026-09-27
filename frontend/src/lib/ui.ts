@@ -9,7 +9,7 @@ export const focusRing =
 
 export const btnBase = `inline-flex items-center justify-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`;
 
-export const btnPrimary = `${btnBase} border-brand bg-brand text-white shadow-sm hover:border-brand-strong hover:bg-brand-strong`;
+export const btnPrimary = `${btnBase} border-brand bg-brand text-on-brand shadow-sm hover:border-brand-strong hover:bg-brand-strong`;
 export const btnSecondary = `${btnBase} border-hairline bg-surface text-ink shadow-card hover:border-hairline-strong hover:bg-surface-2`;
 /** Destructive actions are quiet until hovered; the confirm step carries the weight. */
 export const btnDanger = `${btnBase} border-transparent bg-critical/10 text-critical-ink hover:bg-critical/20`;
@@ -17,9 +17,12 @@ export const btnGhost = `${btnBase} border-transparent bg-transparent text-ink-2
 export const btnSmall = 'px-2.5 py-1.5 text-xs';
 export const btnIcon = `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`;
 
-const controlBase = `rounded-lg border border-hairline bg-surface text-ink transition-colors placeholder:text-ink-3 hover:border-hairline-strong disabled:bg-surface-2 disabled:text-ink-3 ${focusRing}`;
+/** Controls carry a `border-control` edge (3:1 against the card) so the field is visible without relying on its background. */
+const controlBase = `rounded-lg border border-control bg-surface text-ink transition-colors placeholder:text-ink-3 hover:border-ink-3 disabled:bg-surface-2 disabled:text-ink-3 ${focusRing}`;
 export const inputBase = `block w-full px-3 py-2 text-sm ${controlBase}`;
 export const selectBase = `${inputBase} cursor-pointer pr-8`;
+/** Added to a control whose value cannot be sent; pair it with `aria-invalid`. */
+export const inputInvalid = 'border-critical hover:border-critical';
 /** 32px select for inline row editing (matches `btnSmall` buttons and `btnIcon`); set its width explicitly. */
 export const selectCompact = `block h-8 cursor-pointer py-1 pl-2.5 pr-7 text-xs ${controlBase}`;
 /**
@@ -31,8 +34,8 @@ export const selectCompact = `block h-8 cursor-pointer py-1 pl-2.5 pr-7 text-xs 
 export const selectCategory = 'w-auto min-w-[11rem] max-w-[18rem]';
 /** 44px inputs for the mobile-first claim form. */
 export const inputTall = 'min-h-[44px] text-base';
-export const checkboxBase = `h-4 w-4 cursor-pointer rounded border-hairline-strong bg-surface accent-brand ${focusRing}`;
-export const radioBase = `h-4 w-4 cursor-pointer border-hairline-strong bg-surface accent-brand ${focusRing}`;
+export const checkboxBase = `h-4 w-4 cursor-pointer rounded border-control bg-surface accent-brand ${focusRing}`;
+export const radioBase = `h-4 w-4 cursor-pointer border-control bg-surface accent-brand ${focusRing}`;
 
 export const labelBase = 'block text-sm font-medium text-ink-2';
 export const eyebrow = 'text-2xs font-semibold uppercase text-ink-3';

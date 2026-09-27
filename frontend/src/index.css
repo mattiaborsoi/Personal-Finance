@@ -19,12 +19,14 @@
   --color-surface-3: 236 236 231; /* pressed / selected washes */
   --color-ink: 11 11 11;
   --color-ink-2: 82 81 78;
-  --color-ink-3: 137 135 129;
+  --color-ink-3: 112 110 105; /* muted text and hints: 5.1:1 on a card, 4.6:1 on an inset tile */
   --color-hairline: 228 227 220;
   --color-hairline-strong: 200 199 191;
-  --color-brand: 42 120 214;
+  --color-control: 142 140 134; /* input, checkbox and radio borders: 3.4:1 on a card (WCAG 1.4.11) */
+  --color-brand: 34 108 200; /* 5.2:1 under white text and as link text on a card */
   --color-brand-strong: 28 92 171;
   --color-brand-soft: 232 241 252;
+  --color-on-brand: 255 255 255; /* text on a brand fill */
   --color-accent-macro: 42 120 214;
   --color-accent-micro: 235 104 52;
   --color-accent-liquidity: 27 175 122;
@@ -51,9 +53,11 @@
     --color-ink-3: 143 142 136;
     --color-hairline: 44 44 42;
     --color-hairline-strong: 66 66 63;
+    --color-control: 110 110 105;
     --color-brand: 57 135 229;
     --color-brand-strong: 85 152 231;
     --color-brand-soft: 23 42 69;
+    --color-on-brand: 15 15 14; /* a light blue fill takes dark text: 5.3:1, where white would be 3.6:1 */
     --color-accent-macro: 57 135 229;
     --color-accent-micro: 217 89 38;
     --color-accent-liquidity: 25 158 112;
@@ -78,9 +82,11 @@
   --color-ink-3: 143 142 136;
   --color-hairline: 44 44 42;
   --color-hairline-strong: 66 66 63;
+  --color-control: 110 110 105;
   --color-brand: 57 135 229;
   --color-brand-strong: 85 152 231;
   --color-brand-soft: 23 42 69;
+  --color-on-brand: 15 15 14;
   --color-accent-macro: 57 135 229;
   --color-accent-micro: 217 89 38;
   --color-accent-liquidity: 25 158 112;
@@ -130,13 +136,16 @@
   .scrollbar-thin {
     scrollbar-width: thin;
   }
-  @media (prefers-reduced-motion: reduce) {
-    .motion-safe-fade {
-      animation: none !important;
-    }
-  }
   .animate-rise {
     animation: rise 320ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  /* Entry and skeleton motion is decoration: it goes when the user asks for less motion.
+     Spinners stay, since they are the only sign that something is still happening. */
+  @media (prefers-reduced-motion: reduce) {
+    .animate-rise,
+    .animate-pulse {
+      animation: none !important;
+    }
   }
   @keyframes rise {
     from {

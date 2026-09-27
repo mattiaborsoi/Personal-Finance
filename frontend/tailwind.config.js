@@ -17,7 +17,11 @@ export default {
         surface: { DEFAULT: token('surface'), 2: token('surface-2'), 3: token('surface-3') },
         ink: { DEFAULT: token('ink'), 2: token('ink-2'), 3: token('ink-3') },
         hairline: { DEFAULT: token('hairline'), strong: token('hairline-strong') },
+        // Form-control borders: strong enough to pass the 3:1 boundary contrast that hairlines are not meant to.
+        control: token('control'),
         brand: { DEFAULT: token('brand'), strong: token('brand-strong'), soft: token('brand-soft') },
+        // Text on a brand fill: white in light mode, near-black on the lighter dark-mode blue.
+        'on-brand': token('on-brand'),
         accent: {
           macro: token('accent-macro'),
           micro: token('accent-micro'),

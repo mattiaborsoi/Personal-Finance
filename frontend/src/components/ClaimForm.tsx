@@ -222,7 +222,7 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
                   aria-hidden="true"
                   className={cx(
                     'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors',
-                    checked ? 'bg-brand text-white' : 'bg-surface text-ink-2',
+                    checked ? 'bg-brand text-on-brand' : 'bg-surface text-ink-2',
                   )}
                 >
                   <Icon className="h-4 w-4" />
