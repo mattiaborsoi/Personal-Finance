@@ -1,6 +1,6 @@
 import { ArrowLeftRight, SearchX } from 'lucide-react';
 import type { TransactionOut, TransactionPart, TransactionPatch } from '../api';
-import { cx, tableBase, tableFlush, thBase } from '../lib/ui';
+import { cx, thBase } from '../lib/ui';
 import { EmptyState } from './EmptyState';
 import { TransactionRow } from './TransactionRow';
 
@@ -18,6 +18,14 @@ interface Props {
 }
 
 const NONE: ReadonlySet<string> = new Set();
+
+/*
+ * Below `sm` the table is not a table: each row reflows into a stacked card
+ * (see TransactionRow), so a phone never scrolls sideways. From `sm` it is the
+ * usual flush table, the first and last cells picking up the card's padding.
+ */
+const tableLayout =
+  'block w-full text-sm sm:table sm:min-w-full sm:divide-y sm:divide-hairline sm:[&_td:first-child]:pl-6 sm:[&_th:first-child]:pl-6 sm:[&_td:last-child]:pr-6 sm:[&_th:last-child]:pr-6';
 
 /** The transactions list; designed to sit inside `<Card flush>`. */
 export function TransactionTable({
@@ -40,9 +48,9 @@ export function TransactionTable({
     );
   }
   return (
-    <div className="overflow-x-auto">
-      <table className={cx(tableBase, tableFlush)}>
-        <thead>
+    <div className="sm:overflow-x-auto">
+      <table className={tableLayout}>
+        <thead className="hidden sm:table-header-group">
           <tr>
             <th scope="col" className={thBase}>
               Transaction
@@ -68,7 +76,7 @@ export function TransactionTable({
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-hairline">
+        <tbody className="block divide-y divide-hairline sm:table-row-group">
           {items.map((tx) => (
             <TransactionRow
               key={tx.id}

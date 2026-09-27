@@ -11,9 +11,7 @@ import {
   cx,
   focusRing,
   inputCompact,
-  selectCategory,
   selectCompact,
-  tdBase,
   trHover,
 } from '../lib/ui';
 import { Badge, type BadgeTone } from './Badge';
@@ -46,10 +44,30 @@ const STATUS_TONES: Record<string, BadgeTone> = {
 
 const NO_ERRORS: Record<string, string> = {};
 
+/*
+ * One component tree for both widths. From `sm` up each row is an ordinary
+ * table row; below it the row becomes a two-column grid card (name and amount
+ * on top, then the badges, the selects full width and the row's actions), so
+ * a phone never has to scroll the table sideways. The cells place themselves
+ * with the grid classes, which a table cell ignores.
+ */
+/** A row: a grid card on a phone, a table row from `sm`. */
+const rowLayout = 'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2.5 px-5 sm:table-row sm:p-0';
+/** A cell: a grid item on a phone, a padded table cell from `sm`. */
+const cellBase = 'block min-w-0 text-ink sm:table-cell sm:px-2 sm:align-middle';
+const cell = `${cellBase} sm:py-3`;
+/** A cell of a split part's sub-row, a little tighter than the row above it. */
+const partCell = `${cellBase} sm:py-2`;
+/** A cell that only exists to keep the table's columns; nothing to show on a phone. */
+const spacerCell = 'hidden sm:table-cell sm:px-2 sm:py-2';
+/** Full width on a phone; from `sm` as wide as the longest category, capped (pair with a `title`). */
+const categoryWidth = 'w-full sm:w-auto sm:min-w-[11rem] sm:max-w-[18rem]';
+const claimWidth = 'w-full sm:w-56';
+
 function ErrorRow({ message }: { message: string }) {
   return (
-    <tr>
-      <td colSpan={7} className="px-3 pb-3">
+    <tr className="block px-5 pb-3 sm:table-row sm:p-0">
+      <td colSpan={7} className="block sm:table-cell sm:px-3 sm:pb-3">
         <p role="alert" className="flex items-center gap-2 rounded-lg bg-critical/10 px-3 py-2 text-xs text-critical-ink">
           <CircleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           {message}
@@ -132,15 +150,17 @@ export function TransactionRow({
   const categories = categoryOptions(config.categories, tx.category);
   const locked = saving || readOnly;
   const parts = tx.is_split ? [...tx.parts].sort((a, b) => a.split_index - b.split_index) : [];
+  // On a phone the actions line sits under the selects, or under the split badge that replaces them.
+  const actionsRow = tx.is_split ? 'row-start-4' : 'row-start-5';
 
   return (
     <>
-      <tr className={cx(trHover, saving && 'opacity-60')}>
-        <td className={cx(tdBase, 'w-full min-w-[15rem] max-w-0 px-2 align-middle')}>
+      <tr className={cx(rowLayout, 'py-4', trHover, saving && 'opacity-60')}>
+        <td className={cx(cell, 'col-start-1 row-start-1 sm:w-full sm:min-w-[16rem] lg:min-w-[18rem]')}>
           <div className="flex items-start gap-3">
             <MerchantAvatar name={merchant} className="mt-0.5" />
             <div className="min-w-0 flex-1">
-              <div className="flex items-baseline gap-2">
+              <div className="flex items-start gap-1.5">
                 {renameDraft !== null ? (
                   <input
                     name="merchant_name"
@@ -161,10 +181,10 @@ export function TransactionRow({
                     <button
                       type="button"
                       className={cx(
-                        'min-w-0 max-w-[18rem] truncate rounded text-left font-semibold text-ink hover:underline',
+                        'line-clamp-2 min-w-0 break-words rounded text-left font-semibold leading-snug text-ink hover:underline',
                         focusRing,
                       )}
-                      title={tx.raw_description}
+                      title={merchant}
                       aria-expanded={showRaw}
                       onClick={() => setShowRaw((s) => !s)}
                     >
@@ -179,7 +199,7 @@ export function TransactionRow({
                             el.focus();
                           }
                         }}
-                        className={cx(btnIconSmall, 'self-center')}
+                        className={cx(btnIconSmall, '-my-0.5')}
                         aria-label={`Rename ${merchant}`}
                         title={readOnly ? 'This period is closed' : 'Rename the merchant'}
                         // Not locked while saving, so focus can come back here after Enter; a click then is ignored.
@@ -191,21 +211,25 @@ export function TransactionRow({
                     )}
                   </>
                 )}
-                <span className="shrink-0 text-xs text-ink-3 tabular">{formatDate(tx.transaction_date)}</span>
               </div>
+              <p className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-ink-3">
+                <span className="shrink-0 tabular">{formatDate(tx.transaction_date)}</span>
+                <span aria-hidden="true">·</span>
+                <span className={cx(chipSoft, 'min-w-0')}>{accountLabel(config.accounts, tx.account_id)}</span>
+              </p>
               {hasRawLine && (
-                <p className={cx('mt-0.5 max-w-[18rem] font-mono text-xs text-ink-3', showRaw ? 'break-all' : 'truncate')}>
+                <p
+                  className={cx('mt-0.5 max-w-[22rem] font-mono text-xs text-ink-3', showRaw ? 'break-all' : 'truncate')}
+                  title={showRaw ? undefined : tx.raw_description}
+                >
                   {tx.raw_description}
                 </p>
               )}
-              <p className="mt-1 text-xs text-ink-3">
-                <span className={chipSoft}>{accountLabel(config.accounts, tx.account_id)}</span>
-              </p>
             </div>
           </div>
         </td>
-        <td className={cx(tdBase, 'px-2 align-middle')}>
-          <div className="flex flex-col items-start gap-1">
+        <td className={cx(cell, 'col-span-2 row-start-2')}>
+          <div className="flex flex-wrap items-center gap-1 sm:flex-col sm:flex-nowrap sm:items-start">
             <Badge tone={STATUS_TONES[tx.review_status] ?? 'neutral'} dot>
               {reviewStatusLabel(tx.review_status)}
             </Badge>
@@ -218,11 +242,13 @@ export function TransactionRow({
             )}
           </div>
         </td>
-        <td className={cx(tdBase, 'whitespace-nowrap px-2 text-right align-middle font-semibold tabular')}>
+        <td
+          className={cx(cell, 'col-start-2 row-start-1 self-start whitespace-nowrap text-right font-semibold tabular')}
+        >
           <MoneyText value={tx.amount} tone />
         </td>
         {tx.is_split ? (
-          <td colSpan={2} className={cx(tdBase, 'px-2 align-middle')}>
+          <td colSpan={2} className={cx(cell, 'col-span-2 row-start-3')}>
             <Badge tone="blue" title="Each part carries its own category and claim type">
               <Scissors className="h-3 w-3" aria-hidden="true" />
               Split into {plural(parts.length, 'part')}
@@ -230,13 +256,13 @@ export function TransactionRow({
           </td>
         ) : (
           <>
-            <td className={cx(tdBase, 'px-2 align-middle')}>
+            <td className={cx(cell, 'col-span-2 row-start-3')}>
               <label htmlFor={`t-category-${id}`} className="sr-only">
                 Category for {merchant}
               </label>
               <select
                 id={`t-category-${id}`}
-                className={cx(selectCompact, selectCategory)}
+                className={cx(selectCompact, categoryWidth)}
                 value={tx.category || UNCATEGORIZED}
                 title={categoryLabel(tx.category || UNCATEGORIZED)}
                 disabled={locked}
@@ -249,13 +275,13 @@ export function TransactionRow({
                 ))}
               </select>
             </td>
-            <td className={cx(tdBase, 'px-2 align-middle')}>
+            <td className={cx(cell, 'col-span-2 row-start-4')}>
               <label htmlFor={`t-claim-${id}`} className="sr-only">
                 Claim type for {merchant}
               </label>
               <select
                 id={`t-claim-${id}`}
-                className={cx(selectCompact, 'w-56')}
+                className={cx(selectCompact, claimWidth)}
                 value={tx.claim_type ?? ''}
                 disabled={locked}
                 onChange={(e) => patch({ claim_type: e.target.value as ClaimType })}
@@ -269,7 +295,7 @@ export function TransactionRow({
             </td>
           </>
         )}
-        <td className={cx(tdBase, 'px-2 text-center align-middle')}>
+        <td className={cx(cell, 'col-start-1 pl-2 sm:text-center', actionsRow)}>
           <TransferToggle
             transaction={tx}
             merchant={merchant}
@@ -277,8 +303,12 @@ export function TransactionRow({
             title={readOnly ? 'This period is closed' : undefined}
             onChange={(on) => patch({ is_internal_transfer: on })}
           />
+          {/* A phone has no column header, so the checkbox is named on screen too (its accessible name is its own). */}
+          <span className="ml-1 align-middle text-xs text-ink-2 sm:hidden" aria-hidden="true">
+            Transfer
+          </span>
         </td>
-        <td className={cx(tdBase, 'whitespace-nowrap px-2 text-right align-middle')}>
+        <td className={cx(cell, 'col-start-2 whitespace-nowrap text-right', actionsRow)}>
           <span className="inline-flex items-center justify-end gap-1">
             {tx.is_split ? (
               <>
@@ -369,20 +399,20 @@ function PartRows({ part, n, merchant, locked, saving, error, onPatch }: PartRow
   const names = useNames();
   return (
     <>
-      <tr className={cx('bg-surface-2/40', saving && 'opacity-60')}>
-        <td className={cx(tdBase, 'px-2 py-2 align-middle')}>
-          <div className="flex items-center gap-2 pl-11 text-xs text-ink-2">
+      <tr className={cx(rowLayout, 'bg-surface-2/40 py-3', saving && 'opacity-60')}>
+        <td className={cx(partCell, 'col-start-1 row-start-1')}>
+          <div className="flex items-center gap-2 pl-6 text-xs text-ink-2 sm:pl-11">
             <CornerDownRight className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
             <span>Part {n}</span>
           </div>
         </td>
-        <td className={cx(tdBase, 'px-2 py-2')} />
-        <td className={cx(tdBase, 'whitespace-nowrap px-2 py-2 text-right align-middle tabular')}>
+        <td className={spacerCell} />
+        <td className={cx(partCell, 'col-start-2 row-start-1 whitespace-nowrap text-right tabular')}>
           <MoneyText value={part.amount} tone />
         </td>
-        <td className={cx(tdBase, 'px-2 py-2 align-middle')}>
+        <td className={cx(partCell, 'col-span-2 row-start-2')}>
           <select
-            className={cx(selectCompact, selectCategory)}
+            className={cx(selectCompact, categoryWidth)}
             value={part.category || UNCATEGORIZED}
             title={categoryLabel(part.category || UNCATEGORIZED)}
             disabled={locked}
@@ -396,9 +426,9 @@ function PartRows({ part, n, merchant, locked, saving, error, onPatch }: PartRow
             ))}
           </select>
         </td>
-        <td className={cx(tdBase, 'px-2 py-2 align-middle')}>
+        <td className={cx(partCell, 'col-span-2 row-start-3')}>
           <select
-            className={cx(selectCompact, 'w-56')}
+            className={cx(selectCompact, claimWidth)}
             value={part.claim_type}
             disabled={locked}
             aria-label={`Claim type for ${merchant} part ${n}`}
@@ -411,8 +441,8 @@ function PartRows({ part, n, merchant, locked, saving, error, onPatch }: PartRow
             ))}
           </select>
         </td>
-        <td className={cx(tdBase, 'px-2 py-2')} />
-        <td className={cx(tdBase, 'px-2 py-2')} />
+        <td className={spacerCell} />
+        <td className={spacerCell} />
       </tr>
       {error && <ErrorRow message={error} />}
     </>

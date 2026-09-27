@@ -1,10 +1,13 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import type { ClaimOut } from '../api';
+import { MemoryRouter } from 'react-router-dom';
+import { writeSession, type AppConfig, type ClaimOut } from '../api';
+import { AuthProvider } from '../auth/AuthProvider';
+import { ConfigContext } from '../config/ConfigContext';
 import { FUTURE_DATE_MESSAGE, TOO_OLD_DATE_MESSAGE, earliestClaimDate } from '../lib/claims';
 import { todayIso } from '../lib/dates';
-import { jsonResponse, mockFetch, renderWithProviders, secondarySession } from '../test/utils';
+import { fixtureConfig, jsonResponse, mockFetch, renderWithProviders, secondarySession } from '../test/utils';
 import { ClaimForm } from './ClaimForm';
 
 const created: ClaimOut = {
@@ -22,6 +25,25 @@ const created: ClaimOut = {
   created_at: '2026-03-05T12:00:00Z',
 };
 
+/** The fixture household, but splitting shared costs 50/50 (as the server reports it: ratios of 0.5). */
+const equalConfig: AppConfig = {
+  ...fixtureConfig,
+  split: { ...fixtureConfig.split, strategy: 'equal_50_50', primary_ratio: 0.5, secondary_ratio: 0.5 },
+};
+
+function renderWithConfig(config: AppConfig) {
+  writeSession(secondarySession);
+  return render(
+    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <AuthProvider initialSession={secondarySession}>
+        <ConfigContext.Provider value={config}>
+          <ClaimForm onCreated={() => {}} />
+        </ConfigContext.Provider>
+      </AuthProvider>
+    </MemoryRouter>,
+  );
+}
+
 /** A date well inside the 12-month window whatever today is. */
 function recentDate(): string {
   return todayIso(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
@@ -38,6 +60,37 @@ describe('<ClaimForm />', () => {
     expect(screen.getByRole('radio', { name: /Sam's personal item/ })).toBeInTheDocument();
     // A secondary session cannot choose who paid.
     expect(screen.queryByLabelText('Paid by')).not.toBeInTheDocument();
+  });
+
+  it('preselects Split by income and states the current ratio when the household splits by income', () => {
+    mockFetch(() => undefined);
+    renderWithProviders(<ClaimForm onCreated={() => {}} />, { session: secondarySession });
+
+    const byIncome = screen.getByRole('radio', { name: /Split by income/ });
+    expect(byIncome).toBeChecked();
+    expect(byIncome.closest('label')).toHaveTextContent('Shared cost, Alex 55.6% · Sam 44.4%');
+    expect(screen.queryByText(/salary ratio/)).not.toBeInTheDocument();
+  });
+
+  it('preselects 50/50 when the household splits equally, and says Split by income is 50/50 too', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'POST' && url === '/api/claims') return jsonResponse(created, 201);
+      return undefined;
+    });
+    renderWithConfig(equalConfig);
+
+    expect(screen.getByRole('radio', { name: /^50\/50/ })).toBeChecked();
+    const byIncome = screen.getByRole('radio', { name: /Split by income/ });
+    expect(byIncome).not.toBeChecked();
+    expect(byIncome.closest('label')).toHaveTextContent('currently 50/50, as the household splits equally');
+
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: recentDate() } });
+    await user.type(screen.getByLabelText(/Amount/), '12.5');
+    await user.type(screen.getByLabelText('Merchant or description'), 'Tesco');
+    await user.click(screen.getByRole('button', { name: 'Log claim' }));
+
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toMatchObject({ claim_type: 'shared_equal' }));
   });
 
   it('limits the date picker to the last 12 months up to today', () => {

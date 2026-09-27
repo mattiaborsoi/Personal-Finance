@@ -27,7 +27,7 @@ export function Layout() {
 
   if (!session) return null;
 
-  // On the dashboard and the Review page the URL names the period being looked at.
+  // The badge counts every month; on the dashboard and the Review page the link keeps the period being looked at.
   const onPeriodPage = location.pathname === '/' || location.pathname === '/review';
   const review = reviewBadge(periods.data, onPeriodPage ? new URLSearchParams(location.search).get('period') : null);
 
@@ -62,7 +62,7 @@ export function Layout() {
           <Wordmark />
         </div>
         <nav aria-label="Main" className="flex-1 overflow-y-auto px-3 py-2">
-          <NavLinks role={session.role} reviewPeriod={review.period} reviewCount={review.count} />
+          <NavLinks role={session.role} reviewPeriod={review.period} reviewCount={review.count} reviewMonths={review.months} />
         </nav>
         <div className="border-t border-hairline p-3">
           <div className="flex items-center justify-between gap-2 rounded-xl px-2 py-2">
@@ -113,6 +113,7 @@ export function Layout() {
               onNavigate={() => setMenuOpen(false)}
               reviewPeriod={review.period}
               reviewCount={review.count}
+              reviewMonths={review.months}
             />
           </nav>
         )}

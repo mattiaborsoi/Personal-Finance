@@ -303,6 +303,51 @@ describe('<TransactionsPage />', () => {
   });
 });
 
+describe('the transactions list layout', () => {
+  it('shows the full merchant name with a tooltip, and the date on the account line', async () => {
+    const long = 'Northern Coastal Energy Supplies';
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse([]);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) {
+        return jsonResponse({ items: [transaction({ cleaned_merchant: long, raw_description: 'NCES DD 0001' })], total: 1 });
+      }
+      return undefined;
+    });
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions' });
+    const name = await screen.findByRole('button', { name: long });
+
+    // Up to two lines, never cut to a few letters on one; the tooltip carries the whole name.
+    expect(name).toHaveAttribute('title', long);
+    expect(name).toHaveClass('line-clamp-2');
+    expect(name).not.toHaveClass('truncate');
+    // The pencil stays beside the name; the date moved down beside the account chip.
+    expect(name.nextElementSibling).toBe(screen.getByRole('button', { name: `Rename ${long}` }));
+    expect(screen.getByText('4 Mar 2026').parentElement).toHaveTextContent('4 Mar 2026·');
+  });
+
+  it('renders each control once, reflowing the same row into a card on a phone', async () => {
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse([]);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      return undefined;
+    });
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions' });
+    const select = await screen.findByLabelText('Category for Ocado');
+
+    // One tree for both widths, so every query by role or label finds a single element.
+    expect(screen.getAllByRole('checkbox', { name: 'Mark Ocado as a transfer' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Split Ocado' })).toHaveLength(1);
+    const row = select.closest('tr')!;
+    expect(row).toHaveClass('grid', 'sm:table-row');
+    expect(select).toHaveClass('w-full');
+    expect(screen.getByLabelText('Claim type for Ocado')).toHaveClass('w-full', 'sm:w-56');
+    // The column headings are for the table only.
+    expect(screen.getByRole('columnheader', { name: 'Amount' }).closest('thead')).toHaveClass('hidden', 'sm:table-header-group');
+  });
+});
+
 function patches(calls: RecordedCall[]): RecordedCall[] {
   return calls.filter((c) => c.method === 'PATCH');
 }

@@ -30,5 +30,7 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     css: false,
     include: ['src/**/*.test.{ts,tsx}'],
+    // Dates are formatted in local time; pin it so tests pass on any machine as they do in CI.
+    env: { TZ: 'UTC' },
   },
 });

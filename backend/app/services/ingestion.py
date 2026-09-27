@@ -82,10 +82,24 @@ class DuplicateUploadError(IngestionError):
         self.upload = upload
 
 
+NO_ACCOUNT_MESSAGE = (
+    "No account matches this statement. Add the account under Settings, Accounts, then upload it again."
+)
+UNCLEAR_ACCOUNT_MESSAGE = (
+    "Settl could not tell which account this statement is from. Choose it in the Account list and upload again."
+)
+
+
 class AccountResolutionError(IngestionError):
+    """No single account fits the statement. The message is shown to the user as it is."""
+
     def __init__(self, message: str, candidates: list[str]) -> None:
         super().__init__(message)
         self.candidates = candidates
+
+    @classmethod
+    def for_candidates(cls, candidates: list[str]) -> AccountResolutionError:
+        return cls(UNCLEAR_ACCOUNT_MESSAGE if candidates else NO_ACCOUNT_MESSAGE, candidates)
 
 
 def file_sha256(path: str | Path) -> str:
@@ -120,9 +134,7 @@ def _resolve_default_account(
         if len(matches) == 1:
             return matches[0]
         if len(matches) > 1:
-            raise AccountResolutionError(
-                f"several accounts end in {meta.account_last4}; pass account_id", [a.id for a in matches]
-            )
+            raise AccountResolutionError.for_candidates([a.id for a in matches])
     if meta.institution:
         inst = [a for a in config.accounts if a.institution.lower() == meta.institution.lower()]
         if len(inst) == 1:
@@ -157,15 +169,10 @@ def _resolve_line_account(
         if len(matches) > 1 and default is not None and default in matches:
             return default
         if len(matches) > 1:
-            raise AccountResolutionError(
-                f"several accounts end in {line.card_last4}; pass account_id", [a.id for a in matches]
-            )
+            raise AccountResolutionError.for_candidates([a.id for a in matches])
     if default is not None:
         return default
-    raise AccountResolutionError(
-        "could not determine which account this statement belongs to; pass account_id",
-        [a.id for a in config.accounts],
-    )
+    raise AccountResolutionError.for_candidates([a.id for a in config.accounts])
 
 
 def _closed_periods(db: Session, keys: set[str]) -> list[str]:

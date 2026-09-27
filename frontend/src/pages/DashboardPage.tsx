@@ -1,13 +1,14 @@
 import { ArrowRight, ListChecks, Upload } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
-import { api } from '../api';
+import { api, type PeriodOut } from '../api';
 import { AuditCard } from '../components/AuditCard';
 import { Badge } from '../components/Badge';
 import { Card } from '../components/Card';
 import { ClosePeriodButton } from '../components/ClosePeriodButton';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorMessage } from '../components/ErrorMessage';
+import { FirstRunChecklist } from '../components/FirstRunChecklist';
 import { InvestmentCard } from '../components/InvestmentCard';
 import { LoadingState } from '../components/LoadingState';
 import { MetricsSection } from '../components/MetricsSection';
@@ -19,15 +20,21 @@ import { UnmatchedTransfersLink } from '../components/UnmatchedTransfersLink';
 import { ViewToggleBar } from '../components/ViewToggleBar';
 import { useSharePeriods } from '../hooks/reviewBadge';
 import { useAsync } from '../hooks/useAsync';
+import { useSetupSteps } from '../hooks/useSetupSteps';
 import { defaultPeriodKey, isPeriodKey, periodLabel } from '../lib/dates';
-import { plural } from '../lib/format';
 import { readNotice } from '../lib/navNotice';
-import { reviewPath } from '../lib/review';
+import { pendingMonths, pendingSummary, reviewPath } from '../lib/review';
+import { setupIncomplete } from '../lib/setup';
 import { btnPrimary, btnSecondary, btnSmall, cardBase, cx } from '../lib/ui';
 import { readStoredView, storeView, type MetricView } from '../lib/views';
 
-/** The period's lines still waiting for review, with the way to the Review page. */
-function PendingReviewCard({ period, count }: { period: string; count: number }) {
+/**
+ * Lines waiting for review in any month (not only the one on show), naming the
+ * months, with the way to the Review page, which opens on the oldest of them.
+ */
+function PendingReviewCard({ periods, period }: { periods: PeriodOut[]; period: string | null }) {
+  const months = pendingMonths(periods);
+  const includesThisMonth = months.some((m) => m.period === period);
   return (
     <section
       aria-label="Waiting for review"
@@ -41,11 +48,15 @@ function PendingReviewCard({ period, count }: { period: string; count: number })
           <ListChecks className="h-4 w-4" />
         </span>
         <div className="min-w-0">
-          <p className="text-base font-semibold tracking-tight text-ink">{plural(count, 'line')} waiting for review</p>
-          <p className="mt-0.5 text-xs text-ink-3">The figures below may change until they are approved.</p>
+          <p className="text-base font-semibold tracking-tight text-ink">{pendingSummary(periods)}</p>
+          <p className="mt-0.5 text-xs text-ink-3">
+            {includesThisMonth
+              ? 'The figures below may change until they are approved.'
+              : 'Figures for those months may change until they are approved.'}
+          </p>
         </div>
       </div>
-      <Link to={reviewPath(period)} className={cx(btnSecondary, btnSmall)}>
+      <Link to={reviewPath(null)} className={cx(btnSecondary, btnSmall)}>
         Review now
         <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
       </Link>
@@ -75,7 +86,9 @@ export function DashboardPage() {
     requested && isPeriodKey(requested) ? requested : periods.data ? defaultPeriodKey(periods.data) : null;
   const periodInfo = periods.data?.find((p) => p.period_key === period) ?? null;
   const closed = periodInfo?.is_closed ?? false;
-  const pending = periodInfo?.pending_review_count ?? 0;
+  const anyPending = pendingMonths(periods.data).length > 0;
+  const setup = useSetupSteps();
+  const settingUp = setupIncomplete(setup);
 
   const reloadPeriods = periods.reload;
   const bump = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -137,6 +150,8 @@ export function DashboardPage() {
         </Notice>
       )}
 
+      {setup && <FirstRunChecklist steps={setup} />}
+
       {periods.error && <ErrorMessage message={periods.error.message} onRetry={periods.reload} />}
       {!periods.data && !periods.error && <LoadingState label="Loading periods" />}
 
@@ -152,20 +167,27 @@ export function DashboardPage() {
           <EmptyState
             icon={Upload}
             title="No periods yet"
-            hint="Upload a statement to get started, or type a period above."
+            hint={
+              settingUp
+                ? 'Once the steps above are done, each month your statements cover appears here.'
+                : 'Upload a statement to get started, or type a period above.'
+            }
             action={
-              <Link to="/upload" className={btnPrimary}>
-                <Upload className="h-4 w-4" aria-hidden="true" />
-                Upload a statement
-              </Link>
+              settingUp ? undefined : (
+                <Link to="/upload" className={btnPrimary}>
+                  <Upload className="h-4 w-4" aria-hidden="true" />
+                  Upload a statement
+                </Link>
+              )
             }
           />
         </Card>
       )}
 
+      {periods.data && anyPending && <PendingReviewCard periods={periods.data} period={period} />}
+
       {period && (
         <>
-          {pending > 0 && <PendingReviewCard period={period} count={pending} />}
           <MetricsSection period={period} view={view} refreshKey={refreshKey} />
           <SettlementBanner period={period} periodInfo={periodInfo} refreshKey={refreshKey} onChanged={bump} />
           <InvestmentCard refreshKey={refreshKey} />

@@ -50,6 +50,13 @@ export const cardBase = 'rounded-2xl border border-hairline bg-surface p-5 shado
 export const cardInset = 'rounded-xl bg-surface-2 px-4 py-3';
 export const chip =
   'inline-flex items-center gap-1.5 rounded-full border border-hairline bg-surface px-2.5 py-1 text-xs font-medium text-ink-2';
+/**
+ * A `chip` whose text may be too long for a phone: it wraps inside a rounded
+ * block there (put `whitespace-nowrap` spans around the phrases that must stay
+ * together) and is a pill again from `sm`.
+ */
+export const chipFluid =
+  'inline-flex max-w-full items-center gap-1.5 rounded-xl border border-hairline bg-surface px-2.5 py-1 text-xs font-medium leading-4 text-ink-2 sm:rounded-full';
 /** Quieter chip for metadata inside rows (account labels, sources). */
 export const chipSoft =
   'inline-flex max-w-full items-center gap-1 truncate rounded-md bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium leading-4 text-ink-2';

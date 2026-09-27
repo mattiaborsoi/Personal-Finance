@@ -12,7 +12,10 @@ import {
   currentPeriodKey,
   defaultPeriodKey,
   formatDate,
+  joinWithAnd,
+  monthName,
   monthsAgoIso,
+  monthsPhrase,
   periodKeyForDate,
   periodLabel,
   periodRangeLabel,
@@ -108,5 +111,25 @@ describe('labels', () => {
     expect(periodRangeLabel(null, null, '2026-07')).toBe('July 2026');
     expect(periodRangeLabel('2026-07', null, '2026-06')).toBe('June 2026');
     expect(periodRangeLabel('bad', '2026-07', '2026-06')).toBe('June 2026');
+  });
+});
+
+describe('month names in sentences', () => {
+  it('drops the year for the current one and keeps it otherwise', () => {
+    expect(monthName('2026-07', september)).toBe('July');
+    expect(monthName('2025-12', september)).toBe('December 2025');
+    expect(monthName('bad', september)).toBe('bad');
+  });
+
+  it('joins with commas and a final "and", no Oxford comma', () => {
+    expect(joinWithAnd([])).toBe('');
+    expect(joinWithAnd(['July'])).toBe('July');
+    expect(joinWithAnd(['July', 'August'])).toBe('July and August');
+    expect(joinWithAnd(['June', 'July', 'August'])).toBe('June, July and August');
+  });
+
+  it('lists months in calendar order whatever order they come in', () => {
+    expect(monthsPhrase(['2026-08', '2026-07'], september)).toBe('July and August');
+    expect(monthsPhrase(['2026-01', '2025-12'], september)).toBe('December 2025 and January');
   });
 });

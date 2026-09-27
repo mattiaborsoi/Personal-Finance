@@ -63,6 +63,24 @@ const discardButton = () => screen.getByRole('button', { name: 'Discard changes'
 const testButton = () => screen.getByRole('button', { name: 'Test' });
 
 describe('<RulesPanel />', () => {
+  it('lays each rule out as one block that can stack on a phone, with one control per field and labels hidden from screen readers', async () => {
+    mockRules(rules());
+
+    const pattern1 = await renderPanel();
+
+    const row = pattern1.closest('tr') as HTMLTableRowElement;
+    // "Rule 1" heads the stacked block; the table's own # column still reads 1.
+    expect(row.cells[0]).toHaveTextContent('Rule 1');
+    // The visible labels for the stacked view are hidden from assistive tech, so nothing is announced twice.
+    for (const label of ['Pattern', 'Category', 'Claim type', 'Merchant', 'Transfer']) {
+      expect(within(row).getByText(label)).toHaveAttribute('aria-hidden', 'true');
+    }
+    // One element per control, whatever the width: nothing is rendered twice for the phone layout.
+    expect(screen.getAllByLabelText('Pattern for rule 1')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Remove rule 1' })).toHaveLength(1);
+    expect(within(row).getByRole('button', { name: 'Move rule 1 down' })).toBeInTheDocument();
+  });
+
   it('shows the rules in order with their fields, the payment patterns and the matching numbers', async () => {
     const { calls } = mockRules(rules());
 

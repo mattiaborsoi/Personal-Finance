@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import type { Role } from '../api';
-import { periodLabel } from '../lib/dates';
+import { monthsPhrase } from '../lib/dates';
 import { plural } from '../lib/format';
 import { reviewPath } from '../lib/review';
 import { cx, focusRing } from '../lib/ui';
@@ -41,13 +41,15 @@ const NAV_ITEMS: NavItem[] = [
 interface Props {
   role: Role;
   onNavigate?: () => void;
-  /** The period the Review link opens on and counts (see `reviewBadge`); null for the page's default. */
+  /** The period the Review link opens on (see `reviewBadge`); null for the page's default. */
   reviewPeriod?: string | null;
-  /** Lines waiting for review in that period; the badge shows only above zero. */
+  /** Lines waiting for review across every month; the badge shows only above zero. */
   reviewCount?: number;
+  /** The months those lines are in, for the badge's tooltip. */
+  reviewMonths?: string[];
 }
 
-export function NavLinks({ role, onNavigate, reviewPeriod = null, reviewCount = 0 }: Props) {
+export function NavLinks({ role, onNavigate, reviewPeriod = null, reviewCount = 0, reviewMonths = [] }: Props) {
   return (
     <ul className="flex flex-col gap-0.5">
       {NAV_ITEMS.filter((item) => item.roles.includes(role)).map((item) => {
@@ -82,10 +84,10 @@ export function NavLinks({ role, onNavigate, reviewPeriod = null, reviewCount = 
                   {count > 0 && (
                     <span
                       className="ml-auto rounded-full bg-warning/15 px-1.5 py-px text-2xs font-semibold leading-4 tabular text-warning-ink"
-                      title={`${plural(count, 'line')} waiting for review${reviewPeriod ? ` in ${periodLabel(reviewPeriod)}` : ''}`}
+                      title={`${plural(count, 'line')} waiting for review${reviewMonths.length > 0 ? ` in ${monthsPhrase(reviewMonths)}` : ''}`}
                     >
                       <span aria-hidden="true">{count}</span>
-                      <span className="sr-only">{`(${count} pending)`}</span>
+                      <span className="sr-only">{`(${plural(count, 'line')} to review)`}</span>
                     </span>
                   )}
                 </>

@@ -1,9 +1,11 @@
 import { CircleAlert, History, LoaderCircle, Upload } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { FILE_TOO_LARGE_MESSAGE, api, describeDetail, errorMessage, isApiError, type UploadResult } from '../api';
 import { Card } from '../components/Card';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { LoadingState } from '../components/LoadingState';
+import { Notice } from '../components/Notice';
 import { PageHeader } from '../components/PageHeader';
 import { SUPPORTED_FORMATS, UploadDropzone } from '../components/UploadDropzone';
 import { UploadHistory } from '../components/UploadHistory';
@@ -12,11 +14,17 @@ import { useConfig } from '../config/ConfigContext';
 import { useRefreshReviewBadge } from '../hooks/reviewBadge';
 import { useAsync } from '../hooks/useAsync';
 import { accountLabel } from '../lib/format';
-import { btnPrimary, btnSecondary, btnSmall, cardInset, cx, labelBase, selectBase } from '../lib/ui';
+import { btnPrimary, cardInset, cx, labelBase, linkBase, selectBase } from '../lib/ui';
+
+const ACCOUNTS_SETTINGS = '/settings?tab=accounts';
+const NO_ACCOUNTS_MESSAGE = 'Add the account this statement comes from under Settings, Accounts first.';
 
 interface UploadError {
   message: string;
+  /** The accounts the statement could be from, when the server could not tell which. */
   candidates: string[];
+  /** The server found no account for the statement at all: the way on is to add one. */
+  noAccount?: boolean;
 }
 
 function toUploadError(err: unknown): UploadError {
@@ -27,7 +35,7 @@ function toUploadError(err: unknown): UploadError {
   if (isApiError(err, 422)) {
     const detail = err.detail;
     let candidates: string[] = [];
-    let message = 'The account could not be determined from this file. Choose one and try again.';
+    let message = 'Settl could not tell which account this statement is from. Choose it in the Account list and upload again.';
     if (Array.isArray(detail)) {
       candidates = detail.map((c) => (typeof c === 'string' ? c : describeDetail(c)));
     } else if (detail && typeof detail === 'object') {
@@ -43,7 +51,8 @@ function toUploadError(err: unknown): UploadError {
     } else if (typeof detail === 'string') {
       message = detail;
     }
-    return { message, candidates };
+    const isAccountError = detail !== null && typeof detail === 'object' && !Array.isArray(detail) && 'candidates' in detail;
+    return { message, candidates, noAccount: isAccountError && candidates.length === 0 };
   }
   if (isApiError(err, 409)) {
     return { message: err.message || 'This statement was already uploaded, or its period is closed.', candidates: [] };
@@ -62,9 +71,27 @@ export function UploadPage() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<UploadResult | null>(null);
   const [error, setError] = useState<UploadError | null>(null);
+  const accountSelect = useRef<HTMLSelectElement>(null);
+  const noAccounts = activeAccounts.length === 0;
+  // After "could not tell which account", offer only the accounts it could be.
+  const narrowed = activeAccounts.filter((a) => error?.candidates.includes(a.id));
+  const accountOptions = narrowed.length > 0 ? narrowed : activeAccounts;
+
+  /** Set when an upload comes back asking for the account: the select takes focus once it is enabled again. */
+  const focusAccountNext = useRef(false);
+
+  useEffect(() => {
+    if (busy || !focusAccountNext.current) return;
+    focusAccountNext.current = false;
+    accountSelect.current?.focus();
+  }, [busy]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (noAccounts) {
+      setError({ message: NO_ACCOUNTS_MESSAGE, candidates: [], noAccount: true });
+      return;
+    }
     if (!file) {
       setError({ message: 'Choose a statement file first.', candidates: [] });
       return;
@@ -79,7 +106,9 @@ export function UploadPage() {
       history.reload();
       refreshReviewBadge();
     } catch (err) {
-      setError(toUploadError(err));
+      const problem = toUploadError(err);
+      setError(problem);
+      focusAccountNext.current = activeAccounts.some((a) => problem.candidates.includes(a.id));
     } finally {
       setBusy(false);
     }
@@ -96,10 +125,20 @@ export function UploadPage() {
     <div className="space-y-6">
       <PageHeader
         title="Upload statement"
-        description={`${SUPPORTED_FORMATS}, up to 25\u00a0MB. Duplicates are detected by file hash.`}
+        description={`${SUPPORTED_FORMATS}, up to 25\u00a0MB. The same file, or lines already imported from another export, are skipped.`}
       />
       <Card icon={Upload} title="New statement">
         <form onSubmit={submit} className="space-y-4">
+          {noAccounts && (
+            <Notice tone="warning">
+              There are no accounts to upload to yet. Statements are matched to an account by its bank and last
+              digits, so{' '}
+              <Link to={ACCOUNTS_SETTINGS} className={linkBase}>
+                add your accounts in Settings
+              </Link>{' '}
+              first.
+            </Notice>
+          )}
           <UploadDropzone
             file={file}
             onFile={(f) => {
@@ -113,17 +152,23 @@ export function UploadPage() {
               <label htmlFor="upload-account" className={labelBase}>
                 Account
               </label>
-              <p className="text-xs text-ink-3">Optional, overrides auto-detection.</p>
+              <p id="upload-account-help" className="text-xs text-ink-3">
+                {narrowed.length > 0
+                  ? 'Choose the account this statement is from.'
+                  : 'Optional, overrides auto-detection.'}
+              </p>
             </div>
             <select
               id="upload-account"
+              ref={accountSelect}
               className={cx(selectBase, 'sm:w-72')}
               value={accountId}
               onChange={(e) => setAccountId(e.target.value)}
-              disabled={busy}
+              disabled={busy || noAccounts}
+              aria-describedby="upload-account-help"
             >
-              <option value="">Detect automatically</option>
-              {activeAccounts.map((a) => (
+              <option value="">{narrowed.length > 0 ? 'Choose an account' : 'Detect automatically'}</option>
+              {accountOptions.map((a) => (
                 <option key={a.id} value={a.id}>
                   {accountLabel(config.accounts, a.id)}
                 </option>
@@ -136,16 +181,12 @@ export function UploadPage() {
                 <CircleAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
                 {error.message}
               </p>
-              {error.candidates.length > 0 && (
-                <ul className="mt-2.5 flex flex-wrap gap-2 pl-6">
-                  {error.candidates.map((c) => (
-                    <li key={c}>
-                      <button type="button" className={cx(btnSecondary, btnSmall)} onClick={() => setAccountId(c)}>
-                        {accountLabel(config.accounts, c)}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+              {error.noAccount && (
+                <p className="mt-2 pl-6">
+                  <Link to={ACCOUNTS_SETTINGS} className={linkBase}>
+                    Go to Settings, Accounts
+                  </Link>
+                </p>
               )}
             </div>
           )}

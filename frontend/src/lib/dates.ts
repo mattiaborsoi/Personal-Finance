@@ -61,6 +61,24 @@ export function periodLabel(periodKey: string): string {
   return `${MONTHS[Number(month) - 1]} ${year}`;
 }
 
+/** "2026-07" -> "July" in the year of `now`, "July 2025" in any other year. */
+export function monthName(periodKey: string, now: Date = new Date()): string {
+  if (!isPeriodKey(periodKey)) return periodKey;
+  const [year, month] = periodKey.split('-');
+  return Number(year) === now.getFullYear() ? MONTHS[Number(month) - 1] : periodLabel(periodKey);
+}
+
+/** ["a", "b", "c"] -> "a, b and c"; one item alone, "" for none. */
+export function joinWithAnd(items: ReadonlyArray<string>): string {
+  if (items.length <= 1) return items[0] ?? '';
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/** ["2026-08", "2026-07"] -> "July and August": the months in order, named with `monthName`. */
+export function monthsPhrase(periodKeys: ReadonlyArray<string>, now: Date = new Date()): string {
+  return joinWithAnd([...periodKeys].sort().map((k) => monthName(k, now)));
+}
+
 /**
  * The months a statement covers: "May–Jul 2026" when `from` and `to` differ
  * ("Nov 2025–Jan 2026" across a year end), otherwise the one month spelt out

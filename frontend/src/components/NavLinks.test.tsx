@@ -7,7 +7,7 @@ import { ID_OCADO, ID_UBER, period, transaction } from '../test/fixtures';
 import { fixtureConfig, jsonResponse, mockFetch, renderWithProviders, secondarySession, type RecordedCall } from '../test/utils';
 import { NavLinks } from './NavLinks';
 
-// Both months are in the past, so August (the newest) is the default one.
+// Both months are in the past; the badge counts the lines waiting in both.
 const periods: PeriodOut[] = [
   period({ period_key: '2026-08', start_date: '2026-08-01', end_date: '2026-08-31', pending_review_count: 5 }),
   period({ period_key: '2026-07', start_date: '2026-07-01', end_date: '2026-07-31', pending_review_count: 2 }),
@@ -40,14 +40,21 @@ describe('<NavLinks />', () => {
     expect(screen.getByRole('link', { name: 'Review' })).toHaveAttribute('href', '/review');
   });
 
-  it('shows the count of lines waiting in the period, and opens Review on it', () => {
+  it('shows the count of lines waiting, names their months, and opens Review on the period given', () => {
     mockFetch(() => undefined);
-    renderWithProviders(<NavLinks role="primary" reviewPeriod="2026-07" reviewCount={12} />);
+    renderWithProviders(<NavLinks role="primary" reviewPeriod="2026-07" reviewCount={12} reviewMonths={['2026-08', '2026-07']} />);
 
-    const link = screen.getByRole('link', { name: 'Review (12 pending)' });
+    const link = screen.getByRole('link', { name: 'Review (12 lines to review)' });
     expect(link).toHaveAttribute('href', '/review?period=2026-07');
-    const badge = within(link).getByTitle('12 lines waiting for review in July 2026');
+    const badge = within(link).getByTitle(/^12 lines waiting for review in July( 2026)? and August( 2026)?$/);
     expect(badge).toHaveTextContent('12');
+  });
+
+  it('uses the singular for one line', () => {
+    mockFetch(() => undefined);
+    renderWithProviders(<NavLinks role="primary" reviewCount={1} reviewMonths={['2026-07']} />);
+
+    expect(screen.getByRole('link', { name: 'Review (1 line to review)' })).toHaveAttribute('href', '/review');
   });
 
   it('is not offered to the partner', () => {
@@ -59,7 +66,7 @@ describe('<NavLinks />', () => {
 });
 
 describe('the Review badge in the app shell', () => {
-  it('counts the default period with a single request away from the dashboard and the Review page', async () => {
+  it('counts every month with a single request away from the dashboard and the Review page', async () => {
     const { calls } = mockFetch(({ method, url }) => {
       if (method === 'GET' && url === '/api/config') return jsonResponse(fixtureConfig);
       if (method === 'GET' && url === '/api/periods') return jsonResponse(periods);
@@ -69,11 +76,12 @@ describe('the Review badge in the app shell', () => {
 
     renderWithProviders(<App />, { route: '/transactions?period=2026-07' });
 
-    // A period filter on the Transactions page is not "the period being looked at".
+    // Five lines in August and two in July; a period filter on the Transactions page is not
+    // "the period being looked at", so the link lets the Review page choose (the oldest waiting).
     const link = await within(await screen.findByRole('navigation', { name: 'Main' })).findByRole('link', {
-      name: 'Review (5 pending)',
+      name: 'Review (7 lines to review)',
     });
-    expect(link).toHaveAttribute('href', '/review?period=2026-08');
+    expect(link).toHaveAttribute('href', '/review');
     // The shell asks once, and the Transactions page once for its own filters.
     await waitFor(() => expect(periodFetches(calls)).toBe(2));
   });
@@ -105,7 +113,7 @@ describe('the Review badge in the app shell', () => {
     renderWithProviders(<App />, { route: '/review?period=2026-07' });
 
     const link = await within(await screen.findByRole('navigation', { name: 'Main' })).findByRole('link', {
-      name: 'Review (2 pending)',
+      name: 'Review (7 lines to review)',
     });
     expect(link).toHaveAttribute('href', '/review?period=2026-07');
     expect(link).toHaveAttribute('aria-current', 'page');
@@ -113,14 +121,14 @@ describe('the Review badge in the app shell', () => {
     await user.click(await screen.findByRole('button', { name: 'Approve Ocado' }));
 
     // The page counts again after the approval and hands the result to the badge.
-    expect(await within(mainNav()).findByRole('link', { name: 'Review (1 pending)' })).toBeInTheDocument();
+    expect(await within(mainNav()).findByRole('link', { name: 'Review (6 lines to review)' })).toBeInTheDocument();
     // The shell once, the page once, and the page again after the approval: nothing more.
     expect(periodFetches(calls)).toBe(3);
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(periodFetches(calls)).toBe(3);
   });
 
-  it('drops the badge once the period has nothing waiting', async () => {
+  it('drops the badge once no month has anything waiting', async () => {
     mockFetch(({ method, url }) => {
       if (method === 'GET' && url === '/api/config') return jsonResponse(fixtureConfig);
       if (method === 'GET' && url === '/api/periods') {

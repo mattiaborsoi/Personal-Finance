@@ -82,6 +82,25 @@ describe('awaitingFirstApproval', () => {
 });
 
 describe('<SettlementBanner />', () => {
+  it('stacks the action under the figure on a phone and keeps each chip whole', async () => {
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/settlement/2026-03') return jsonResponse(settlement());
+      return undefined;
+    });
+
+    renderWithProviders(<SettlementBanner period="2026-03" />);
+
+    const headline = await screen.findByTestId('settlement-headline');
+    // Smaller on a phone, so the headline does not wrap one word per line.
+    expect(headline).toHaveClass('text-2xl', 'sm:text-4xl');
+    expect(screen.getByTestId('settlement-top')).toHaveClass('flex-col', 'sm:flex-row');
+    expect(screen.getByRole('button', { name: 'Mark claims settled' })).toHaveClass('w-full', 'sm:w-auto');
+    expect(screen.getByText('Settle by 1 Apr 2026').closest('li')).toHaveClass('whitespace-nowrap');
+    for (const half of screen.getByText(/Split 55\.6% Alex/).closest('li')!.querySelectorAll('span > span')) {
+      expect(half).toHaveClass('whitespace-nowrap');
+    }
+  });
+
   it('renders the headline, components, split ratio, due date and warning from the API', async () => {
     mockFetch(({ method, url }) => {
       if (method === 'GET' && url === '/api/settlement/2026-03') {
@@ -94,7 +113,8 @@ describe('<SettlementBanner />', () => {
 
     expect(await screen.findByTestId('settlement-headline')).toHaveTextContent('Sam owes Alex £45.90');
     expect(screen.getByText('Settle by 1 Apr 2026')).toBeInTheDocument();
-    expect(screen.getByText(/55\.6% Alex \/ 44\.4% Sam/)).toBeInTheDocument();
+    // The split chip breaks, on a phone, between its two halves only.
+    expect(screen.getByText(/Split 55\.6% Alex \//).closest('li')).toHaveTextContent('Split 55.6% Alex / 44.4% Sam');
     expect(screen.getByText(/3 transactions are still pending review/)).toBeInTheDocument();
     expect(screen.getByText('Sam’s share of shared items Alex paid')).toBeInTheDocument();
     expect(screen.getByText('Alex’s personal items on Sam’s cards')).toBeInTheDocument();

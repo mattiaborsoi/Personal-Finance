@@ -8,7 +8,7 @@ import { formatDate, periodLabel } from '../lib/dates';
 import { formatPercent, plural, ratioToPercent } from '../lib/format';
 import { reviewPath } from '../lib/review';
 import { awaitingFirstApproval, settlementDirection, settlementHeadline, snapshotDiffers } from '../lib/settlement';
-import { btnGhost, btnSmall, cardBase, cardInset, chip, cx, eyebrow, linkBase } from '../lib/ui';
+import { btnGhost, btnSmall, cardBase, cardInset, chip, chipFluid, cx, eyebrow, linkBase } from '../lib/ui';
 import { ConfirmButton } from './ConfirmButton';
 import { ErrorMessage } from './ErrorMessage';
 import { InitialsChip } from './InitialsChip';
@@ -96,7 +96,8 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
           awaiting ? 'bg-surface-2' : settled && data ? 'bg-good/10' : 'bg-brand-soft/60',
         )}
       >
-        <div className="flex flex-wrap items-start justify-between gap-4">
+        {/* On a phone the action sits under the figure, full width; from `sm` it sits to the right of it. */}
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between sm:gap-4" data-testid="settlement-top">
           <div className="min-w-0 flex-1">
             <h2 className={eyebrow}>Settlement · {periodLabel(period)}</h2>
             {settlement.error && (
@@ -115,7 +116,7 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
                     <InitialsChip name={names.secondary} size={36} className="ring-2 ring-surface" />
                   </span>
                   <p
-                    className="text-balance text-3xl font-semibold leading-tight tracking-tight text-ink sm:text-4xl"
+                    className="min-w-0 flex-1 text-balance text-2xl font-semibold leading-tight tracking-tight text-ink sm:text-4xl"
                     data-testid="settlement-headline"
                   >
                     {awaiting ? 'Nothing approved yet' : settlementHeadline(data.net_owed_by_secondary, names, symbol)}
@@ -130,23 +131,30 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
                     </Link>
                   </p>
                 )}
+                {/* Chips wrap as whole chips; only the long split chip may break, between its two halves. */}
                 <ul className="mt-4 flex flex-wrap gap-2">
                   {data.settlement_due_date && (
-                    <li className={chip}>
+                    <li className={cx(chip, 'whitespace-nowrap')}>
                       <Calendar className="h-3.5 w-3.5 text-ink-3" aria-hidden="true" />
                       Settle by {formatDate(data.settlement_due_date)}
                     </li>
                   )}
-                  <li className={chip}>
-                    <Scale className="h-3.5 w-3.5 text-ink-3" aria-hidden="true" />
-                    Split {formatPercent(ratioToPercent(data.primary_ratio))} {names.primary} /{' '}
-                    {formatPercent(ratioToPercent(data.secondary_ratio))} {names.secondary}
+                  <li className={chipFluid}>
+                    <Scale className="h-3.5 w-3.5 shrink-0 text-ink-3" aria-hidden="true" />
+                    <span>
+                      <span className="whitespace-nowrap">
+                        Split {formatPercent(ratioToPercent(data.primary_ratio))} {names.primary} /
+                      </span>{' '}
+                      <span className="whitespace-nowrap">
+                        {formatPercent(ratioToPercent(data.secondary_ratio))} {names.secondary}
+                      </span>
+                    </span>
                   </li>
-                  <li className={chip}>
+                  <li className={cx(chip, 'whitespace-nowrap')}>
                     <Receipt className="h-3.5 w-3.5 text-ink-3" aria-hidden="true" />
                     {plural(data.unsettled_claim_count, 'unsettled claim')}
                   </li>
-                  <li className={chip}>
+                  <li className={cx(chip, 'whitespace-nowrap')}>
                     <HandCoins className="h-3.5 w-3.5 text-ink-3" aria-hidden="true" />
                     Payments received <MoneyText value={data.settlement_payments_received} />
                   </li>
@@ -155,9 +163,10 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
             )}
           </div>
           {data && (
-            <div className="flex items-center gap-3">
+            <div className="flex w-full items-center gap-3 sm:w-auto sm:shrink-0">
               {settlement.loading && <LoadingState inline />}
               <ConfirmButton
+                className="w-full sm:w-auto"
                 confirmLabel="Mark all of this period’s claims as settled?"
                 onConfirm={markSettled}
                 tone="primary"

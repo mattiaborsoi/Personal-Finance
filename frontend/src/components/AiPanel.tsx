@@ -55,6 +55,8 @@ export const MODEL_BLANK_MESSAGE = 'Enter a model name.';
 export const BUNDLED_PROXY_LABEL = `${PRODUCT_NAME}'s own LiteLLM`;
 export const EXTERNAL_PROXY_LABEL = 'A LiteLLM I already run';
 export const BUNDLED_PROXY_DOWN_MESSAGE = `${PRODUCT_NAME}'s own LiteLLM is not answering.`;
+/** Instead of the proxy warnings while nothing uses the proxy (AI off, merchants matched offline). */
+export const AI_OFF_PROXY_MESSAGE = `AI is off, so ${PRODUCT_NAME} is not using the proxy. Turn AI on to check the connection.`;
 
 // ---------------------------------------------------------------------------
 // The jobs and the thresholds, as the form shows them
@@ -496,8 +498,10 @@ export function AiPanel() {
   const external = form.proxy.mode === 'external';
   /** What `.env` offers for the external option, if anything. */
   const envUrl = saved.proxy.env_url;
+  /** Nothing calls the proxy: AI is off and merchants are matched offline, so an unreachable proxy is not a problem yet. */
+  const proxyIdle = !form.enabled && form.embedding_provider === 'hash';
   /** The bundled container was chosen and saved, but nothing answers there. */
-  const bundledDown = saved.proxy.mode === 'bundled' && !external && !reachable;
+  const bundledDown = saved.proxy.mode === 'bundled' && !external && !reachable && !proxyIdle;
   /** The proxy answered and nothing it lists can embed, so the memory cannot go online until it does. */
   const noEmbeddingModel = !typedModels && optionsFor(saved.available_models, 'embedding', '').length === 0;
   const busy = saving || testing;
@@ -645,6 +649,12 @@ export function AiPanel() {
             onChange={chooseProxy}
           />
         </fieldset>
+        {proxyIdle && !reachable && (
+          <p className="mt-4 flex items-center gap-2 text-xs text-ink-3">
+            <Info className="h-4 w-4 shrink-0" aria-hidden="true" />
+            {AI_OFF_PROXY_MESSAGE}
+          </p>
+        )}
         {bundledDown && (
           <Notice tone="warning" className="mt-4">
             <p>
@@ -705,7 +715,7 @@ export function AiPanel() {
       </Card>
 
       <Card icon={Brain} title="Which model does what" description="The names are the ones the proxy offers; the same model can do more than one job.">
-        {!reachable && (
+        {!reachable && !proxyIdle && (
           <Notice tone="warning" className="mb-4">
             {MODEL_LIST_UNAVAILABLE_MESSAGE}
           </Notice>

@@ -1,10 +1,11 @@
 import { CirclePlus, Divide, Scale, User, type LucideIcon } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { api, editErrorMessage, isApiError, type ClaimCreate, type ClaimOut, type ClaimType } from '../api';
+import { api, editErrorMessage, isApiError, type AppConfig, type ClaimCreate, type ClaimOut, type ClaimType } from '../api';
 import { useAuth } from '../auth/AuthContext';
 import { useConfig, useCurrency, useNames } from '../config/ConfigContext';
 import { claimDateProblem, earliestClaimDate, isDateProblem, isLargeClaim } from '../lib/claims';
 import { todayIso } from '../lib/dates';
+import { splitPreviewText } from '../lib/household';
 import { formatMoney, normaliseAmountInput } from '../lib/money';
 import { btnPrimary, cardInset, cx, inputBase, inputInvalid, inputTall, labelBase, radioBase, selectBase } from '../lib/ui';
 import { ConfirmPrompt } from './ConfirmButton';
@@ -17,18 +18,38 @@ interface Props {
   onDateChange?: (isoDate: string) => void;
 }
 
+type Names = { primary: string; secondary: string };
+
 interface SplitOption {
   value: ClaimType;
-  label: (names: { primary: string; secondary: string }) => string;
-  hint: string;
+  label: (names: Names) => string;
+  hint: (names: Names, split: AppConfig['split']) => string;
   icon: LucideIcon;
 }
 
+/**
+ * What "Split by income" does today, in the household's own names: the ratio
+ * when the household splits by income, or a plain "50/50" when it splits
+ * equally (the server then divides every income-split claim equally too).
+ */
+function incomeSplitHint(names: Names, split: AppConfig['split']): string {
+  if (split.strategy === 'equal_50_50') return 'Shared cost, split by income (currently 50/50, as the household splits equally)';
+  const primary = Number(split.primary_ratio);
+  const secondary = Number(split.secondary_ratio);
+  if (!Number.isFinite(primary) || !Number.isFinite(secondary)) return 'Shared cost, divided by income';
+  return `Shared cost, ${splitPreviewText({ primary: primary * 100, secondary: secondary * 100 }, names)}`;
+}
+
+/** The claim type that matches how the household splits shared costs. */
+function defaultClaimType(split: AppConfig['split']): ClaimType {
+  return split.strategy === 'equal_50_50' ? 'shared_equal' : 'shared_proportional';
+}
+
 const SPLIT_OPTIONS: SplitOption[] = [
-  { value: 'shared_proportional', label: () => 'Split by income', hint: 'Shared cost, divided by salary ratio', icon: Scale },
-  { value: 'shared_equal', label: () => '50/50', hint: 'Shared cost, split equally', icon: Divide },
-  { value: 'primary_personal', label: (n) => `${n.primary}'s personal item`, hint: 'Not shared', icon: User },
-  { value: 'secondary_personal', label: (n) => `${n.secondary}'s personal item`, hint: 'Not shared', icon: User },
+  { value: 'shared_proportional', label: () => 'Split by income', hint: incomeSplitHint, icon: Scale },
+  { value: 'shared_equal', label: () => '50/50', hint: () => 'Shared cost, split equally', icon: Divide },
+  { value: 'primary_personal', label: (n) => `${n.primary}'s personal item`, hint: () => 'Not shared', icon: User },
+  { value: 'secondary_personal', label: (n) => `${n.secondary}'s personal item`, hint: () => 'Not shared', icon: User },
 ];
 
 /** Mobile-first claim form; large touch targets and native inputs. */
@@ -44,7 +65,7 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
   const [amount, setAmount] = useState('');
   const [merchant, setMerchant] = useState('');
   const [description, setDescription] = useState('');
-  const [claimType, setClaimType] = useState<ClaimType>('shared_proportional');
+  const [claimType, setClaimType] = useState<ClaimType>(() => defaultClaimType(config.split));
   const [paidBy, setPaidBy] = useState(config.users.secondary.id);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -265,7 +286,7 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-semibold text-ink">{opt.label(names)}</span>
-                  <span className="block text-xs text-ink-3">{opt.hint}</span>
+                  <span className="block text-xs text-ink-3">{opt.hint(names, config.split)}</span>
                 </span>
                 <input
                   type="radio"

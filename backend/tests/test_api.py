@@ -17,6 +17,7 @@ import pytest
 from app.models import AuditReport, LedgerPeriod, SettlementSnapshot, StatementUpload
 from app.routers.claims import earliest_claim_date
 from app.services import guesser, periods
+from app.services.ingestion import NO_ACCOUNT_MESSAGE, UNCLEAR_ACCOUNT_MESSAGE, AccountResolutionError
 from tests.conftest import requires_db
 from tests.factories import make_claim, make_transaction
 from tests.fixtures import generate
@@ -282,12 +283,27 @@ def test_checking_statement_rules_transfers_and_mirrors(client, primary_headers,
     assert again.json()["skipped_duplicates"] == 6
 
 
+def test_account_resolution_messages_name_no_parameters():
+    # Shown to the user as they are: no parameter names, and a next step for each case.
+    none = AccountResolutionError.for_candidates([])
+    assert str(none) == NO_ACCOUNT_MESSAGE
+    assert none.candidates == []
+    assert "Settings, Accounts" in NO_ACCOUNT_MESSAGE
+    several = AccountResolutionError.for_candidates(["acc_cc_amex", "acc_cc_amex_supp"])
+    assert str(several) == UNCLEAR_ACCOUNT_MESSAGE
+    assert several.candidates == ["acc_cc_amex", "acc_cc_amex_supp"]
+    for message in (NO_ACCOUNT_MESSAGE, UNCLEAR_ACCOUNT_MESSAGE):
+        assert "account_id" not in message
+
+
 @requires_db
 def test_upload_validation(client, primary_headers, llm_stub, fixtures_dir):
     # A bare CSV export carries no institution / last-4 -> ambiguous.
     resp = upload(client, primary_headers, fixtures_dir["anon_csv"])
     assert resp.status_code == 422, resp.text
-    assert "candidates" in str(resp.json()["detail"])
+    detail = resp.json()["detail"]
+    assert detail["message"] == UNCLEAR_ACCOUNT_MESSAGE
+    assert "acc_checking_hsbc" in detail["candidates"]
 
     ok = upload(client, primary_headers, fixtures_dir["anon_csv"], account_id="acc_checking_hsbc")
     assert ok.status_code == 200, ok.text

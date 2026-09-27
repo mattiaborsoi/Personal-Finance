@@ -81,8 +81,8 @@ interface RowNoteProps {
 function RowNote({ id, message, live, colSpan }: RowNoteProps) {
   return (
     // No divider above: the note belongs to the rule over it.
-    <tr className="!border-t-0">
-      <td colSpan={colSpan} className="px-5 pb-3 sm:px-6">
+    <tr className="!border-t-0 max-sm:block">
+      <td colSpan={colSpan} className="px-5 pb-3 max-sm:block sm:px-6">
         <p
           id={id}
           role={live ? 'alert' : undefined}
@@ -97,6 +97,24 @@ function RowNote({ id, message, live, colSpan }: RowNoteProps) {
 }
 
 const COLUMNS = 7;
+
+/**
+ * Below `sm` the rules table reflows into one stacked block per rule (the same
+ * elements, so every control keeps its single accessible name): "Rule N" with its
+ * actions on the first line, then each field full width under a visible label.
+ */
+const stackTable = 'max-sm:block';
+const stackRow = 'max-sm:grid max-sm:grid-cols-[1fr_auto] max-sm:items-center max-sm:py-3';
+const stackCell = 'max-sm:col-span-2 max-sm:block max-sm:min-w-0 max-sm:px-5 max-sm:py-1.5';
+
+/** The column name shown above a field when the table is stacked; the control's own aria-label already says it. */
+function StackLabel({ children }: { children: string }) {
+  return (
+    <span aria-hidden="true" className="mb-1 block text-xs font-medium text-ink-2 sm:hidden">
+      {children}
+    </span>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // The panel
@@ -301,8 +319,8 @@ export function RulesPanel() {
         ) : (
           <>
             <div className="overflow-x-auto">
-              <table className={cx(tableBase, tableFlush)}>
-                <thead>
+              <table className={cx(tableBase, tableFlush, stackTable)}>
+                <thead className="max-sm:hidden">
                   <tr>
                     <th scope="col" className={cx(thBase, 'text-right')}>
                       #
@@ -327,7 +345,7 @@ export function RulesPanel() {
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-hairline">
+                <tbody className={cx('divide-y divide-hairline', stackTable)}>
                   {form.rules.map((row, index) => {
                     const n = index + 1;
                     const problem = ruleProblem(index);
@@ -341,9 +359,18 @@ export function RulesPanel() {
                     const unknownTarget = Boolean(target) && !config.accounts.some((a) => a.id === target);
                     return (
                       <Fragment key={row.key}>
-                        <tr>
-                          <td className={cx(tdBase, 'whitespace-nowrap text-right tabular text-ink-3')}>{n}</td>
-                          <td className={cx(tdBase, 'min-w-[14rem]')}>
+                        <tr className={stackRow}>
+                          <td
+                            className={cx(
+                              tdBase,
+                              'whitespace-nowrap text-right tabular text-ink-3 max-sm:block max-sm:py-1.5 max-sm:text-left max-sm:font-semibold max-sm:text-ink',
+                            )}
+                          >
+                            <span className="sm:hidden">Rule </span>
+                            {n}
+                          </td>
+                          <td className={cx(tdBase, 'min-w-[14rem]', stackCell)}>
+                            <StackLabel>Pattern</StackLabel>
                             <input
                               type="text"
                               className={cx(inputBase, 'font-mono', flag('pattern').invalid && inputInvalid)}
@@ -358,7 +385,8 @@ export function RulesPanel() {
                               onChange={(e) => setRule(index, { pattern: e.target.value })}
                             />
                           </td>
-                          <td className={cx(tdBase, 'min-w-[11rem]')}>
+                          <td className={cx(tdBase, 'min-w-[11rem]', stackCell)}>
+                            <StackLabel>Category</StackLabel>
                             <select
                               className={cx(selectBase, flag('category').invalid && inputInvalid)}
                               value={row.category}
@@ -376,7 +404,8 @@ export function RulesPanel() {
                               ))}
                             </select>
                           </td>
-                          <td className={cx(tdBase, 'min-w-[11rem]')}>
+                          <td className={cx(tdBase, 'min-w-[11rem]', stackCell)}>
+                            <StackLabel>Claim type</StackLabel>
                             <select
                               className={cx(selectBase, flag('claim_type').invalid && inputInvalid)}
                               value={row.claim_type}
@@ -393,7 +422,8 @@ export function RulesPanel() {
                               ))}
                             </select>
                           </td>
-                          <td className={cx(tdBase, 'min-w-[10rem]')}>
+                          <td className={cx(tdBase, 'min-w-[10rem]', stackCell)}>
+                            <StackLabel>Merchant</StackLabel>
                             <input
                               type="text"
                               className={cx(inputBase, flag('merchant').invalid && inputInvalid)}
@@ -407,7 +437,8 @@ export function RulesPanel() {
                               onChange={(e) => setRule(index, { merchant: e.target.value })}
                             />
                           </td>
-                          <td className={cx(tdBase, 'min-w-[12rem]')}>
+                          <td className={cx(tdBase, 'min-w-[12rem]', stackCell)}>
+                            <StackLabel>Transfer</StackLabel>
                             <div className="space-y-2">
                               <label className="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap text-sm text-ink-2">
                                 <input
@@ -445,7 +476,7 @@ export function RulesPanel() {
                               )}
                             </div>
                           </td>
-                          <td className={cx(tdBase, 'text-right')}>
+                          <td className={cx(tdBase, 'text-right max-sm:col-start-2 max-sm:row-start-1 max-sm:block max-sm:py-0')}>
                             <div className="flex items-center justify-end gap-1">
                               <button
                                 type="button"

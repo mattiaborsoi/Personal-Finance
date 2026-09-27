@@ -5,6 +5,7 @@ import type { AiSettings, AiTestResult, AiUpdate } from '../api';
 import { aiSettings } from '../test/fixtures';
 import { jsonResponse, mockFetch, renderWithProviders, type RecordedCall } from '../test/utils';
 import {
+  AI_OFF_PROXY_MESSAGE,
   AiPanel,
   BUNDLED_PROXY_LABEL,
   MODEL_LIST_UNAVAILABLE_MESSAGE,
@@ -483,6 +484,31 @@ describe('<AiPanel />', () => {
     expect(screen.queryByText(/docker compose up -d litellm/)).not.toBeInTheDocument();
     expect(screen.getByText(/Provider API keys never appear here/)).toHaveTextContent("Settl only holds the proxy's key");
     expect(saveButton()).toBeDisabled();
+  });
+
+  it('with AI off and merchants matched offline, replaces both proxy warnings with one quiet line, and brings them back when AI is switched on', async () => {
+    const user = userEvent.setup();
+    mockAi(
+      aiSettings({
+        enabled: false,
+        embedding_provider: 'hash',
+        available_models: [],
+        proxy: { mode: 'bundled', url: 'http://litellm:4000', bundled_url: 'http://litellm:4000', env_url: null, reachable: false, has_key: false },
+      }),
+    );
+
+    const toggle = await renderPanel();
+
+    expect(screen.getByText(AI_OFF_PROXY_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText(/not answering/)).not.toBeInTheDocument();
+    expect(screen.queryByText(MODEL_LIST_UNAVAILABLE_MESSAGE)).not.toBeInTheDocument();
+    // The model fields stay on screen, as typed names since there is no list to offer.
+    expect(screen.getByLabelText('Categorising transactions')).toHaveAttribute('type', 'text');
+
+    await user.click(toggle);
+    expect(screen.queryByText(AI_OFF_PROXY_MESSAGE)).not.toBeInTheDocument();
+    expect(screen.getByText(new RegExp(BUNDLED_PROXY_DOWN_MESSAGE.replace(/[.'()]/g, '\\$&')))).toBeInTheDocument();
+    expect(screen.getByText(MODEL_LIST_UNAVAILABLE_MESSAGE)).toBeInTheDocument();
   });
 
   it('says what to do when the bundled LiteLLM is chosen but not running, and offers the .env proxy as the alternative', async () => {
