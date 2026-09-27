@@ -59,8 +59,11 @@ describe('<TransactionsPage />', () => {
     renderWithProviders(<TransactionsPage />, { route: '/transactions?include_transfers=false' });
     await screen.findByRole('button', { name: 'Ocado' });
     expect(screen.getByText('2 transactions match')).toBeInTheDocument();
+    // The icon-only ⇆ header still names its column, and each toggle names its merchant.
+    expect(screen.getByRole('columnheader', { name: 'Transfer' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Mark Uber as a transfer' })).not.toBeChecked();
 
-    await user.click(screen.getByLabelText('Internal transfer: Ocado'));
+    await user.click(screen.getByLabelText('Mark Ocado as a transfer'));
 
     await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
     expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ is_internal_transfer: true });
@@ -80,9 +83,9 @@ describe('<TransactionsPage />', () => {
 
     renderWithProviders(<TransactionsPage />, { route: '/transactions' });
     await screen.findByRole('button', { name: 'Ocado' });
-    await user.click(screen.getByLabelText('Internal transfer: Ocado'));
+    await user.click(screen.getByLabelText('Mark Ocado as a transfer'));
 
-    await waitFor(() => expect(screen.getByLabelText('Internal transfer: Ocado')).toBeChecked());
+    await waitFor(() => expect(screen.getByLabelText('Mark Ocado as a transfer')).toBeChecked());
     expect(screen.getByRole('button', { name: 'Ocado' })).toBeInTheDocument();
     expect(screen.getByText('2 transactions match')).toBeInTheDocument();
   });
@@ -115,8 +118,8 @@ describe('<TransactionsPage />', () => {
 
     expect(await screen.findByText(/March 2026 is closed/)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText('Category for Ocado')).toBeDisabled());
-    expect(screen.getByLabelText('Internal transfer: Ocado')).toBeDisabled();
-    screen.getAllByRole('button', { name: 'Delete' }).forEach((b) => expect(b).toBeDisabled());
+    expect(screen.getByLabelText('Mark Ocado as a transfer')).toBeDisabled();
+    screen.getAllByRole('button', { name: /^Delete (Ocado|Uber)$/ }).forEach((b) => expect(b).toBeDisabled());
     screen.getAllByRole('button', { name: /^Split / }).forEach((b) => expect(b).toBeDisabled());
     expect(screen.getAllByText('Period closed').length).toBe(2);
   });
@@ -141,9 +144,9 @@ describe('<TransactionsPage />', () => {
     expect((screen.getByLabelText('Claim type for Ocado part 2') as HTMLSelectElement).value).toBe('personal');
     expect(screen.getByText('-£30.00')).toBeInTheDocument();
     expect(screen.getByText('-£15.90')).toBeInTheDocument();
-    expect(screen.getByLabelText('Internal transfer: Ocado')).toBeDisabled();
+    expect(screen.getByLabelText('Mark Ocado as a transfer')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Edit split for Ocado' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Unsplit' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Unsplit Ocado' })).toBeEnabled();
     expect(screen.queryByRole('button', { name: 'Split Ocado' })).not.toBeInTheDocument();
     // The other, unsplit row keeps its inline controls and Split action.
     expect(screen.getByLabelText('Category for Uber')).toBeEnabled();
@@ -219,7 +222,7 @@ describe('<TransactionsPage />', () => {
 
     renderWithProviders(<TransactionsPage />, { route: '/transactions' });
     await screen.findByRole('button', { name: 'Ocado' });
-    await user.click(screen.getByRole('button', { name: 'Unsplit' }));
+    await user.click(screen.getByRole('button', { name: 'Unsplit Ocado' }));
     await user.click(within(screen.getByRole('group', { name: 'Remove this split?' })).getByRole('button', { name: 'Confirm' }));
 
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE')).toBe(true));
@@ -228,7 +231,7 @@ describe('<TransactionsPage />', () => {
     expect((screen.getByLabelText('Category for Ocado') as HTMLSelectElement).value).toBe('Groceries');
     expect(screen.queryByText('Split into 2 parts')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Category for Ocado part 1')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Internal transfer: Ocado')).toBeEnabled();
+    expect(screen.getByLabelText('Mark Ocado as a transfer')).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Split Ocado' })).toBeEnabled();
     expect(screen.getByText('2 transactions match')).toBeInTheDocument();
   });

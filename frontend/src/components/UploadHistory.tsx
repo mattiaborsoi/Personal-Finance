@@ -1,7 +1,7 @@
 import { FileText, Upload } from 'lucide-react';
 import type { StatementOut } from '../api';
 import { useConfig } from '../config/ConfigContext';
-import { formatDateTime, periodLabel } from '../lib/dates';
+import { formatDateTime, periodRangeLabel } from '../lib/dates';
 import { accountLabel } from '../lib/format';
 import { chipSoft, cx, tableBase, tableFlush, tdBase, thBase, trHover } from '../lib/ui';
 import { Badge } from './Badge';
@@ -61,7 +61,9 @@ export function UploadHistory({ statements }: Props) {
               <td className={tdBase}>
                 <span className={chipSoft}>{accountLabel(config.accounts, s.account_id)}</span>
               </td>
-              <td className={cx(tdBase, 'whitespace-nowrap text-ink-2')}>{periodLabel(s.period_key)}</td>
+              <td className={cx(tdBase, 'whitespace-nowrap text-ink-2')}>
+                {periodRangeLabel(s.period_from, s.period_to, s.period_key)}
+              </td>
               <td className={tdBase}>
                 <Badge tone="neutral">{s.parser}</Badge>
               </td>

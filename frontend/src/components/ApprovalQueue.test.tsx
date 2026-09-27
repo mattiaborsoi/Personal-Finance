@@ -6,16 +6,15 @@ import { ID_OCADO, ID_PART_A, ID_PART_B, ID_UBER, part, transaction } from '../t
 import { jsonResponse, mockFetch, renderWithProviders } from '../test/utils';
 import { ApprovalQueue } from './ApprovalQueue';
 
-const rows = [
-  transaction({ id: ID_OCADO, cleaned_merchant: 'Ocado' }),
-  transaction({
-    id: ID_UBER,
-    cleaned_merchant: 'Uber',
-    raw_description: 'UBER *TRIP',
-    amount: '-12.00',
-    category: 'Transport:Taxi',
-  }),
-];
+const uber = {
+  id: ID_UBER,
+  cleaned_merchant: 'Uber',
+  raw_description: 'UBER *TRIP',
+  amount: '-12.00',
+  category: 'Transport:Taxi',
+};
+
+const rows = [transaction({ id: ID_OCADO, cleaned_merchant: 'Ocado' }), transaction(uber)];
 
 function rowFor(merchant: string): HTMLElement {
   const cell = screen.getByRole('button', { name: merchant });
@@ -39,6 +38,26 @@ describe('<ApprovalQueue />', () => {
     expect(within(rowFor('Ocado')).getByText('LLM')).toBeInTheDocument();
     expect(within(rowFor('Ocado')).getByText('62%')).toBeInTheDocument();
     expect(screen.getByText('2 transactions pending review')).toBeInTheDocument();
+  });
+
+  it('names every row control after its merchant for screen readers, keeping the visible label short', async () => {
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      return undefined;
+    });
+
+    renderWithProviders(<ApprovalQueue period="2026-03" />);
+    await screen.findByRole('button', { name: 'Ocado' });
+
+    const approve = screen.getByRole('button', { name: 'Approve Ocado' });
+    expect(approve).toHaveTextContent('Approve');
+    expect(screen.getByRole('button', { name: 'Approve Uber' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Select Ocado' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Mark Ocado as a transfer' })).not.toBeChecked();
+    expect(screen.getByRole('button', { name: 'Split Ocado' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Transfer' })).toBeInTheDocument();
+    // The category select carries its full name as a tooltip, since long names can be clipped.
+    expect(screen.getByLabelText('Category for Uber')).toHaveAttribute('title', 'Transport:Taxi');
   });
 
   it('offers no empty "Uncategorised" or "Not set" option that the backend would ignore', async () => {
@@ -77,7 +96,7 @@ describe('<ApprovalQueue />', () => {
 
     await user.selectOptions(screen.getByLabelText('Category for Ocado'), 'Groceries');
     await user.selectOptions(screen.getByLabelText('Claim type for Ocado'), 'shared_equal');
-    await user.click(within(rowFor('Ocado')).getByRole('button', { name: 'Approve' }));
+    await user.click(screen.getByRole('button', { name: 'Approve Ocado' }));
 
     await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true));
     const approve = calls.find((c) => c.method === 'POST');
@@ -101,7 +120,7 @@ describe('<ApprovalQueue />', () => {
 
     renderWithProviders(<ApprovalQueue period="2026-03" />);
     await screen.findByRole('button', { name: 'Uber' });
-    await user.click(within(rowFor('Uber')).getByRole('button', { name: 'Approve' }));
+    await user.click(screen.getByRole('button', { name: 'Approve Uber' }));
 
     await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true));
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ remember: true });
@@ -120,13 +139,64 @@ describe('<ApprovalQueue />', () => {
 
     await user.selectOptions(screen.getByLabelText('Category for Uber'), 'Dining');
     await user.selectOptions(screen.getByLabelText('Claim type for Uber'), 'shared_equal');
-    await user.click(within(rowFor('Uber')).getByRole('button', { name: 'Approve' }));
+    await user.click(screen.getByRole('button', { name: 'Approve Uber' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(PERIOD_CLOSED_MESSAGE);
     expect(screen.getByRole('button', { name: 'Uber' })).toBeInTheDocument();
     // The restored row still shows what the user chose, not the original classification.
     expect((screen.getByLabelText('Category for Uber') as HTMLSelectElement).value).toBe('Dining');
     expect((screen.getByLabelText('Claim type for Uber') as HTMLSelectElement).value).toBe('shared_equal');
+  });
+
+  it('marks a line as a transfer with the same PATCH as the transactions page and keeps it in the queue', async () => {
+    const user = userEvent.setup();
+    const onChanged = vi.fn();
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      if (method === 'PATCH' && url === `/api/transactions/${ID_UBER}`) {
+        // The server turns a transfer's claim type into "personal" (nobody is owed for it).
+        return jsonResponse(transaction({ ...uber, is_internal_transfer: true, claim_type: 'personal' }));
+      }
+      return undefined;
+    });
+
+    renderWithProviders(<ApprovalQueue period="2026-03" onChanged={onChanged} />);
+    await screen.findByRole('button', { name: 'Uber' });
+    // An unsaved category choice must survive the toggle.
+    await user.selectOptions(screen.getByLabelText('Category for Uber'), 'Dining');
+    await user.click(screen.getByLabelText('Mark Uber as a transfer'));
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
+    const patch = calls.find((c) => c.method === 'PATCH');
+    expect(patch?.url).toBe(`/api/transactions/${ID_UBER}`);
+    expect(patch?.body).toEqual({ is_internal_transfer: true });
+    // Marking a transfer is not an approval, so nothing is posted and the row stays.
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
+
+    await waitFor(() => expect(screen.getByLabelText('Mark Uber as a transfer')).toBeChecked());
+    expect(screen.getByRole('button', { name: 'Uber' })).toBeInTheDocument();
+    expect(screen.getByText('2 transactions pending review')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Split Uber' })).toBeDisabled();
+    expect((screen.getByLabelText('Claim type for Uber') as HTMLSelectElement).value).toBe('personal');
+    expect((screen.getByLabelText('Category for Uber') as HTMLSelectElement).value).toBe('Dining');
+    expect(onChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the transfer toggle unchecked and explains when the PATCH is refused', async () => {
+    const user = userEvent.setup();
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      if (method === 'PATCH') return jsonResponse({ detail: 'period 2026-03 is closed' }, 409);
+      return undefined;
+    });
+
+    renderWithProviders(<ApprovalQueue period="2026-03" />);
+    await screen.findByRole('button', { name: 'Ocado' });
+    await user.click(screen.getByLabelText('Mark Ocado as a transfer'));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(PERIOD_CLOSED_MESSAGE);
+    expect(screen.getByLabelText('Mark Ocado as a transfer')).not.toBeChecked();
+    expect(screen.getByLabelText('Mark Ocado as a transfer')).toBeEnabled();
   });
 
   it('approves everything selected via the batch endpoint', async () => {
@@ -163,8 +233,9 @@ describe('<ApprovalQueue />', () => {
     await screen.findByRole('button', { name: 'Ocado' });
 
     expect(screen.getByRole('status')).toHaveTextContent(/this period is closed/i);
-    screen.getAllByRole('button', { name: 'Approve' }).forEach((b) => expect(b).toBeDisabled());
+    screen.getAllByRole('button', { name: /^Approve (Ocado|Uber)$/ }).forEach((b) => expect(b).toBeDisabled());
     screen.getAllByRole('button', { name: /^Split / }).forEach((b) => expect(b).toBeDisabled());
+    screen.getAllByRole('checkbox', { name: /as a transfer$/ }).forEach((c) => expect(c).toBeDisabled());
     expect(screen.getByRole('button', { name: /approve selected/i })).toBeDisabled();
     expect(screen.getByLabelText('Category for Ocado')).toBeDisabled();
     expect(screen.getByLabelText('Select all pending transactions')).toBeDisabled();

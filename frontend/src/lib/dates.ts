@@ -61,6 +61,35 @@ export function periodLabel(periodKey: string): string {
   return `${MONTHS[Number(month) - 1]} ${year}`;
 }
 
+/**
+ * The months a statement covers: "May–Jul 2026" when `from` and `to` differ
+ * ("Nov 2025–Jan 2026" across a year end), otherwise the one month spelt out
+ * ("July 2026"), falling back to `periodKey` when either end is unknown.
+ */
+export function periodRangeLabel(from: string | null | undefined, to: string | null | undefined, periodKey: string): string {
+  if (!from || !to || !isPeriodKey(from) || !isPeriodKey(to)) return periodLabel(periodKey);
+  if (from === to) return periodLabel(from);
+  // Period keys are zero-padded YYYY-MM, so string order is chronological order.
+  const [lo, hi] = from < to ? [from, to] : [to, from];
+  const [loYear, loMonth] = lo.split('-');
+  const [hiYear, hiMonth] = hi.split('-');
+  const short = (month: string) => MONTHS[Number(month) - 1].slice(0, 3);
+  if (loYear === hiYear) return `${short(loMonth)}–${short(hiMonth)} ${loYear}`;
+  return `${short(loMonth)} ${loYear}–${short(hiMonth)} ${hiYear}`;
+}
+
+/**
+ * The local date `months` months before `now`, as YYYY-MM-DD. The day is kept
+ * where the target month has it, otherwise clamped to that month's last day
+ * (29 Feb -> 28 Feb).
+ */
+export function monthsAgoIso(months: number, now: Date = new Date()): string {
+  const target = new Date(now.getFullYear(), now.getMonth() - months, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(now.getDate(), lastDay));
+  return todayIso(target);
+}
+
 /** "2026-03" -> "Mar 26" for compact chart axes. */
 export function periodShortLabel(periodKey: string): string {
   if (!isPeriodKey(periodKey)) return periodKey;

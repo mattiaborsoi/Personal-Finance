@@ -1,12 +1,12 @@
 import { Calendar, ChevronDown, ChevronUp, CircleCheck, HandCoins, Lock, Receipt, Scale } from 'lucide-react';
 import { useState } from 'react';
-import { api, errorMessage } from '../api';
+import { api, errorMessage, type PeriodOut } from '../api';
 import { useCurrency, useNames } from '../config/ConfigContext';
 import { useAsync } from '../hooks/useAsync';
 import { formatDate, periodLabel } from '../lib/dates';
 import { formatPercent, plural, ratioToPercent } from '../lib/format';
-import { settlementDirection, settlementHeadline, snapshotDiffers } from '../lib/settlement';
-import { btnGhost, btnSmall, cardBase, cardInset, chip, cx, eyebrow } from '../lib/ui';
+import { awaitingFirstApproval, settlementDirection, settlementHeadline, snapshotDiffers } from '../lib/settlement';
+import { btnGhost, btnSmall, cardBase, cardInset, chip, cx, eyebrow, linkBase } from '../lib/ui';
 import { ConfirmButton } from './ConfirmButton';
 import { ErrorMessage } from './ErrorMessage';
 import { InitialsChip } from './InitialsChip';
@@ -17,13 +17,15 @@ import { SettlementLines } from './SettlementLines';
 
 interface Props {
   period: string;
+  /** The period's counts, which say whether anything is approved yet; null while unknown. */
+  periodInfo?: PeriodOut | null;
   refreshKey?: number;
   /** Called after claims are marked settled so sibling cards can refresh. */
   onChanged?: () => void;
 }
 
 /** The emotional centre of the dashboard: who owes whom, why, and the one action that clears it. */
-export function SettlementBanner({ period, refreshKey = 0, onChanged }: Props) {
+export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, onChanged }: Props) {
   const names = useNames();
   const symbol = useCurrency();
   const settlement = useAsync(() => api.getSettlement(period), `settlement:${period}:${refreshKey}`);
@@ -32,8 +34,10 @@ export function SettlementBanner({ period, refreshKey = 0, onChanged }: Props) {
   const [actionError, setActionError] = useState<string | null>(null);
 
   const data = settlement.data;
+  // Nothing approved yet: a zero net is "no figure yet", never "settled up".
+  const awaiting = data ? awaitingFirstApproval(data, periodInfo) : false;
   const direction = data ? settlementDirection(data.net_owed_by_secondary) : 'settled';
-  const settled = direction === 'settled';
+  const settled = direction === 'settled' && !awaiting;
 
   async function markSettled() {
     setActionError(null);
@@ -82,7 +86,12 @@ export function SettlementBanner({ period, refreshKey = 0, onChanged }: Props) {
       aria-label="Settlement"
       className={cx(cardBase, 'overflow-hidden p-0 transition-opacity sm:p-0', settlement.loading && data && 'opacity-90')}
     >
-      <div className={cx('px-5 py-6 sm:px-6 sm:py-7', settled && data ? 'bg-good/10' : 'bg-brand-soft/60')}>
+      <div
+        className={cx(
+          'px-5 py-6 sm:px-6 sm:py-7',
+          awaiting ? 'bg-surface-2' : settled && data ? 'bg-good/10' : 'bg-brand-soft/60',
+        )}
+      >
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
             <h2 className={eyebrow}>Settlement · {periodLabel(period)}</h2>
@@ -105,9 +114,18 @@ export function SettlementBanner({ period, refreshKey = 0, onChanged }: Props) {
                     className="text-3xl font-semibold leading-tight tracking-tight text-ink sm:text-4xl"
                     data-testid="settlement-headline"
                   >
-                    {settlementHeadline(data.net_owed_by_secondary, names, symbol)}
+                    {awaiting ? 'Nothing approved yet' : settlementHeadline(data.net_owed_by_secondary, names, symbol)}
                   </p>
                 </div>
+                {awaiting && (
+                  <p className="mt-3 text-sm text-ink-2" data-testid="settlement-awaiting">
+                    There is no figure until something is approved.{' '}
+                    {plural(data.pending_review_count, 'line is', 'lines are')} waiting for review.{' '}
+                    <a href="#approval-queue" className={linkBase}>
+                      Review the queue
+                    </a>
+                  </p>
+                )}
                 <ul className="mt-4 flex flex-wrap gap-2">
                   {data.settlement_due_date && (
                     <li className={chip}>
@@ -151,28 +169,31 @@ export function SettlementBanner({ period, refreshKey = 0, onChanged }: Props) {
 
       {data && (
         <div className="space-y-4 px-5 py-5 sm:px-6">
-          {data.pending_review_count > 0 && (
+          {data.pending_review_count > 0 && !awaiting && (
             <Notice tone="warning" role="status">
               {plural(data.pending_review_count, 'transaction is', 'transactions are')} still pending review, so this
               figure may change.
             </Notice>
           )}
 
-          <dl className="grid gap-3 sm:grid-cols-2">
-            {components.map((c) => (
-              <div key={c.label} className={cx(cardInset, 'flex items-start justify-between gap-3')}>
-                <dt className="flex gap-2 text-xs leading-5 text-ink-2">
-                  <span className="w-3 shrink-0 font-mono text-sm leading-5 text-ink-3" aria-hidden="true">
-                    {c.sign}
-                  </span>
-                  {c.label}
-                </dt>
-                <dd className="shrink-0 text-sm font-semibold leading-5 tabular text-ink">
-                  <MoneyText value={c.value} />
-                </dd>
-              </div>
-            ))}
-          </dl>
+          {/* The four sums are all zero while nothing is approved; they would only dress up a figure that does not exist. */}
+          {!awaiting && (
+            <dl className="grid gap-3 sm:grid-cols-2">
+              {components.map((c) => (
+                <div key={c.label} className={cx(cardInset, 'flex items-start justify-between gap-3')}>
+                  <dt className="flex gap-2 text-xs leading-5 text-ink-2">
+                    <span className="w-3 shrink-0 font-mono text-sm leading-5 text-ink-3" aria-hidden="true">
+                      {c.sign}
+                    </span>
+                    {c.label}
+                  </dt>
+                  <dd className="shrink-0 text-sm font-semibold leading-5 tabular text-ink">
+                    <MoneyText value={c.value} />
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
 
           {notice && (
             <Notice tone="good" role="status">
@@ -181,42 +202,46 @@ export function SettlementBanner({ period, refreshKey = 0, onChanged }: Props) {
           )}
           <ErrorMessage message={actionError} onDismiss={() => setActionError(null)} />
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-hairline pt-4">
-            {data.snapshot ? (
-              <p
-                className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-ink-3"
-                data-testid="settlement-snapshot"
-              >
-                <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                <span>
-                  Recorded at close: {settlementHeadline(data.snapshot.net_owed_by_secondary, names, symbol)}
-                  {data.snapshot.snapshot_at ? ` (${formatDate(data.snapshot.snapshot_at)})` : ''}
-                </span>
-                {drifted && (
-                  <span className="text-warning-ink" role="note">
-                    · The live figure differs from what was recorded when the period was closed.
+          {(data.snapshot || !awaiting) && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-hairline pt-4">
+              {data.snapshot ? (
+                <p
+                  className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-ink-3"
+                  data-testid="settlement-snapshot"
+                >
+                  <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span>
+                    Recorded at close: {settlementHeadline(data.snapshot.net_owed_by_secondary, names, symbol)}
+                    {data.snapshot.snapshot_at ? ` (${formatDate(data.snapshot.snapshot_at)})` : ''}
                   </span>
-                )}
-              </p>
-            ) : (
-              <span className="text-xs text-ink-3">Every line behind this figure is listed below.</span>
-            )}
-            <button
-              type="button"
-              className={cx(btnGhost, btnSmall)}
-              aria-expanded={expanded}
-              aria-controls="settlement-lines"
-              onClick={() => setExpanded((e) => !e)}
-            >
-              {expanded ? (
-                <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+                  {drifted && (
+                    <span className="text-warning-ink" role="note">
+                      · The live figure differs from what was recorded when the period was closed.
+                    </span>
+                  )}
+                </p>
               ) : (
-                <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="text-xs text-ink-3">Every line behind this figure is listed below.</span>
               )}
-              {expanded ? 'Hide' : 'Show'} {plural(data.lines.length, 'line')}
-            </button>
-          </div>
-          {expanded && (
+              {!awaiting && (
+                <button
+                  type="button"
+                  className={cx(btnGhost, btnSmall)}
+                  aria-expanded={expanded}
+                  aria-controls="settlement-lines"
+                  onClick={() => setExpanded((e) => !e)}
+                >
+                  {expanded ? (
+                    <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                  )}
+                  {expanded ? 'Hide' : 'Show'} {plural(data.lines.length, 'line')}
+                </button>
+              )}
+            </div>
+          )}
+          {expanded && !awaiting && (
             <div id="settlement-lines" className="animate-rise">
               <SettlementLines lines={data.lines} />
             </div>

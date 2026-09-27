@@ -2,7 +2,7 @@ import { ArrowRight, CircleCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { UploadResult } from '../api';
 import { useConfig } from '../config/ConfigContext';
-import { periodLabel } from '../lib/dates';
+import { periodRangeLabel } from '../lib/dates';
 import { accountLabel } from '../lib/format';
 import { btnSecondary, btnSmall, cx } from '../lib/ui';
 import { Notice } from './Notice';
@@ -28,7 +28,8 @@ export function UploadResultCard({ result }: Props) {
         <div className="min-w-0">
           <p className="text-base font-semibold text-ink">Statement imported</p>
           <p className="mt-0.5 text-sm text-ink-2">
-            Into {accountLabel(config.accounts, result.account_id)} for {periodLabel(result.period_key)}{' '}
+            Into {accountLabel(config.accounts, result.account_id)} for{' '}
+            {periodRangeLabel(result.period_from, result.period_to, result.period_key)}{' '}
             <span className="text-ink-3">· parser {result.parser}</span>
           </p>
         </div>

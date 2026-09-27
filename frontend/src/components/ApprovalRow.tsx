@@ -4,16 +4,31 @@ import { UNCATEGORIZED, type ClaimType, type TransactionOut, type TransactionPat
 import { useConfig, useNames } from '../config/ConfigContext';
 import { formatDate } from '../lib/dates';
 import { accountLabel, categoryLabel, categoryOptions, claimTypeLabel } from '../lib/format';
-import { btnIcon, btnPrimary, btnSmall, checkboxBase, chipSoft, cx, focusRing, selectCompact, trHover } from '../lib/ui';
+import {
+  btnIcon,
+  btnPrimary,
+  btnSmall,
+  checkboxBase,
+  chipSoft,
+  cx,
+  focusRing,
+  selectCategory,
+  selectCompact,
+  trHover,
+} from '../lib/ui';
 import { MerchantAvatar } from './MerchantAvatar';
 import { MoneyText } from './MoneyText';
 import { SourceBadge } from './SourceBadge';
+import { TransferToggle } from './TransferToggle';
 
 /**
  * The user's unsaved dropdown choices for one row. Held by the queue, not the
  * row, so they survive the row being removed and restored around a failed approve.
  */
 export type ApprovalDraft = Pick<TransactionPatch, 'category' | 'claim_type'>;
+
+/** How many cells a row spans, for the error row beneath it. */
+export const APPROVAL_COLUMNS = 8;
 
 interface Props {
   transaction: TransactionOut;
@@ -28,6 +43,8 @@ interface Props {
   onApprove: (corrections: TransactionPatch) => void;
   /** Opens the split dialog; splitting approves the transaction as well. */
   onSplit: () => void;
+  /** Marks (or unmarks) the line as a transfer; it stays in the queue until approved. */
+  onTransferChange: (isInternalTransfer: boolean) => void;
 }
 
 export function ApprovalRow({
@@ -41,6 +58,7 @@ export function ApprovalRow({
   onToggle,
   onApprove,
   onSplit,
+  onTransferChange,
 }: Props) {
   const config = useConfig();
   const names = useNames();
@@ -62,6 +80,7 @@ export function ApprovalRow({
   const merchant = tx.cleaned_merchant || tx.raw_description;
   const hasRawLine = Boolean(tx.raw_description) && tx.raw_description !== merchant;
   const locked = busy || disabled;
+  const closedTitle = disabled ? 'This period is closed' : undefined;
 
   return (
     <>
@@ -112,8 +131,9 @@ export function ApprovalRow({
           </label>
           <select
             id={`category-${id}`}
-            className={cx(selectCompact, 'w-44')}
+            className={cx(selectCompact, selectCategory)}
             value={category}
+            title={categoryLabel(category)}
             onChange={(e) => onDraftChange({ ...draft, category: e.target.value })}
             disabled={locked}
           >
@@ -142,6 +162,9 @@ export function ApprovalRow({
             ))}
           </select>
         </td>
+        <td className="px-2 py-3 text-center align-middle">
+          <TransferToggle transaction={tx} merchant={merchant} disabled={locked} title={closedTitle} onChange={onTransferChange} />
+        </td>
         <td className="px-2 py-3 align-middle">
           <SourceBadge source={tx.classification_source} confidence={tx.classification_confidence} />
         </td>
@@ -154,9 +177,7 @@ export function ApprovalRow({
               onClick={onSplit}
               disabled={locked || tx.is_internal_transfer}
               aria-label={`Split ${merchant}`}
-              title={
-                disabled ? 'This period is closed' : tx.is_internal_transfer ? 'A transfer cannot be split' : 'Split into parts'
-              }
+              title={closedTitle ?? (tx.is_internal_transfer ? 'A transfer cannot be split' : 'Split into parts')}
             >
               <Scissors className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -165,7 +186,8 @@ export function ApprovalRow({
               className={cx(btnPrimary, btnSmall)}
               onClick={approve}
               disabled={locked}
-              title={disabled ? 'This period is closed' : undefined}
+              aria-label={`Approve ${merchant}`}
+              title={closedTitle}
             >
               <Check className="h-3.5 w-3.5" aria-hidden="true" />
               Approve
@@ -175,7 +197,7 @@ export function ApprovalRow({
       </tr>
       {error && (
         <tr>
-          <td colSpan={7} className="px-3 pb-3">
+          <td colSpan={APPROVAL_COLUMNS} className="px-3 pb-3">
             <p role="alert" className="flex items-center gap-2 rounded-lg bg-critical/10 px-3 py-2 text-xs text-critical-ink">
               <CircleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               {error}

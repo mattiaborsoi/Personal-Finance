@@ -4,12 +4,13 @@ import { UNCATEGORIZED, type ClaimType, type TransactionOut, type TransactionPar
 import { useConfig, useNames } from '../config/ConfigContext';
 import { formatDate } from '../lib/dates';
 import { accountLabel, categoryLabel, categoryOptions, claimTypeLabel, plural, reviewStatusLabel } from '../lib/format';
-import { btnIcon, checkboxBase, chipSoft, cx, focusRing, selectCompact, tdBase, trHover } from '../lib/ui';
+import { btnIcon, chipSoft, cx, focusRing, selectCategory, selectCompact, tdBase, trHover } from '../lib/ui';
 import { Badge, type BadgeTone } from './Badge';
 import { ConfirmButton } from './ConfirmButton';
 import { MerchantAvatar } from './MerchantAvatar';
 import { MoneyText } from './MoneyText';
 import { SourceBadge } from './SourceBadge';
+import { TransferToggle } from './TransferToggle';
 
 interface Props {
   transaction: TransactionOut;
@@ -152,8 +153,9 @@ export function TransactionRow({
               </label>
               <select
                 id={`t-category-${id}`}
-                className={cx(selectCompact, 'w-44')}
+                className={cx(selectCompact, selectCategory)}
                 value={tx.category || UNCATEGORIZED}
+                title={categoryLabel(tx.category || UNCATEGORIZED)}
                 disabled={locked}
                 onChange={(e) => patch({ category: e.target.value })}
               >
@@ -185,14 +187,12 @@ export function TransactionRow({
           </>
         )}
         <td className={cx(tdBase, 'px-2 text-center align-middle')}>
-          <input
-            type="checkbox"
-            className={checkboxBase}
-            checked={tx.is_internal_transfer}
-            disabled={locked || tx.is_split}
-            aria-label={`Internal transfer: ${merchant}`}
-            title={tx.is_split ? 'Remove the split before marking this as a transfer' : undefined}
-            onChange={(e) => patch({ is_internal_transfer: e.target.checked })}
+          <TransferToggle
+            transaction={tx}
+            merchant={merchant}
+            disabled={locked}
+            title={readOnly ? 'This period is closed' : undefined}
+            onChange={(on) => patch({ is_internal_transfer: on })}
           />
         </td>
         <td className={cx(tdBase, 'whitespace-nowrap px-2 text-right align-middle')}>
@@ -209,7 +209,15 @@ export function TransactionRow({
                 >
                   <Scissors className="h-4 w-4" aria-hidden="true" />
                 </button>
-                <ConfirmButton confirmLabel="Remove this split?" onConfirm={onUnsplit} small disabled={locked} icon={Ungroup} iconOnly>
+                <ConfirmButton
+                  confirmLabel="Remove this split?"
+                  onConfirm={onUnsplit}
+                  small
+                  disabled={locked}
+                  icon={Ungroup}
+                  iconOnly
+                  ariaLabel={`Unsplit ${merchant}`}
+                >
                   Unsplit
                 </ConfirmButton>
               </>
@@ -233,6 +241,7 @@ export function TransactionRow({
               disabled={readOnly}
               icon={Trash2}
               iconOnly
+              ariaLabel={`Delete ${merchant}`}
             >
               Delete
             </ConfirmButton>
@@ -290,8 +299,9 @@ function PartRows({ part, n, merchant, locked, saving, error, onPatch }: PartRow
         </td>
         <td className={cx(tdBase, 'px-2 py-2 align-middle')}>
           <select
-            className={cx(selectCompact, 'w-44')}
+            className={cx(selectCompact, selectCategory)}
             value={part.category || UNCATEGORIZED}
+            title={categoryLabel(part.category || UNCATEGORIZED)}
             disabled={locked}
             aria-label={`Category for ${merchant} part ${n}`}
             onChange={(e) => onPatch({ category: e.target.value })}

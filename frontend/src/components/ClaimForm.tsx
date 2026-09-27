@@ -1,12 +1,13 @@
 import { CirclePlus, Divide, Scale, User, type LucideIcon } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
-import { api, editErrorMessage, type ClaimCreate, type ClaimOut, type ClaimType } from '../api';
+import { api, editErrorMessage, isApiError, type ClaimCreate, type ClaimOut, type ClaimType } from '../api';
 import { useAuth } from '../auth/AuthContext';
 import { useConfig, useCurrency, useNames } from '../config/ConfigContext';
-import { claimDateProblem, isDateProblem } from '../lib/claims';
+import { claimDateProblem, earliestClaimDate, isDateProblem, isLargeClaim } from '../lib/claims';
 import { todayIso } from '../lib/dates';
-import { normaliseAmountInput } from '../lib/money';
+import { formatMoney, normaliseAmountInput } from '../lib/money';
 import { btnPrimary, cardInset, cx, inputBase, inputTall, labelBase, selectBase } from '../lib/ui';
+import { ConfirmPrompt } from './ConfirmButton';
 import { ErrorMessage } from './ErrorMessage';
 import { Notice } from './Notice';
 
@@ -46,12 +47,14 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
+  /** A large amount waiting for the user to say "log it"; null when no question is open. */
+  const [confirmAmount, setConfirmAmount] = useState<string | null>(null);
 
   const isPrimary = session?.role === 'primary';
 
   function changeDate(next: string) {
     setClaimDate(next);
-    // Only complain about a future date while typing; a blank field is reported on submit.
+    // Only complain about a future or too-old date while typing; a blank field is reported on submit.
     const problem = next ? claimDateProblem(next) : null;
     setDateError(problem);
     // A corrected date also clears the same complaint from the form-level message.
@@ -59,8 +62,18 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
     onDateChange?.(next);
   }
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
+  function changeAmount(next: string) {
+    setAmount(next);
+    // The question quotes the amount, so a new amount needs asking again.
+    setConfirmAmount(null);
+  }
+
+  /**
+   * Validates and sends. An amount above the large-claim threshold stops at an
+   * inline "Log it?" the first time round; `confirmed` is the answer.
+   */
+  async function submit(event?: FormEvent, confirmed = false) {
+    event?.preventDefault();
     setSuccess(null);
     const normalised = normaliseAmountInput(amount);
     if (!normalised || Number(normalised) <= 0) {
@@ -78,6 +91,10 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
       return;
     }
     setError(null);
+    if (!confirmed && isLargeClaim(normalised)) {
+      setConfirmAmount(normalised);
+      return;
+    }
     setBusy(true);
     const body: ClaimCreate = {
       claim_date: claimDate,
@@ -90,22 +107,26 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
     try {
       const created = await api.createClaim(body);
       onCreated(created);
-      setSuccess(`Logged ${symbol}${normalised} at ${body.merchant}.`);
+      setSuccess(`Logged ${formatMoney(normalised, symbol)} at ${body.merchant}.`);
       setAmount('');
       setMerchant('');
       setDescription('');
       // The date is kept: the next claim is usually from the same day or month.
     } catch (err) {
-      setError(editErrorMessage(err));
+      const message = editErrorMessage(err);
+      setError(message);
+      // A 422 about the date (too old, in the future) belongs beside the date field as well.
+      if (isApiError(err, 422) && /date/i.test(message)) setDateError(message);
     } finally {
       setBusy(false);
+      setConfirmAmount(null);
     }
   }
 
   const bigInput = cx(inputBase, inputTall, 'mt-1.5');
 
   return (
-    <form onSubmit={submit} className="space-y-5" aria-label="Log a claim" noValidate>
+    <form onSubmit={(e) => submit(e)} className="space-y-5" aria-label="Log a claim" noValidate>
       <div className="grid gap-5 sm:grid-cols-2">
         <div>
           <label htmlFor="claim-date" className={labelBase}>
@@ -116,6 +137,7 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
             type="date"
             className={cx(bigInput, dateError && 'border-critical hover:border-critical')}
             value={claimDate}
+            min={earliestClaimDate()}
             max={todayIso()}
             aria-invalid={dateError ? true : undefined}
             aria-describedby={dateError ? 'claim-date-error' : undefined}
@@ -146,7 +168,7 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
               className={cx(bigInput, 'pl-8 tabular')}
               placeholder="0.00"
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => changeAmount(e.target.value)}
               required
             />
           </div>
@@ -247,14 +269,25 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
         </Notice>
       )}
 
-      <button
-        type="submit"
-        disabled={busy}
-        className={cx(btnPrimary, 'min-h-[48px] w-full text-base font-semibold')}
-      >
-        <CirclePlus className="h-4 w-4" aria-hidden="true" />
-        {busy ? 'Saving…' : 'Log claim'}
-      </button>
+      {confirmAmount ? (
+        <div className="flex min-h-[48px] items-center">
+          <ConfirmPrompt
+            label={`That is ${formatMoney(confirmAmount, symbol)}. Log it?`}
+            onConfirm={() => submit(undefined, true)}
+            onCancel={() => setConfirmAmount(null)}
+            busy={busy}
+          />
+        </div>
+      ) : (
+        <button
+          type="submit"
+          disabled={busy}
+          className={cx(btnPrimary, 'min-h-[48px] w-full text-base font-semibold')}
+        >
+          <CirclePlus className="h-4 w-4" aria-hidden="true" />
+          {busy ? 'Saving…' : 'Log claim'}
+        </button>
+      )}
     </form>
   );
 }

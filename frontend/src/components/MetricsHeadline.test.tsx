@@ -2,20 +2,11 @@ import { screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { MetricsOut } from '../api';
 import { magnitude, selectViewFigures } from '../lib/views';
+import { metrics as metricsFixture } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/utils';
 import { MetricsHeadline } from './MetricsHeadline';
 
-const metrics: MetricsOut = {
-  period_key: '2026-03',
-  macro: { household_burn: '1200.00', primary_accounts_burn: '900.00', partner_claims_burn: '300.00', by_category: [] },
-  micro: { true_net_expense: '800.00', from_transactions: '650.00', from_partner_claims: '150.00', by_category: [] },
-  liquidity: {
-    credits: '517.27',
-    debits: '617.27',
-    net_cash_flow: '-100.00',
-    by_account: [{ account_id: 'acc_checking_hsbc', credits: '517.27', debits: '617.27', net: '-100.00' }],
-  },
-};
+const metrics: MetricsOut = metricsFixture();
 
 function figureFor(label: string): HTMLElement {
   const dt = screen.getByText(label);

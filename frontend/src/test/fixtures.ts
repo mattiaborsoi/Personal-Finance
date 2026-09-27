@@ -1,10 +1,23 @@
-import type { AccountOut, AiSettings, SystemInfo, TransactionOut, TransactionPart } from '../api';
+import type {
+  AccountOut,
+  AiSettings,
+  AuditReportOut,
+  MetricsOut,
+  PeriodOut,
+  SettlementOut,
+  StatementOut,
+  SystemInfo,
+  TransactionOut,
+  TransactionPart,
+  UploadResult,
+} from '../api';
 
 /** Realistic UUIDs: ids on the wire are never numbers. */
 export const ID_OCADO = '3f9a2c1e-8b47-4d6a-9e21-0c5d7a1b2e33';
 export const ID_UBER = '7c4d1a92-5e6f-4b3a-8d10-2f9e6c1a4b55';
 export const ID_PART_A = 'a1b2c3d4-0001-4e5f-8a9b-0c1d2e3f4a01';
 export const ID_PART_B = 'a1b2c3d4-0002-4e5f-8a9b-0c1d2e3f4a02';
+export const ID_CLAIM = '5d2c9a10-7e3b-4f8a-b1c4-9a0e6d2f7c11';
 
 export function transaction(overrides: Partial<TransactionOut> = {}): TransactionOut {
   return {
@@ -53,6 +66,142 @@ export function account(overrides: Partial<AccountOut> = {}): AccountOut {
     is_active: true,
     transaction_count: 0,
     created_at: '2026-01-05T09:00:00Z',
+    ...overrides,
+  };
+}
+
+/** GET /api/periods: an open March 2026 with two lines, neither pending. */
+export function period(overrides: Partial<PeriodOut> = {}): PeriodOut {
+  return {
+    period_key: '2026-03',
+    start_date: '2026-03-01',
+    end_date: '2026-03-31',
+    is_closed: false,
+    closed_at: null,
+    transaction_count: 2,
+    pending_review_count: 0,
+    ...overrides,
+  };
+}
+
+/** GET /api/settlement/2026-03 with Sam owing Alex £45.90 across one claim line. */
+export function settlement(overrides: Partial<SettlementOut> = {}): SettlementOut {
+  return {
+    period_key: '2026-03',
+    primary_user_id: 'user_primary',
+    secondary_user_id: 'user_secondary',
+    primary_ratio: '0.555556',
+    secondary_ratio: '0.444444',
+    secondary_share_of_primary_paid_shared: '120.00',
+    primary_share_of_secondary_paid_shared: '60.00',
+    secondary_personal_on_primary_paid: '10.00',
+    primary_personal_on_secondary_paid: '24.10',
+    net_owed_by_secondary: '45.90',
+    settlement_payments_received: '0.00',
+    pending_review_count: 0,
+    unsettled_claim_count: 2,
+    settlement_due_date: '2026-04-01',
+    snapshot: null,
+    lines: [
+      {
+        source: 'claim',
+        id: ID_CLAIM,
+        date: '2026-03-04',
+        merchant: 'Ocado',
+        amount: '-60.00',
+        claim_type: 'shared_proportional',
+        paid_by: 'user_secondary',
+        primary_share: '33.33',
+        secondary_share: '26.67',
+        effect_on_secondary_owes: '-33.33',
+      },
+    ],
+    ...overrides,
+  };
+}
+
+/**
+ * GET /api/metrics/2026-03. The macro categories are gross debits plus the
+ * "Partner claims" pseudo-row, so they sum to `household_burn`; `refunds` is
+ * what came back in the period and is not deducted from the headline.
+ */
+export function metrics(overrides: Partial<MetricsOut> = {}): MetricsOut {
+  return {
+    period_key: '2026-03',
+    macro: {
+      household_burn: '1200.00',
+      primary_accounts_burn: '900.00',
+      partner_claims_burn: '300.00',
+      by_category: [
+        { category: 'Groceries', amount: '650.00' },
+        { category: 'Dining', amount: '250.00' },
+        { category: 'Partner claims', amount: '300.00' },
+      ],
+      refunds: '0.00',
+    },
+    micro: {
+      true_net_expense: '800.00',
+      from_transactions: '650.00',
+      from_partner_claims: '150.00',
+      by_category: [
+        { category: 'Groceries', amount: '650.00' },
+        { category: 'Partner claims', amount: '150.00' },
+      ],
+    },
+    liquidity: {
+      credits: '517.27',
+      debits: '617.27',
+      net_cash_flow: '-100.00',
+      by_account: [{ account_id: 'acc_checking_hsbc', credits: '517.27', debits: '617.27', net: '-100.00' }],
+    },
+    ...overrides,
+  };
+}
+
+/** POST /api/statements/upload: a one-month Amex statement. */
+export function uploadResult(overrides: Partial<UploadResult> = {}): UploadResult {
+  return {
+    upload_id: 'b7e1d2c3-4f5a-4b6c-8d7e-9f0a1b2c3d4e',
+    account_id: 'acc_cc_amex',
+    period_key: '2026-07',
+    period_from: '2026-07',
+    period_to: '2026-07',
+    parser: 'amex_pdf',
+    inserted: 12,
+    skipped_duplicates: 0,
+    pending_review: 3,
+    auto_approved: 9,
+    transfers_matched: 0,
+    warnings: [],
+    ...overrides,
+  };
+}
+
+/** GET /api/statements: one previous upload. */
+export function statement(overrides: Partial<StatementOut> = {}): StatementOut {
+  return {
+    id: 'b7e1d2c3-4f5a-4b6c-8d7e-9f0a1b2c3d4e',
+    account_id: 'acc_cc_amex',
+    period_key: '2026-07',
+    period_from: '2026-07',
+    period_to: '2026-07',
+    filename: 'amex-july.pdf',
+    sha256: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+    parser: 'amex_pdf',
+    transaction_count: 12,
+    created_at: '2026-08-02T09:15:00Z',
+    ...overrides,
+  };
+}
+
+/** GET /api/audit/2026-03 once a report exists. */
+export function auditReport(overrides: Partial<AuditReportOut> = {}): AuditReportOut {
+  return {
+    period_key: '2026-03',
+    summary_sentence: 'March 2026 spend was £1,200.00, 4% above the three-month baseline.',
+    anomalies: [],
+    category_comparison: [{ category: 'Groceries', current: '650.00', baseline_average: '600.00', change_pct: 8.3 }],
+    created_at: '2026-04-01T08:00:00Z',
     ...overrides,
   };
 }

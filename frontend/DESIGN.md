@@ -60,14 +60,21 @@ Rules:
   square before the title), `BrandMark`/`Wordmark`, `ThemeToggle`, `NavLinks` (Lucide icons).
 * Rows and lists: `MerchantAvatar` (32px circle, first letter, one of six soft
   washes chosen by a stable hash of the name), `InitialsChip` (a person), `chipSoft`
-  for account labels inside rows, `selectCompact` (32px row select), `tableFlush`
+  for account labels inside rows, `selectCompact` (32px row select; add
+  `selectCategory` for a category select, which sizes to its longest option and
+  carries the full name in a `title`), `TransferToggle` (the "mark as a transfer"
+  checkbox, named after the merchant for screen readers), `tableFlush`
   so first/last cells line up with the header inside `<Card flush>`.
+* Row controls with a short visible label ("Approve", "Delete") name the row for
+  screen readers via `aria-label` ("Approve Waitrose"), as the selects already do.
 * Messages: `Notice` (neutral/good/warning/critical wash + icon; closed-period
   notes, confirmations), `ErrorMessage` (critical, with Retry/Dismiss),
   `EmptyState` (icon circle, title, hint, action), `LoadingState` (inline
   spinner or a `rows` skeleton that holds the space), `StatTile` (label over a
   figure; `raised` when it sits on a wash), `ConfirmButton` (inline Confirm ·
-  Cancel pair; `iconOnly` for row deletes).
+  Cancel pair; `iconOnly` for row deletes; `ariaLabel` names the row), and
+  `ConfirmPrompt`, the same Confirm · Cancel step on its own for a form whose
+  first step is its submit button (the claim form's "That is £1,500.00. Log it?").
 * Icons: `lucide-react`, 16px (`h-4 w-4`) inline, 20px in feature tiles, always
   `aria-hidden` next to a visible label.
 

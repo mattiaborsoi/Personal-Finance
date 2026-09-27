@@ -1,6 +1,6 @@
 import { Sparkles } from 'lucide-react';
 import { useState } from 'react';
-import { api, errorMessage, isApiError } from '../api';
+import { api, errorMessage } from '../api';
 import { useAsync } from '../hooks/useAsync';
 import { formatDateTime } from '../lib/dates';
 import { btnPrimary, btnSmall, cx, eyebrow } from '../lib/ui';
@@ -21,8 +21,10 @@ export function AuditCard({ period, refreshKey = 0 }: Props) {
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
 
-  const noAuditYet = isApiError(audit.error, 404);
   const report = audit.data;
+  // The server answers a period that has never been audited with a JSON null:
+  // an ordinary, successful "nothing yet", not an error.
+  const noAuditYet = !audit.loading && !audit.error && report === null;
 
   async function runAudit() {
     setRunning(true);
@@ -52,10 +54,10 @@ export function AuditCard({ period, refreshKey = 0 }: Props) {
         </>
       }
     >
-      {audit.error && !noAuditYet && <ErrorMessage message={audit.error.message} onRetry={audit.reload} />}
+      {audit.error && <ErrorMessage message={audit.error.message} onRetry={audit.reload} />}
       <ErrorMessage message={runError} onDismiss={() => setRunError(null)} className="mb-3" />
-      {!report && !audit.error && <LoadingState label="Loading audit" rows={3} />}
-      {noAuditYet && !report && (
+      {audit.loading && !report && !audit.error && <LoadingState label="Loading audit" rows={3} />}
+      {noAuditYet && (
         <EmptyState icon={Sparkles} title="No audit yet" hint="Run one to compare this period against its baseline." />
       )}
       {report && (

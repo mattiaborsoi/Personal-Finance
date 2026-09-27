@@ -137,8 +137,6 @@ export interface AccountUpdate {
 export interface HealthOut {
   status: string;
   database: string;
-  llm_provider: string;
-  embedding_provider: string;
 }
 
 export interface PeriodOut {
@@ -155,6 +153,9 @@ export interface UploadResult {
   upload_id: string | null;
   account_id: string;
   period_key: string;
+  /** First and last month (YYYY-MM) the statement's lines fall in; null when unknown. */
+  period_from: string | null;
+  period_to: string | null;
   parser: string;
   inserted: number;
   skipped_duplicates: number;
@@ -168,6 +169,9 @@ export interface StatementOut {
   id: string;
   account_id: string;
   period_key: string;
+  /** First and last month (YYYY-MM) the statement's lines fall in; null when unknown. */
+  period_from: string | null;
+  period_to: string | null;
   filename: string;
   sha256: string;
   parser: string;
@@ -379,13 +383,19 @@ export interface AccountFlow {
   net: Money;
 }
 
+/** The pseudo-category both `by_category` lists use for partner claims. */
+export const PARTNER_CLAIMS_CATEGORY = 'Partner claims';
+
 export interface MetricsOut {
   period_key: string;
   macro: {
     household_burn: Money;
     primary_accounts_burn: Money;
     partner_claims_burn: Money;
+    /** Gross debits per category plus a `PARTNER_CLAIMS_CATEGORY` row, summing to `household_burn`. */
     by_category: CategoryAmount[];
+    /** Refunds received in the period (positive); the headline deliberately does not deduct them. */
+    refunds: Money;
   };
   micro: {
     true_net_expense: Money;
@@ -894,7 +904,8 @@ export const api = {
 
   // Audit
   runAudit: (periodKey: string) => request<AuditReportOut>('POST', `/audit/${enc(periodKey)}/run`),
-  getAudit: (periodKey: string) => request<AuditReportOut>('GET', `/audit/${enc(periodKey)}`),
+  /** The latest report, or null (200 with a JSON `null` body) when none has been run for the period. */
+  getAudit: (periodKey: string) => request<AuditReportOut | null>('GET', `/audit/${enc(periodKey)}`),
 
   // Merchant memory
   listMemory: (limit = 200) => request<MemoryOut[]>('GET', '/memory', { query: { limit } }),

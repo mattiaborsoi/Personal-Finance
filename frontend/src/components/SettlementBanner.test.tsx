@@ -2,44 +2,10 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { SettlementOut } from '../api';
-import { settlementHeadline, snapshotDiffers } from '../lib/settlement';
+import { awaitingFirstApproval, settlementHeadline, snapshotDiffers } from '../lib/settlement';
+import { period, settlement } from '../test/fixtures';
 import { jsonResponse, mockFetch, renderWithProviders } from '../test/utils';
 import { SettlementBanner } from './SettlementBanner';
-
-function settlement(overrides: Partial<SettlementOut> = {}): SettlementOut {
-  return {
-    period_key: '2026-03',
-    primary_user_id: 'user_primary',
-    secondary_user_id: 'user_secondary',
-    primary_ratio: '0.555556',
-    secondary_ratio: '0.444444',
-    secondary_share_of_primary_paid_shared: '120.00',
-    primary_share_of_secondary_paid_shared: '60.00',
-    secondary_personal_on_primary_paid: '10.00',
-    primary_personal_on_secondary_paid: '24.10',
-    net_owed_by_secondary: '45.90',
-    settlement_payments_received: '0.00',
-    pending_review_count: 0,
-    unsettled_claim_count: 2,
-    settlement_due_date: '2026-04-01',
-    snapshot: null,
-    lines: [
-      {
-        source: 'claim',
-        id: '5d2c9a10-7e3b-4f8a-b1c4-9a0e6d2f7c11',
-        date: '2026-03-04',
-        merchant: 'Ocado',
-        amount: '-60.00',
-        claim_type: 'shared_proportional',
-        paid_by: 'user_secondary',
-        primary_share: '33.33',
-        secondary_share: '26.67',
-        effect_on_secondary_owes: '-33.33',
-      },
-    ],
-    ...overrides,
-  };
-}
 
 const snapshot = {
   period_key: '2026-03',
@@ -54,6 +20,21 @@ const snapshot = {
 };
 
 const names = { primary: 'Alex', secondary: 'Sam' };
+
+/** A period whose every line is still pending: zero sums, no lines, nothing to settle. */
+function nothingApproved(overrides: Partial<SettlementOut> = {}): SettlementOut {
+  return settlement({
+    secondary_share_of_primary_paid_shared: '0.00',
+    primary_share_of_secondary_paid_shared: '0.00',
+    secondary_personal_on_primary_paid: '0.00',
+    primary_personal_on_secondary_paid: '0.00',
+    net_owed_by_secondary: '0.00',
+    pending_review_count: 3,
+    unsettled_claim_count: 0,
+    lines: [],
+    ...overrides,
+  });
+}
 
 describe('settlementHeadline', () => {
   it('phrases a positive net as the secondary user owing the primary user', () => {
@@ -77,6 +58,26 @@ describe('snapshotDiffers', () => {
     expect(snapshotDiffers({ net_owed_by_secondary: '45.90', snapshot })).toBe(false);
     expect(snapshotDiffers({ net_owed_by_secondary: '45.904', snapshot })).toBe(false);
     expect(snapshotDiffers({ net_owed_by_secondary: '46.00', snapshot })).toBe(true);
+  });
+});
+
+describe('awaitingFirstApproval', () => {
+  it('is true only while lines are pending and nothing is approved or claimed', () => {
+    const pending = nothingApproved();
+    expect(awaitingFirstApproval(pending, period({ transaction_count: 3, pending_review_count: 3 }))).toBe(true);
+    // One approved line that never reaches `lines` (borne by its payer) still counts as approved.
+    expect(awaitingFirstApproval(pending, period({ transaction_count: 4, pending_review_count: 3 }))).toBe(false);
+    // A claim, settled or not, means there is a figure.
+    expect(awaitingFirstApproval(nothingApproved({ unsettled_claim_count: 1 }), period({ transaction_count: 3, pending_review_count: 3 }))).toBe(false);
+    expect(awaitingFirstApproval(settlement({ pending_review_count: 3 }), period({ transaction_count: 3, pending_review_count: 3 }))).toBe(false);
+    // Nothing pending: whatever the figure is, it stands.
+    expect(awaitingFirstApproval(nothingApproved({ pending_review_count: 0 }), period({ transaction_count: 0, pending_review_count: 0 }))).toBe(false);
+  });
+
+  it('falls back to the settlement lines when the period counts are unknown', () => {
+    expect(awaitingFirstApproval(nothingApproved(), null)).toBe(true);
+    expect(awaitingFirstApproval(nothingApproved({ lines: settlement().lines }), null)).toBe(false);
+    expect(awaitingFirstApproval(nothingApproved({ lines: [{ ...settlement().lines[0], source: 'transaction' }] }), null)).toBe(false);
   });
 });
 
@@ -117,6 +118,54 @@ describe('<SettlementBanner />', () => {
     net = '0.00';
     renderWithProviders(<SettlementBanner period="2026-03" />);
     expect(await screen.findByTestId('settlement-headline')).toHaveTextContent('Settled up');
+  });
+
+  it('says nothing is approved yet, not "Settled up", while every line is still pending', async () => {
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/settlement/2026-03') return jsonResponse(nothingApproved());
+      return undefined;
+    });
+
+    renderWithProviders(
+      <SettlementBanner period="2026-03" periodInfo={period({ transaction_count: 3, pending_review_count: 3 })} />,
+    );
+
+    expect(await screen.findByTestId('settlement-headline')).toHaveTextContent('Nothing approved yet');
+    expect(screen.queryByText('Settled up')).not.toBeInTheDocument();
+    expect(screen.getByTestId('settlement-awaiting')).toHaveTextContent('3 lines are waiting for review');
+    expect(screen.getByRole('link', { name: 'Review the queue' })).toHaveAttribute('href', '#approval-queue');
+    // The zero sums and the empty line list would only dress up a figure that does not exist.
+    expect(screen.queryByText("Sam's share of shared items Alex paid")).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /show 0 lines/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/still pending review/)).not.toBeInTheDocument();
+  });
+
+  it('keeps "Settled up" once something is approved, even with lines still pending', async () => {
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/settlement/2026-03') return jsonResponse(nothingApproved());
+      return undefined;
+    });
+
+    renderWithProviders(
+      <SettlementBanner period="2026-03" periodInfo={period({ transaction_count: 4, pending_review_count: 3 })} />,
+    );
+
+    expect(await screen.findByTestId('settlement-headline')).toHaveTextContent('Settled up');
+    expect(screen.queryByTestId('settlement-awaiting')).not.toBeInTheDocument();
+    expect(screen.getByText(/3 transactions are still pending review/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /show 0 lines/i })).toBeInTheDocument();
+  });
+
+  it('uses a single pending line in the singular', async () => {
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/settlement/2026-03') {
+        return jsonResponse(nothingApproved({ pending_review_count: 1 }));
+      }
+      return undefined;
+    });
+
+    renderWithProviders(<SettlementBanner period="2026-03" />);
+    expect(await screen.findByTestId('settlement-awaiting')).toHaveTextContent('1 line is waiting for review');
   });
 
   it('shows the figure recorded at close and warns only when the live figure has drifted', async () => {

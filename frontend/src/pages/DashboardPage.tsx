@@ -51,7 +51,8 @@ export function DashboardPage() {
   }
 
   return (
-    <div className="space-y-6">
+    // min-w-0: a wide table inside a card scrolls within it instead of widening the page on a phone.
+    <div className="min-w-0 space-y-6">
       <PageHeader
         title="Dashboard"
         description={period ? periodLabel(period) : undefined}
@@ -99,7 +100,7 @@ export function DashboardPage() {
       {period && (
         <>
           <MetricsSection period={period} view={view} refreshKey={refreshKey} />
-          <SettlementBanner period={period} refreshKey={refreshKey} onChanged={bump} />
+          <SettlementBanner period={period} periodInfo={periodInfo} refreshKey={refreshKey} onChanged={bump} />
           <InvestmentCard refreshKey={refreshKey} />
           <AuditCard period={period} refreshKey={refreshKey} />
           <ApprovalQueue period={period} closed={closed} onChanged={onPeriodChanged} />

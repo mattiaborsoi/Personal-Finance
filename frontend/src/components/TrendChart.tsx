@@ -4,7 +4,7 @@ import type { TrendPoint } from '../api';
 import { useCurrency } from '../config/ConfigContext';
 import { periodShortLabel } from '../lib/dates';
 import { formatMoney, toNumber } from '../lib/money';
-import { viewDefinition, type MetricView } from '../lib/views';
+import { trendYDomain, viewDefinition, type MetricView } from '../lib/views';
 import { EmptyState } from './EmptyState';
 
 interface Props {
@@ -60,14 +60,19 @@ export function TrendChart({ data, view }: Props) {
   const definition = viewDefinition(view);
   const tokens = useTokens([definition.accentToken, 'hairline', 'ink-3', 'surface']);
   const accent = tokens[definition.accentToken];
-  const points = data.map((p) => ({
-    period: p.period_key,
-    label: periodShortLabel(p.period_key),
-    value: toNumber(p[definition.trendKey]),
-  }));
+  const points = data.map((p) => {
+    const value = toNumber(p[definition.trendKey]);
+    return {
+      period: p.period_key,
+      label: periodShortLabel(p.period_key),
+      // A month with no figure plots as nothing spent rather than breaking the axis.
+      value: Number.isFinite(value) ? value : 0,
+    };
+  });
 
   if (points.length === 0) return <EmptyState title="No trend data yet" />;
   const last = points[points.length - 1];
+  const domain = trendYDomain(points.map((p) => p.value));
 
   function renderTooltip({ active, payload }: TooltipPayload) {
     if (!active || !payload?.length) return null;
@@ -105,6 +110,8 @@ export function TrendChart({ data, view }: Props) {
             />
             <YAxis
               width={52}
+              domain={domain}
+              allowDecimals={false}
               tick={{ fontSize: 11, fill: tokens['ink-3'] }}
               axisLine={false}
               tickLine={false}

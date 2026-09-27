@@ -20,6 +20,11 @@ export function ClaimPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const recent = useAsync(() => api.listClaims({ period }), `claims:${period}:${refreshKey}`);
+  // The period's counts say whether anything is approved yet (an approved line borne by its
+  // payer never reaches the settlement lines). Only the primary role may list periods; the
+  // partner's net line decides from the settlement payload alone.
+  const periods = useAsync(() => api.listPeriods(), 'periods', session?.role === 'primary');
+  const periodInfo = periods.data?.find((p) => p.period_key === period) ?? null;
 
   const mine = (recent.data ?? []).filter((c) => !session || c.paid_by === session.user_id || session.role === 'primary');
 
@@ -56,7 +61,7 @@ export function ClaimPage() {
           onDateChange={setClaimDate}
         />
       </Card>
-      <SettlementNetLine period={period} refreshKey={refreshKey} />
+      <SettlementNetLine period={period} periodInfo={periodInfo} refreshKey={refreshKey} />
       <Card
         flush
         title="Your recent claims"

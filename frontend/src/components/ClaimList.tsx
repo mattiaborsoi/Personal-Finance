@@ -52,6 +52,7 @@ export function ClaimList({
         icon={Trash2}
         iconOnly
         disabled={deleteDisabled}
+        ariaLabel={`Delete ${claim.merchant}`}
       >
         Delete
       </ConfirmButton>

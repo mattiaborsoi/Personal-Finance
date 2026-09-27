@@ -89,8 +89,19 @@ export function magnitude(value: Money): Money {
 }
 
 export type Breakdown =
-  | { kind: 'category'; rows: CategoryAmount[] }
+  | {
+      kind: 'category';
+      rows: CategoryAmount[];
+      /** Refunds received in the period, shown as a footnote because the headline does not deduct them. */
+      refunds?: Money;
+    }
   | { kind: 'account'; rows: AccountFlow[] };
+
+/** The chart's Y domain: a fixed 0–100 when every value is zero, so the axis never shows £1–£4 ticks over nothing. */
+export function trendYDomain(values: ReadonlyArray<number>): [number | 'auto', number | 'auto'] {
+  const allZero = values.every((v) => !Number.isFinite(v) || Math.abs(v) < 0.005);
+  return allZero ? [0, 100] : ['auto', 'auto'];
+}
 
 export interface ViewFigures {
   headlineLabel: string;
@@ -130,7 +141,7 @@ export function selectViewFigures(metrics: MetricsOut, view: MetricView): ViewFi
           { label: 'Primary accounts', value: metrics.macro.primary_accounts_burn },
           { label: 'Partner claims', value: metrics.macro.partner_claims_burn },
         ],
-        breakdown: { kind: 'category', rows: metrics.macro.by_category },
+        breakdown: { kind: 'category', rows: metrics.macro.by_category, refunds: metrics.macro.refunds },
       };
   }
 }

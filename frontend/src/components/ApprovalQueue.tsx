@@ -120,6 +120,33 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
     }
   }
 
+  /**
+   * Marking a line as a transfer is the same PATCH the transactions page sends.
+   * It does not approve the line, so the row stays in the queue with what the
+   * server now says about it (a transfer's claim type becomes personal).
+   */
+  async function markTransfer(tx: TransactionOut, isInternalTransfer: boolean) {
+    setRowErrors((prev) => {
+      const next = { ...prev };
+      delete next[tx.id];
+      return next;
+    });
+    setBusyFor([tx.id], true);
+    try {
+      const updated = await api.patchTransaction(tx.id, { is_internal_transfer: isInternalTransfer });
+      queue.setData((prev) =>
+        prev ? { ...prev, items: prev.items.map((t) => (t.id === tx.id ? updated : t)) } : prev,
+      );
+      // The claim type the server chose replaces any unsaved choice; a category draft still stands.
+      setDrafts((prev) => (prev[tx.id] ? { ...prev, [tx.id]: { ...prev[tx.id], claim_type: undefined } } : prev));
+      onChanged?.();
+    } catch (err) {
+      setRowErrors((prev) => ({ ...prev, [tx.id]: editErrorMessage(err) }));
+    } finally {
+      setBusyFor([tx.id], false);
+    }
+  }
+
   /** Splitting counts as approval, so the row leaves the queue just like an approved one. */
   function splitSaved(parent: TransactionOut) {
     setRowErrors((prev) => {
@@ -152,7 +179,8 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
   const hasNotices = Boolean(queue.error) || Boolean(batchError) || (closed && items.length > 0);
 
   return (
-    <section aria-label="Approval queue" className={cx(cardBase, 'p-0 sm:p-0')}>
+    // min-w-0: the table scrolls inside the card; it must never widen the page on a phone.
+    <section id="approval-queue" aria-label="Approval queue" className={cx(cardBase, 'min-w-0 scroll-mt-20 p-0 sm:p-0')}>
       {/* The batch bar stays in view while a long queue scrolls; the offset clears the mobile top bar. */}
       <header className="sticky top-[61px] z-10 rounded-t-2xl border-b border-hairline bg-surface/95 px-5 py-4 backdrop-blur sm:px-6 md:top-0">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -226,6 +254,7 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
                 <th scope="col">Amount</th>
                 <th scope="col">Category</th>
                 <th scope="col">Claim type</th>
+                <th scope="col">Transfer</th>
                 <th scope="col">Source</th>
                 <th scope="col">Actions</th>
               </tr>
@@ -244,6 +273,7 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
                   onToggle={() => toggle(tx.id)}
                   onApprove={(corrections) => approveOne(tx, corrections)}
                   onSplit={() => setSplitting(tx)}
+                  onTransferChange={(on) => markTransfer(tx, on)}
                 />
               ))}
             </tbody>

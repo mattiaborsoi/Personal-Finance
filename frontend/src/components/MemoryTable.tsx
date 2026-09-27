@@ -23,7 +23,7 @@ export function MemoryTable({ entries, errors, onDelete }: Props) {
       <EmptyState
         icon={Brain}
         title="Nothing learnt yet"
-        hint="Approving transactions with 'remember' fills this in."
+        hint="Approve a line in the queue and its merchant is remembered here, so the next one is filed the same way."
       />
     );
   }
@@ -86,6 +86,7 @@ export function MemoryTable({ entries, errors, onDelete }: Props) {
                     tone="danger"
                     icon={Trash2}
                     iconOnly
+                    ariaLabel={`Delete ${entry.normalized_merchant}`}
                   >
                     Delete
                   </ConfirmButton>

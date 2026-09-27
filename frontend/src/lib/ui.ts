@@ -22,6 +22,13 @@ export const inputBase = `block w-full px-3 py-2 text-sm ${controlBase}`;
 export const selectBase = `${inputBase} cursor-pointer pr-8`;
 /** 32px select for inline row editing (matches `btnSmall` buttons and `btnIcon`); set its width explicitly. */
 export const selectCompact = `block h-8 cursor-pointer py-1 pl-2.5 pr-7 text-xs ${controlBase}`;
+/**
+ * Width for a row's category select: as wide as its longest option (so
+ * "Subscriptions:Software" is not clipped), never narrower than the claim-type
+ * select's neighbour column looks right beside, and capped so one very long
+ * name cannot push the table out; pair it with a `title` carrying the full name.
+ */
+export const selectCategory = 'w-auto min-w-[11rem] max-w-[18rem]';
 /** 44px inputs for the mobile-first claim form. */
 export const inputTall = 'min-h-[44px] text-base';
 export const checkboxBase = `h-4 w-4 cursor-pointer rounded border-hairline-strong bg-surface accent-brand ${focusRing}`;
