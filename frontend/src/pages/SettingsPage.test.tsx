@@ -4,7 +4,7 @@ import { useLocation } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import { App } from '../App';
 import { NavLinks } from '../components/NavLinks';
-import { account, aiSettings, systemInfo } from '../test/fixtures';
+import { account, aiSettings, categories, household, rules, systemInfo } from '../test/fixtures';
 import { fixtureConfig, jsonResponse, mockFetch, renderWithProviders, type RecordedCall } from '../test/utils';
 import { SettingsPage } from './SettingsPage';
 
@@ -28,10 +28,18 @@ describe('<SettingsPage />', () => {
 
     expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).toBeInTheDocument();
     const tabs = screen.getByRole('tablist', { name: 'Settings sections' });
-    expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Accounts', 'AI', 'System']);
+    expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual([
+      'Accounts',
+      'Household',
+      'Categories',
+      'Rules',
+      'AI',
+      'System',
+    ]);
     expect(within(tabs).getByRole('tab', { name: 'Accounts' })).toHaveAttribute('aria-selected', 'true');
-    expect(within(tabs).getByRole('tab', { name: 'AI' })).toHaveAttribute('aria-selected', 'false');
-    expect(within(tabs).getByRole('tab', { name: 'System' })).toHaveAttribute('aria-selected', 'false');
+    for (const name of ['Household', 'Categories', 'Rules', 'AI', 'System']) {
+      expect(within(tabs).getByRole('tab', { name })).toHaveAttribute('aria-selected', 'false');
+    }
     expect(screen.getByRole('tabpanel', { name: 'Accounts' })).toBeInTheDocument();
 
     expect(await screen.findByRole('button', { name: 'Edit HSBC Premier' })).toBeInTheDocument();
@@ -39,6 +47,69 @@ describe('<SettingsPage />', () => {
     expect(screen.queryByRole('region', { name: 'Version' })).not.toBeInTheDocument();
     // Only the Accounts tab's data is requested.
     expect(urls(calls)).toEqual(['/api/accounts']);
+  });
+
+  it('falls back to Accounts for a tab it does not know', async () => {
+    const { calls } = mockFetch(({ method, url }) => (method === 'GET' && url === '/api/accounts' ? jsonResponse([hsbc]) : undefined));
+
+    renderWithProviders(<SettingsPage />, { route: '/settings?tab=budgets' });
+
+    expect(screen.getByRole('tab', { name: 'Accounts' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('button', { name: 'Edit HSBC Premier' })).toBeInTheDocument();
+    expect(urls(calls)).toEqual(['/api/accounts']);
+  });
+
+  it('renders the Household tab from ?tab=household', async () => {
+    const { calls } = mockFetch(({ method, url }) =>
+      method === 'GET' && url === '/api/settings/household' ? jsonResponse(household()) : undefined,
+    );
+
+    renderWithProviders(<SettingsPage />, { route: '/settings?tab=household' });
+
+    expect(screen.getByRole('tab', { name: 'Household' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Accounts' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('tabpanel', { name: 'Household' })).toBeInTheDocument();
+
+    expect(await screen.findByRole('region', { name: 'Alex' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Sam' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'How shared costs are split' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Settlement' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Currency' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Accounts' })).not.toBeInTheDocument();
+    expect(urls(calls)).toEqual(['/api/settings/household']);
+  });
+
+  it('renders the Categories tab from ?tab=categories', async () => {
+    const { calls } = mockFetch(({ method, url }) =>
+      method === 'GET' && url === '/api/settings/categories' ? jsonResponse(categories()) : undefined,
+    );
+
+    renderWithProviders(<SettingsPage />, { route: '/settings?tab=categories' });
+
+    expect(screen.getByRole('tab', { name: 'Categories' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel', { name: 'Categories' })).toBeInTheDocument();
+
+    expect(await screen.findByRole('button', { name: 'Rename Bills:Water' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Categories' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add category' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Accounts' })).not.toBeInTheDocument();
+    expect(urls(calls)).toEqual(['/api/settings/categories']);
+  });
+
+  it('renders the Rules tab from ?tab=rules', async () => {
+    const { calls } = mockFetch(({ method, url }) => (method === 'GET' && url === '/api/settings/rules' ? jsonResponse(rules()) : undefined));
+
+    renderWithProviders(<SettingsPage />, { route: '/settings?tab=rules' });
+
+    expect(screen.getByRole('tab', { name: 'Rules' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel', { name: 'Rules' })).toBeInTheDocument();
+
+    expect(await screen.findByLabelText('Pattern for rule 1')).toHaveValue('(?i)AQUANORTH\\s*WATER');
+    expect(screen.getByRole('region', { name: 'Rules' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Card payments' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Statement description')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Accounts' })).not.toBeInTheDocument();
+    expect(urls(calls)).toEqual(['/api/settings/rules']);
   });
 
   it('renders the System tab from ?tab=system', async () => {
@@ -80,6 +151,9 @@ describe('<SettingsPage />', () => {
     const user = userEvent.setup();
     mockFetch(({ method, url }) => {
       if (method === 'GET' && url === '/api/accounts') return jsonResponse([hsbc]);
+      if (method === 'GET' && url === '/api/settings/household') return jsonResponse(household());
+      if (method === 'GET' && url === '/api/settings/categories') return jsonResponse(categories());
+      if (method === 'GET' && url === '/api/settings/rules') return jsonResponse(rules());
       if (method === 'GET' && url === '/api/ai') return jsonResponse(aiSettings());
       if (method === 'GET' && url === '/api/system') return jsonResponse(systemInfo());
       return undefined;
@@ -108,18 +182,42 @@ describe('<SettingsPage />', () => {
     expect(screen.getByRole('region', { name: 'Accounts' })).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Version' })).not.toBeInTheDocument();
 
-    // The arrow keys move between tabs too, and select as they go.
+    // The arrow keys move between tabs too, and select as they go, through the new tabs in order.
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=household');
+    expect(screen.getByRole('tab', { name: 'Household' })).toHaveFocus();
+    expect(screen.getByRole('tab', { name: 'Household' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('region', { name: 'How shared costs are split' })).toBeInTheDocument();
+
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=categories');
+    expect(screen.getByRole('tab', { name: 'Categories' })).toHaveFocus();
+    expect(await screen.findByRole('button', { name: 'Rename Bills:Water' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'How shared costs are split' })).not.toBeInTheDocument();
+
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=rules');
+    expect(screen.getByRole('tab', { name: 'Rules' })).toHaveFocus();
+    expect(await screen.findByRole('region', { name: 'Card payments' })).toBeInTheDocument();
+
     await user.keyboard('{ArrowRight}');
     expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=ai');
     expect(screen.getByRole('tab', { name: 'AI' })).toHaveFocus();
     expect(screen.getByRole('tab', { name: 'AI' })).toHaveAttribute('aria-selected', 'true');
     expect(await screen.findByRole('switch', { name: 'Use AI' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Card payments' })).not.toBeInTheDocument();
 
     await user.keyboard('{ArrowRight}');
     expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=system');
     expect(screen.getByRole('tab', { name: 'System' })).toHaveFocus();
     expect(screen.getByRole('tab', { name: 'System' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByRole('region', { name: 'AI' })).not.toBeInTheDocument();
+
+    // Home goes back to the start; ArrowLeft from there wraps to the end.
+    await user.keyboard('{Home}');
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=accounts');
+    await user.keyboard('{ArrowLeft}');
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=system');
   });
 
   it('is reachable from the main navigation for the primary user', async () => {

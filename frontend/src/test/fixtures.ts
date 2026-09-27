@@ -2,8 +2,12 @@ import type {
   AccountOut,
   AiSettings,
   AuditReportOut,
+  CategoriesOut,
+  HouseholdOut,
   MetricsOut,
   PeriodOut,
+  Rule,
+  RulesOut,
   SettlementOut,
   StatementOut,
   SystemInfo,
@@ -244,6 +248,81 @@ export function aiSettings(overrides: Partial<AiSettings> = {}): AiSettings {
     ],
     proxy: { mode: 'bundled', url: 'http://litellm:4000', bundled_url: 'http://litellm:4000', env_url: null, reachable: true, has_key: true },
     memory_rows: 8,
+    stored: true,
+    ...overrides,
+  };
+}
+
+/** GET /api/settings/household: Alex on £100,000 and Sam on £80,000, split in proportion (55.6 % / 44.4 %). */
+export function household(overrides: Partial<HouseholdOut> = {}): HouseholdOut {
+  return {
+    users: {
+      primary: { id: 'user_primary', display_name: 'Alex', base_salary_pa: '100000.00', additional_income_pa: '0.00' },
+      secondary: { id: 'user_secondary', display_name: 'Sam', base_salary_pa: '80000.00', additional_income_pa: '0.00' },
+    },
+    split_strategy: 'salary_proportional',
+    rounding_decimals: 2,
+    settlement_day_of_month: 1,
+    base_currency: 'GBP',
+    currency_symbol: '£',
+    primary_ratio: 0.555556,
+    secondary_ratio: 0.444444,
+    stored: true,
+    ...overrides,
+  };
+}
+
+/**
+ * GET /api/settings/categories: two Bills, two bare names and Uncategorized.
+ * Water is in use everywhere, Energy only by a rule, Dining and Taxi not at all.
+ */
+export function categories(overrides: Partial<CategoriesOut> = {}): CategoriesOut {
+  return {
+    categories: [
+      { name: 'Bills:Water', in_use: { transactions: 12, memory: 3, rules: 1 } },
+      { name: 'Bills:Energy', in_use: { transactions: 0, memory: 0, rules: 1 } },
+      { name: 'Groceries', in_use: { transactions: 40, memory: 6, rules: 0 } },
+      { name: 'Dining', in_use: { transactions: 0, memory: 0, rules: 0 } },
+      { name: 'Transport:Taxi', in_use: { transactions: 0, memory: 0, rules: 0 } },
+      { name: 'Uncategorized', in_use: { transactions: 2, memory: 0, rules: 0 } },
+    ],
+    stored: true,
+    ...overrides,
+  };
+}
+
+/** A deterministic rule filing the water bill as a shared cost. */
+export function rule(overrides: Partial<Rule> = {}): Rule {
+  return {
+    pattern: '(?i)AQUANORTH\\s*WATER',
+    category: 'Bills:Water',
+    claim_type: 'shared_proportional',
+    merchant: null,
+    subcategory: null,
+    is_internal_transfer: false,
+    transfer_to_account: null,
+    ...overrides,
+  };
+}
+
+/** GET /api/settings/rules: the water rule, a transfer to the investment account, and two card-payment patterns. */
+export function rules(overrides: Partial<RulesOut> = {}): RulesOut {
+  return {
+    rules: [
+      rule(),
+      // A category the fixture config does not list, as after a config edit; the select keeps it.
+      rule({
+        pattern: '(?i)ROBINHOOD',
+        category: 'Transfers:Investment',
+        claim_type: 'personal',
+        merchant: 'Robinhood',
+        is_internal_transfer: true,
+        transfer_to_account: 'acc_invest_robinhood',
+      }),
+    ],
+    payment_patterns: ['(?i)PAYMENT\\s+RECEIVED\\s*-?\\s*THANK\\s*YOU', '(?i)AMEX\\s*(DD|PAYMENT)'],
+    match_window_days: 7,
+    amount_tolerance: '0.01',
     stored: true,
     ...overrides,
   };

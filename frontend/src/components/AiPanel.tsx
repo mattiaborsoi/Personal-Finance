@@ -28,25 +28,15 @@ import {
   type ProxyMode,
 } from '../api';
 import { plural } from '../lib/format';
-import {
-  btnPrimary,
-  btnSecondary,
-  cardInset,
-  checkboxBase,
-  cx,
-  eyebrow,
-  focusRing,
-  inputBase,
-  labelBase,
-  radioBase,
-  selectBase,
-} from '../lib/ui';
+import { btnPrimary, btnSecondary, cardInset, checkboxBase, cx, eyebrow, focusRing, inputBase, inputInvalid, selectBase } from '../lib/ui';
 import { Badge } from './Badge';
 import { PRODUCT_NAME } from './BrandMark';
 import { Card } from './Card';
 import { ErrorMessage } from './ErrorMessage';
+import { Field } from './Field';
 import { LoadingState } from './LoadingState';
 import { Notice } from './Notice';
+import { RadioOption } from './RadioOption';
 import { StatTile } from './StatTile';
 
 export const SAVED_MESSAGE = 'Saved. New settings apply to the next upload and the next monthly summary.';
@@ -322,7 +312,7 @@ function ModelControl({ id, value, options, typed, disabled, invalid, onChange }
       <input
         id={id}
         type="text"
-        className={cx(inputBase, 'font-mono', invalid && 'border-critical hover:border-critical')}
+        className={cx(inputBase, 'font-mono', invalid && inputInvalid)}
         value={value}
         placeholder="model name"
         autoComplete="off"
@@ -349,38 +339,6 @@ function ModelControl({ id, value, options, typed, disabled, invalid, onChange }
         </option>
       ))}
     </select>
-  );
-}
-
-interface FieldProps {
-  id: string;
-  label: string;
-  help: string;
-  /** Replaces the help text while the value cannot be sent. */
-  problem?: string;
-  /** The current value, shown beside the label. */
-  readout?: string;
-  /** Shown beside the label, e.g. a badge. */
-  aside?: ReactNode;
-  children: ReactNode;
-}
-
-/** Label over a control, with helper text that gives way to the field's problem. */
-function Field({ id, label, help, problem, readout, aside, children }: FieldProps) {
-  return (
-    <div>
-      <div className="flex items-baseline justify-between gap-3">
-        <label htmlFor={id} className={labelBase}>
-          {label}
-        </label>
-        {readout && <span className="text-sm font-semibold tabular text-ink">{readout}</span>}
-        {aside}
-      </div>
-      <div className="mt-1.5">{children}</div>
-      <p id={`${id}-help`} className={cx('mt-1.5 text-xs', problem ? 'text-critical-ink' : 'text-ink-3')}>
-        {problem ?? help}
-      </p>
-    </div>
   );
 }
 
@@ -415,44 +373,6 @@ function TestLine({ job, result }: { job: AiJob; result: AiTestResult[AiJob] }) 
         {!result.ok && <p className="text-critical-ink">{result.error ?? 'The call failed.'}</p>}
       </div>
     </li>
-  );
-}
-
-interface RadioProps {
-  id: string;
-  name: string;
-  value: ProxyMode;
-  checked: boolean;
-  disabled: boolean;
-  label: string;
-  hint: ReactNode;
-  onChange: (value: ProxyMode) => void;
-}
-
-/** A radio with a bold label and a one-line hint; the hint describes rather than names it. */
-function ProxyRadio({ id, name, value, checked, disabled, label, hint, onChange }: RadioProps) {
-  return (
-    <div className="flex items-start gap-3">
-      <input
-        id={id}
-        type="radio"
-        name={name}
-        value={value}
-        checked={checked}
-        disabled={disabled}
-        className={cx(radioBase, 'mt-0.5')}
-        aria-describedby={`${id}-hint`}
-        onChange={() => onChange(value)}
-      />
-      <div className="min-w-0">
-        <label htmlFor={id} className="block cursor-pointer text-sm font-semibold text-ink">
-          {label}
-        </label>
-        <p id={`${id}-hint`} className="mt-0.5 text-xs text-ink-3">
-          {hint}
-        </p>
-      </div>
-    </div>
   );
 }
 
@@ -650,7 +570,7 @@ export function AiPanel() {
       <Card icon={Server} title="Proxy" description={`Where ${PRODUCT_NAME} sends its AI calls. LiteLLM holds the provider keys either way.`}>
         <fieldset className="space-y-3">
           <legend className="sr-only">Which LiteLLM proxy to use</legend>
-          <ProxyRadio
+          <RadioOption
             id={f('proxy-bundled')}
             name={f('proxy-mode')}
             value="bundled"
@@ -666,7 +586,7 @@ export function AiPanel() {
             }
             onChange={chooseProxy}
           />
-          <ProxyRadio
+          <RadioOption
             id={f('proxy-external')}
             name={f('proxy-mode')}
             value="external"
@@ -708,7 +628,7 @@ export function AiPanel() {
                 id={f('proxy-url')}
                 type="url"
                 inputMode="url"
-                className={cx(inputBase, 'font-mono', badScheme && 'border-critical hover:border-critical')}
+                className={cx(inputBase, 'font-mono', badScheme && inputInvalid)}
                 placeholder={envUrl ?? PROXY_URL_PLACEHOLDER}
                 value={form.proxy.url}
                 autoComplete="off"

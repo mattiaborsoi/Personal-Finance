@@ -40,8 +40,9 @@ Rules:
 ## Type & numbers
 
 * Inter Variable everywhere (`font-sans`); no display or serif face.
-* Hero figure (one per view): `text-5xl font-semibold tracking-tight`, **proportional
-  figures** (no `tabular`). Columns of numbers and axis ticks: `.tabular`.
+* Hero figure (one per view): `text-[2.75rem] sm:text-5xl font-semibold leading-none
+  tracking-tight`, **proportional figures** (no `tabular`). Columns of numbers and
+  axis ticks: `.tabular`.
 * Eyebrow labels: `eyebrow` from `src/lib/ui.ts` (11px, uppercase, `ink-3`).
 * Page title: `text-2xl font-semibold tracking-tight`; card title: `text-base font-semibold`.
 
@@ -59,7 +60,24 @@ Rules:
   `btnDanger` (quiet `critical/10` wash — destructive actions are calm until the
   inline confirm step), `btnIcon` (32px square, icon only, needs `aria-label`),
   `btnSmall` modifier.
-* Inputs/selects: `inputBase` / `selectBase`; labels `labelBase`; checkboxes `checkboxBase`.
+* Inputs/selects: `inputBase` / `selectBase` (add `inputTall` for the 44px mobile claim
+  form); labels `labelBase`; checkboxes `checkboxBase`; radios `radioBase`; text links
+  `linkBase`; any custom control includes `focusRing` (the shared focus-visible ring);
+  `inputInvalid` on a control whose value cannot be sent, always with `aria-invalid`.
+* Forms: `Field` (label over a control; `help` under it gives way to a `problem`;
+  `readout`/`aside` sit beside the label; `fieldNoteId(id)` is the note's id for the
+  control's `aria-describedby`) and `RadioOption` (a radio with a bold label and a
+  one-line hint that is its accessible description). A settings form keeps the
+  saved document and the form apart, builds the PUT body from only the fields that
+  differ, and enables Save while that body is non-empty and the form is valid;
+  Discard is enabled whenever the form differs at all, an edit that cannot be sent
+  included. A 422 that names a field is shown as that field's `problem` (or beside
+  its row, on the control it is about, which points at it with `aria-describedby`),
+  anything else as an `ErrorMessage`, and a `Notice tone="good" role="status"`
+  confirms the save. A document with `stored: false` gets `CONFIG_DEFAULTS_MESSAGE`
+  as a neutral `Notice` above its cards. A save that changes what `GET /api/config`
+  describes calls `useReloadConfig()` afterwards, and a failed reload is its own
+  `ErrorMessage` ("Saved, but …"), never a failed save.
 * Tables: `tableBase`, `thBase`, `tdBase`, `trHover`; wrap in `<Card flush>` for edge-to-edge.
 * `Badge` (tones map to tokens; `dot` shows a colour dot), `Card` (`accentClass`
   draws a 4px accent stripe; `flush` removes padding; `icon` shows a soft 32px
@@ -77,10 +95,18 @@ Rules:
   notes, confirmations), `ErrorMessage` (critical, with Retry/Dismiss),
   `EmptyState` (icon circle, title, hint, action), `LoadingState` (inline
   spinner or a `rows` skeleton that holds the space), `StatTile` (label over a
-  figure; `raised` when it sits on a wash), `ConfirmButton` (inline Confirm ·
+  figure; `surface="raised"` when it sits on a wash, `inset` by default;
+  `as="dl-item"` inside a `<dl>`), `ConfirmButton` (inline Confirm ·
   Cancel pair; `iconOnly` for row deletes; `ariaLabel` names the row), and
-  `ConfirmPrompt`, the same Confirm · Cancel step on its own for a form whose
-  first step is its submit button (the claim form's "That is £1,500.00. Log it?").
+  `ConfirmPrompt` (exported from `ConfirmButton.tsx`), the same Confirm · Cancel
+  step on its own for a form whose first step is its submit button (the claim
+  form's "That is £1,500.00. Log it?").
+* Dialogs and tabs: `Modal` (portal, backdrop, labelled `role="dialog"`, focus
+  trap, Escape to close, focus returned to the opener; `busy` locks closing while a
+  request is in flight; `size` `md` for a form, `lg` for a wide row editor); build
+  its form from `dialogBody` (the scrolling body) and `dialogFooter` (the actions).
+  `Tabs` (roving focus with the arrow keys, Home and End; the caller owns the
+  active id and renders the panel), as on the Settings page.
 * Icons: `lucide-react`, 16px (`h-4 w-4`) inline, 20px in feature tiles, always
   `aria-hidden` next to a visible label.
 

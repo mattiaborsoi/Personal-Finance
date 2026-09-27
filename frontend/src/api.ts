@@ -622,6 +622,123 @@ export interface AiTestResult {
 }
 
 // ---------------------------------------------------------------------------
+// Settings: household, categories and rules (primary only)
+// ---------------------------------------------------------------------------
+
+export type SplitStrategy = 'salary_proportional' | 'equal_50_50';
+
+/** One of the two people, with the incomes the proportional split is worked out from. */
+export interface HouseholdUser {
+  id: string;
+  display_name: string;
+  /** Per year, as a decimal string. */
+  base_salary_pa: Money;
+  additional_income_pa: Money;
+}
+
+export interface HouseholdOut {
+  users: { primary: HouseholdUser; secondary: HouseholdUser };
+  split_strategy: SplitStrategy;
+  /** 0–6 decimal places settlement figures are rounded to. */
+  rounding_decimals: number;
+  /** 1–28: the day of the month after a period by which it is settled. */
+  settlement_day_of_month: number;
+  /** ISO 4217, e.g. "GBP". */
+  base_currency: string;
+  /** 1–3 characters, e.g. "£". */
+  currency_symbol: string;
+  /** Fractions that follow from the strategy and the incomes; they sum to 1. */
+  primary_ratio: number;
+  secondary_ratio: number;
+  /** False until something is saved: the values shown are config.yaml's. */
+  stored: boolean;
+}
+
+export interface HouseholdUserUpdate {
+  display_name?: string;
+  base_salary_pa?: Money;
+  additional_income_pa?: Money;
+}
+
+/** Any subset; inside `users` only the people and fields sent change. */
+export interface HouseholdUpdate {
+  users?: { primary?: HouseholdUserUpdate; secondary?: HouseholdUserUpdate };
+  split_strategy?: SplitStrategy;
+  rounding_decimals?: number;
+  settlement_day_of_month?: number;
+  base_currency?: string;
+  currency_symbol?: string;
+}
+
+/** Where a category is referenced; a category with any of these cannot be removed. */
+export interface CategoryUsage {
+  transactions: number;
+  /** Remembered merchants. */
+  memory: number;
+  rules: number;
+}
+
+export interface CategoryOut {
+  name: string;
+  in_use: CategoryUsage;
+}
+
+/** The taxonomy in the order the category menus show it; `UNCATEGORIZED` is always present. */
+export interface CategoriesOut {
+  categories: CategoryOut[];
+  stored: boolean;
+}
+
+/** A deterministic rule: the first whose `pattern` matches the raw description classifies the line without the AI. */
+export interface Rule {
+  /** A Python regular expression, e.g. "(?i)ACME\\s*WATER". */
+  pattern: string;
+  category: string;
+  claim_type: ClaimType;
+  /** The cleaned merchant name to store; null keeps what the parser found. */
+  merchant: string | null;
+  subcategory: string | null;
+  /** Marks the line as an internal transfer and feeds the transfer buffer. */
+  is_internal_transfer: boolean;
+  /** The account that receives the money; a mirror transaction is written there. */
+  transfer_to_account: string | null;
+}
+
+export interface RulesOut {
+  rules: Rule[];
+  /** Regular expressions that identify a card payment on a statement. */
+  payment_patterns: string[];
+  /** How many days apart the two sides of a card payment may be. */
+  match_window_days: number;
+  /** How much the two amounts may differ, as a decimal string. */
+  amount_tolerance: Money;
+  stored: boolean;
+}
+
+/** Any subset; a list sent replaces the whole list. */
+export interface RulesUpdate {
+  rules?: Rule[];
+  payment_patterns?: string[];
+  match_window_days?: number;
+  amount_tolerance?: Money;
+}
+
+/** `rules` and `payment_patterns` test the unsaved lists when given; otherwise the saved ones. */
+export interface RuleTestBody {
+  description: string;
+  rules?: Rule[];
+  payment_patterns?: string[];
+}
+
+export interface RuleTestResult {
+  /** 0-based index into the rules tested; null when none matches. */
+  rule_index: number | null;
+  rule: Rule | null;
+  /** True when a payment pattern matches, so the line would go to the transfer buffer. */
+  is_payment: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Session storage
 // ---------------------------------------------------------------------------
 
@@ -728,6 +845,9 @@ export function editErrorMessage(err: unknown): string {
 }
 
 export const FILE_TOO_LARGE_MESSAGE = 'File too large (limit 25 MB).';
+
+/** Shown by the settings tabs whose document has `stored: false`. */
+export const CONFIG_DEFAULTS_MESSAGE = 'Nothing saved yet: these are the defaults from config.yaml.';
 
 // ---------------------------------------------------------------------------
 // Core request
@@ -924,6 +1044,23 @@ export const api = {
   updateAi: (body: AiUpdate) => request<AiSettings>('PUT', '/ai', { body }),
   /** Calls each model once, through the proxy on the form (a freshly typed key included), saved or not. */
   testAi: (body: AiUpdate) => request<AiTestResult>('POST', '/ai/test', { body }),
+
+  // Household, categories and rules (primary only)
+  getHousehold: () => request<HouseholdOut>('GET', '/settings/household'),
+  /** 422 names the field: a blank name, a negative income, proportional with no income, a bad currency code or symbol. */
+  updateHousehold: (body: HouseholdUpdate) => request<HouseholdOut>('PUT', '/settings/household', { body }),
+  getCategories: () => request<CategoriesOut>('GET', '/settings/categories'),
+  /** The whole list: adds, removes and reorders. 422 for a blank, duplicate or long name; 409 when a removed one is in use. */
+  updateCategories: (categories: string[]) =>
+    request<CategoriesOut>('PUT', '/settings/categories', { body: { categories } }),
+  /** Renames it everywhere. 404 unknown; 409 when `to` exists or `from` is `UNCATEGORIZED`; 422 blank. */
+  renameCategory: (from: string, to: string) =>
+    request<CategoriesOut>('POST', '/settings/categories/rename', { body: { from, to } }),
+  getRules: () => request<RulesOut>('GET', '/settings/rules'),
+  /** 422 names the item: "rule 3: invalid regex …", "payment pattern 2: …". */
+  updateRules: (body: RulesUpdate) => request<RulesOut>('PUT', '/settings/rules', { body }),
+  /** Which rule a description would hit, and whether it counts as a card payment; tests unsaved lists when given. */
+  testRule: (body: RuleTestBody) => request<RuleTestResult>('POST', '/settings/rules/test', { body }),
 };
 
 export type Api = typeof api;

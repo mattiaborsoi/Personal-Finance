@@ -63,3 +63,8 @@ export const trHover = 'transition-colors hover:bg-surface-2/60';
 export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(' ');
 }
+
+/** The id of the note under a `<Field>` (its help or its problem), for the control's `aria-describedby`. */
+export function fieldNoteId(id: string): string {
+  return `${id}-help`;
+}
