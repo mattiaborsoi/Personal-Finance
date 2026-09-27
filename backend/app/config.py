@@ -451,11 +451,17 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     database_url: str = "postgresql://postgres:postgres@localhost:5432/financemaster"
-    litellm_url: str = "http://localhost:4000"
-    """The bundled proxy (or whatever LITELLM_URL says); Settings -> AI can point elsewhere."""
-    litellm_api_key: str = ""
+
+    # Two ways to reach a LiteLLM proxy, chosen under Settings -> AI -> Proxy:
+    # the container that ships with the app, or one you already run.
+    bundled_litellm_url: str = "http://localhost:4000"
+    """Where the LiteLLM from docker-compose.yml answers (Compose sets http://litellm:4000)."""
     litellm_master_key: str = "sk-local-change-me"
-    """Falls back to the bundled proxy's master key when LITELLM_API_KEY is unset."""
+    """The bundled proxy's master key (LITELLM_MASTER_KEY)."""
+    litellm_url: str = ""
+    """A LiteLLM you already run (LITELLM_URL): when set, the app defaults to it."""
+    litellm_api_key: str = ""
+    """The key for that proxy (LITELLM_API_KEY)."""
     config_path: str = "./config.yaml"
     upload_dir: str | None = None
     """Where uploaded statements are kept; defaults to ``<app.data_dir>/uploads``."""
@@ -487,10 +493,6 @@ class Settings(BaseSettings):
     @property
     def sqlalchemy_url(self) -> str:
         return normalise_database_url(self.database_url)
-
-    @property
-    def proxy_api_key(self) -> str:
-        return self.litellm_api_key or self.litellm_master_key
 
 
 def normalise_database_url(url: str) -> str:

@@ -39,8 +39,6 @@ log = logging.getLogger(__name__)
 SETTINGS_KEY = "ai"
 MODEL_LIST_CACHE_SECONDS = 60
 TEST_TIMEOUT_SECONDS = 30.0
-BUNDLED_PROXY_HOST = "litellm"
-"""The Compose service name of the LiteLLM container that ships with the app."""
 
 EmbeddingProvider = Literal["litellm", "hash"]
 
@@ -65,12 +63,14 @@ class AiThresholds(BaseModel):
 
 
 class AiProxy(BaseModel):
-    """Which LiteLLM proxy to talk to.
+    """Which LiteLLM proxy to talk to: one of two, nothing in between.
 
-    ``bundled`` is whatever ``.env`` says (``LITELLM_URL`` / ``LITELLM_API_KEY``),
-    which by default is the container from ``docker-compose.yml``; ``external`` is
-    a LiteLLM you already run, at ``url`` with ``api_key`` (stored here, never
-    returned to the browser).
+    ``bundled`` is the container that ships with the app (``docker-compose.yml``,
+    profile ``bundled-litellm``): ``BUNDLED_LITELLM_URL`` with ``LITELLM_MASTER_KEY``.
+    ``external`` is a LiteLLM you already run, at ``url`` with ``api_key`` (stored
+    here, never returned to the browser); when nothing is saved they default to
+    ``LITELLM_URL`` / ``LITELLM_API_KEY`` from ``.env``, and setting those makes
+    ``external`` the default mode.
     """
 
     mode: Literal["bundled", "external"] = "bundled"
@@ -86,25 +86,24 @@ class AiSettings(BaseModel):
     proxy: AiProxy = Field(default_factory=AiProxy)
 
     def proxy_url(self, settings: Settings) -> str:
-        if self.proxy.mode == "external" and self.proxy.url:
-            return self.proxy.url.rstrip("/")
-        return settings.litellm_url.rstrip("/")
+        if self.proxy.mode == "external":
+            return (self.proxy.url or settings.litellm_url).rstrip("/")
+        return settings.bundled_litellm_url.rstrip("/")
 
     def proxy_key(self, settings: Settings) -> str:
-        if self.proxy.mode == "external" and self.proxy.api_key:
-            return self.proxy.api_key
-        return settings.proxy_api_key
+        if self.proxy.mode == "external":
+            return self.proxy.api_key or settings.litellm_api_key
+        return settings.litellm_master_key
 
     def public_dict(self, settings: Settings) -> dict[str, Any]:
         """Everything but the stored key."""
         data = self.model_dump()
-        bundled_url = settings.litellm_url.rstrip("/")
         data["proxy"] = {
             "mode": self.proxy.mode,
             "url": self.proxy_url(settings),
-            "bundled_url": bundled_url,
-            # True when LITELLM_URL in .env points somewhere other than the bundled container.
-            "from_env": httpx.URL(bundled_url).host != BUNDLED_PROXY_HOST,
+            "bundled_url": settings.bundled_litellm_url.rstrip("/"),
+            # What .env offers for the external option (LITELLM_URL), if anything.
+            "env_url": settings.litellm_url.rstrip("/") or None,
             "has_key": bool(self.proxy_key(settings)),
         }
         return data
@@ -179,6 +178,9 @@ def defaults(settings: Settings, config: AppConfig) -> AiSettings:
             deviation_threshold=config.auditor.deviation_threshold,
             lookback_periods=config.auditor.lookback_periods,
         ),
+        # LITELLM_URL in .env means "I already run one": start from it; a saved choice
+        # overrides this, and a saved external proxy without a URL keeps this one.
+        proxy=AiProxy(mode="external", url=settings.litellm_url.rstrip("/")) if settings.litellm_url else AiProxy(),
     )
 
 

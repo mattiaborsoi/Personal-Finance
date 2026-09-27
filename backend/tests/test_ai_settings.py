@@ -21,7 +21,7 @@ def _settings(**overrides) -> Settings:
         secret_key="unit-test-only",
         primary_password="primary-pass",
         secondary_password="secondary-pass",
-        litellm_url="http://litellm.test:4000",
+        bundled_litellm_url="http://litellm.test:4000",
         litellm_master_key="bundled-master",
         llm_provider="litellm",
         embedding_provider="litellm",
@@ -106,8 +106,10 @@ def test_apply_overlays_models_and_thresholds(config):
 
 
 def test_proxy_resolution_and_key_handling(config):
-    settings = _settings(litellm_api_key="")
+    settings = _settings()
     ai = ai_settings.defaults(settings, config)
+    # Nothing in .env about another proxy: the bundled container with its master key.
+    assert ai.proxy.mode == "bundled"
     assert ai.proxy_url(settings) == "http://litellm.test:4000" and ai.proxy_key(settings) == "bundled-master"
 
     external = ai_settings.merged(
@@ -123,18 +125,42 @@ def test_proxy_resolution_and_key_handling(config):
         "mode": "external",
         "url": "http://other:4000",
         "bundled_url": "http://litellm.test:4000",
-        "from_env": True,  # litellm.test is not the Compose service, so .env overrode it
+        "env_url": None,
         "has_key": True,
     }
     assert "api_key" not in str(public)
-    # The Compose default is the bundled container itself, whatever the port or trailing slash.
-    bundled = ai_settings.defaults(_settings(litellm_url="http://litellm:4000/"), config)
-    assert bundled.public_dict(_settings(litellm_url="http://litellm:4000/"))["proxy"]["from_env"] is False
+    # Back to the bundled container: the master key again, never the external one.
+    back = ai_settings.merged(again, AiUpdate(proxy={"mode": "bundled"}))
+    assert back.proxy_url(settings) == "http://litellm.test:4000" and back.proxy_key(settings) == "bundled-master"
 
     with pytest.raises(ai_settings.AiSettingsError, match="http://"):
         ai_settings.merged(ai, AiUpdate(proxy={"mode": "external", "url": "litellm.local:4000"}))
     with pytest.raises(ai_settings.AiSettingsError, match="URL"):
         ai_settings.merged(ai, AiUpdate(proxy={"mode": "external"}))
+
+
+def test_litellm_url_in_env_makes_the_external_proxy_the_default(config):
+    """Someone who already runs LiteLLM sets LITELLM_URL / LITELLM_API_KEY and is done."""
+    settings = _settings(litellm_url="http://host.docker.internal:4000/", litellm_api_key="sk-env")
+    ai = ai_settings.defaults(settings, config)
+    assert ai.proxy.mode == "external"
+    assert ai.proxy_url(settings) == "http://host.docker.internal:4000" and ai.proxy_key(settings) == "sk-env"
+    public = ai.public_dict(settings)["proxy"]
+    assert public["env_url"] == "http://host.docker.internal:4000" and public["has_key"] is True
+    assert public["bundled_url"] == "http://litellm.test:4000"
+
+    # Saving only a key keeps the URL that .env supplied.
+    stored = ai_settings.merged(ai, AiUpdate(proxy={"api_key": "sk-saved"}))
+    assert stored.proxy.url == "http://host.docker.internal:4000" and stored.proxy_key(settings) == "sk-saved"
+
+    # The bundled container is still one click away, with its own key.
+    bundled = ai_settings.merged(ai, AiUpdate(proxy={"mode": "bundled"}))
+    assert bundled.proxy_url(settings) == "http://litellm.test:4000" and bundled.proxy_key(settings) == "bundled-master"
+
+    # Without LITELLM_URL, choosing the external proxy in the app needs a URL typed in.
+    plain = ai_settings.defaults(_settings(), config)
+    with pytest.raises(ai_settings.AiSettingsError, match="URL"):
+        ai_settings.merged(plain, AiUpdate(proxy={"mode": "external"}))
 
 
 def test_model_catalogue_parses_model_info_and_falls_back():

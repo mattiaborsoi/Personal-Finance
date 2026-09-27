@@ -143,9 +143,9 @@ The backend refuses to start with the placeholder values, so set:
 | `DB_PASSWORD`                            | any password; it is baked into the database volume on first run (changing it later is a separate step, below) |
 | `SECRET_KEY`                             | at least 32 random characters (`openssl rand -hex 32`); rotating it logs everyone out    |
 | `PRIMARY_PASSWORD`, `SECONDARY_PASSWORD` | at least 8 characters each, not a placeholder, and different from each other             |
-| `COMPOSE_PROFILES`                       | `bundled-litellm` starts the bundled LiteLLM proxy; leave it empty when you run your own (see "Using your own LiteLLM") |
-| `LITELLM_MASTER_KEY`                     | any long random string; it guards the bundled LLM proxy                                  |
-| `LITELLM_URL` / `LITELLM_API_KEY`        | optional: a LiteLLM you already run (defaults: the bundled container and its master key); Settings → AI can set this too |
+| `COMPOSE_PROFILES`                       | `bundled-litellm` starts Settl's own LiteLLM proxy; leave it empty when you run your own (see "Using your own LiteLLM") |
+| `LITELLM_MASTER_KEY`                     | any long random string; it guards Settl's own LiteLLM                                    |
+| `LITELLM_URL` / `LITELLM_API_KEY`        | only when you run your own LiteLLM: its address and key, which then become the default under Settings → AI → Proxy |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`   | provider keys, read only by the LiteLLM container; leave them empty when running without an LLM |
 
 `LLM_PROVIDER`, `EMBEDDING_PROVIDER` and `KEEP_UPLOADED_FILES` are covered below and
@@ -179,6 +179,12 @@ The page offers:
 * **Use AI** on or off. Off means rules and the merchant memory only: unknown
   merchants land in the queue as `Uncategorized` for you to fix once, and the
   Auditor writes its sentence from the numbers alone.
+* **Proxy**: one of two. **Settl's own LiteLLM** is the container from
+  `docker-compose.yml` (its address is `BUNDLED_LITELLM_URL`, its key
+  `LITELLM_MASTER_KEY`, its model list `litellm/config.yaml`). **A LiteLLM I already
+  run** takes a URL and a key typed in the app; when `LITELLM_URL` / `LITELLM_API_KEY`
+  are set in `.env` that option is selected by default with those values. The card
+  says whether the chosen proxy answers and how many models it lists.
 * **Which model does what**: categorising transactions (many small calls, a cheap
   model is fine), reading PDFs the parsers cannot (rare), the monthly summary (one
   call a month), and the embeddings behind the merchant memory (or "Offline, no
@@ -202,11 +208,13 @@ Settl ships a LiteLLM container, but nothing depends on it being *that* one. The
 container sits in the Compose profile `bundled-litellm`, which `.env` enables by
 default (`COMPOSE_PROFILES=bundled-litellm`). To use a LiteLLM you already run:
 
-1. leave `COMPOSE_PROFILES` empty in `.env`, so the bundled proxy is not started;
-2. either set `LITELLM_URL` and `LITELLM_API_KEY` in `.env` (the Proxy card in
-   Settings → AI then reads **Proxy from .env** with that URL), or pick **My own
-   LiteLLM** there and enter the URL and key in the app (the key is stored in the
-   database, never shown again, and used only server-side).
+1. leave `COMPOSE_PROFILES` empty in `.env`, so Settl's own proxy is never started
+   (nothing else in the stack depends on it);
+2. either set `LITELLM_URL` and `LITELLM_API_KEY` in `.env`, which makes **A LiteLLM
+   I already run** the selected option under Settings → AI → Proxy with that URL, or
+   pick that option in the app and enter the URL and key there (the key is stored in
+   the database, never shown again, and used only server-side). What is saved in the
+   app wins over `.env`; **Settl's own LiteLLM** stays one click away.
 
 If your proxy lists no embedding model (an Anthropic-only LiteLLM, say), the
 merchant memory stays on the offline hash embedder and the page says so; add an
@@ -647,18 +655,19 @@ compile, and `salary_proportional` needs a positive combined income.
 | variable                                   | purpose                                                                          |
 |--------------------------------------------|----------------------------------------------------------------------------------|
 | `DB_PASSWORD`                              | PostgreSQL password; fixed in the volume on first start                          |
-| `LITELLM_MASTER_KEY`                       | key the backend presents to the proxy                                            |
+| `LITELLM_MASTER_KEY`                       | the master key of Settl's own LiteLLM (the backend presents it to that container)|
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`      | provider keys, injected into the `litellm` container only                        |
 | `SECRET_KEY`                               | token signing key (≥ 32 random characters)                                       |
 | `PRIMARY_PASSWORD`, `SECONDARY_PASSWORD`   | the two role passwords (≥ 8 characters, different)                               |
-| `COMPOSE_PROFILES`                         | `bundled-litellm` (default) starts the bundled proxy; empty = bring your own      |
-| `LITELLM_URL`, `LITELLM_API_KEY`           | an external LiteLLM (default: `http://litellm:4000` with `LITELLM_MASTER_KEY`); overridable in Settings → AI |
+| `COMPOSE_PROFILES`                         | `bundled-litellm` (default) starts Settl's own proxy; empty = bring your own      |
+| `LITELLM_URL`, `LITELLM_API_KEY`           | a LiteLLM you already run; when set it is the default choice under Settings → AI → Proxy |
 | `LLM_PROVIDER`                             | `litellm` \| `none` — the default for "Use AI" in Settings → AI                   |
 | `EMBEDDING_PROVIDER`                       | `litellm` \| `hash` — the default embedding provider in Settings → AI             |
 | `KEEP_UPLOADED_FILES`                      | `false` (default) deletes statements after ingestion                             |
 
 The backend also reads (set by `docker-compose.yml`, or defaults for local
-development): `DATABASE_URL`, `LITELLM_URL`, `LITELLM_API_KEY`, `CONFIG_PATH`,
+development): `DATABASE_URL`, `BUNDLED_LITELLM_URL` (Compose sets
+`http://litellm:4000`; `http://localhost:4000` outside Docker), `CONFIG_PATH`,
 `UPLOAD_DIR`, `SESSION_TTL_SECONDS`, `LLM_TIMEOUT_SECONDS` (default 90: the PDF
 extraction timeout and the ceiling for the 20 s classification and 60 s audit
 timeouts), `EMBEDDING_DIMENSIONS` (must be 1536) and `CORS_ORIGINS`.

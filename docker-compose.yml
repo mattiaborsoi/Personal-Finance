@@ -23,10 +23,11 @@ services:
       timeout: 5s
       retries: 20
 
-  # The bundled LiteLLM proxy. It is part of the "bundled-litellm" profile, which
+  # Settl's own LiteLLM proxy. It is part of the "bundled-litellm" profile, which
   # .env enables by default (COMPOSE_PROFILES=bundled-litellm). Already running
-  # LiteLLM elsewhere? Leave COMPOSE_PROFILES empty and point LITELLM_URL /
-  # LITELLM_API_KEY at it (or do the same later under Settings -> AI -> Proxy).
+  # LiteLLM elsewhere? Leave COMPOSE_PROFILES empty so this container never starts,
+  # and either set LITELLM_URL / LITELLM_API_KEY below or pick "A LiteLLM I already
+  # run" under Settings -> AI -> Proxy in the app.
   litellm:
     profiles: ["bundled-litellm"]
     # Pin a release tag (e.g. main-v1.x.y) for reproducible deployments.
@@ -58,9 +59,11 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       - DATABASE_URL=postgresql://postgres:${DB_PASSWORD:?set DB_PASSWORD in .env}@db:5432/financemaster
-      - LITELLM_URL=${LITELLM_URL:-http://litellm:4000}
-      - LITELLM_API_KEY=${LITELLM_API_KEY:-}
+      # The bundled proxy above, and (optionally) one you already run.
+      - BUNDLED_LITELLM_URL=http://litellm:4000
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-local-change-me}
+      - LITELLM_URL=${LITELLM_URL:-}
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       - CONFIG_PATH=/app/config/config.yaml
       - UPLOAD_DIR=/app/uploads
       - KEEP_UPLOADED_FILES=${KEEP_UPLOADED_FILES:-false}
