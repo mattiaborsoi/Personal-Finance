@@ -33,6 +33,7 @@ htmlcov/
 node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/coverage/
 npm-debug.log*
 
 # --- Tooling ---
@@ -41,3 +42,6 @@ npm-debug.log*
 .idea/
 .vscode/
 docker-compose.override.yml
+# Local verification only (sandbox CA injection), like docker-compose.override.yml
+ccr.Dockerfile
+ccr-ca-bundle.crt

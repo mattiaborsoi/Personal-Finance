@@ -4,6 +4,7 @@
 docs
 frontend
 litellm
+updater
 uploads
 data
 pgdata
@@ -15,8 +16,12 @@ node_modules
 .env
 .env.*
 config.yaml
+config.*.yaml
+!config.example.yaml
 *.pdf
 *.csv
 *.xlsx
 *.xls
+*.ofx
+*.qif
 docker-compose*.yml

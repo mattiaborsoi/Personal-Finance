@@ -30,18 +30,21 @@ Sign convention everywhere: **negative = money out, positive = money in**. Money
                  └──────────────────────────┘          └────────────────────────┘
 ```
 
-Four containers, defined in `docker-compose.yml`:
+Five containers, defined in `docker-compose.yml`:
 
 | container  | image / build                         | role                                                                                    |
 |------------|---------------------------------------|-----------------------------------------------------------------------------------------|
 | `db`       | `pgvector/pgvector:pg16`              | PostgreSQL 16 with the `vector` extension; data in the `pgdata` volume                   |
-| `litellm`  | `ghcr.io/berriai/litellm`             | Local proxy; maps the logical names in `litellm/config.yaml` to providers and holds the provider keys |
+| `litellm`  | `ghcr.io/berriai/litellm`             | Local proxy; maps the logical names in `litellm/config.yaml` to providers and holds the provider keys. Optional: Compose profile `bundled-litellm`, on by default (see "Using your own LiteLLM") |
 | `backend`  | `backend/Dockerfile`                  | FastAPI app; mounts `config.yaml` read-only and `./uploads`; runs `schema.sql` at start  |
 | `frontend` | `frontend/Dockerfile`                 | Vite build served by nginx; the only port published beyond loopback                     |
+| `updater`  | `updater/Dockerfile`                  | Optional self-update sidecar (Settings → System → Update now): `git` plus the Docker CLI, with the host's Docker socket mounted; publishes no port (see "Updating") |
 
-The backend never sees provider API keys: it talks to LiteLLM with
-`LITELLM_MASTER_KEY` and refers to models only by the logical names `default-chat`,
-`cheap-chat` and `default-embedding`. Swapping providers is a LiteLLM config change.
+The backend never sees provider API keys: it talks to a LiteLLM proxy (Settl's own,
+with `LITELLM_MASTER_KEY`, or one you already run, with the key saved in the app or
+`LITELLM_API_KEY`) and names models by whatever that proxy lists; Settl's own lists
+the logical names `default-chat`, `cheap-chat` and `default-embedding`. Swapping
+providers is a LiteLLM config change.
 
 Startup (`app/main.py` lifespan): load `config.yaml` if there is one (a missing file,
 or the empty directory Docker leaves in its place, means built-in defaults and a
@@ -150,7 +153,11 @@ is saved there); switch to `equal_50_50` if you prefer a straight split.
 
 ### `.env`
 
-The backend refuses to start with the placeholder values, so set:
+Compose refuses to start until `DB_PASSWORD`, `SECRET_KEY`, `PRIMARY_PASSWORD` and
+`SECONDARY_PASSWORD` are set, and the backend also refuses the placeholder values of
+the last three (the guard is in `app/auth.py`); replace the placeholder
+`DB_PASSWORD` too. The remaining rows configure the AI proxy; none of them stops
+Settl from starting:
 
 | variable                                 | rule                                                                                     |
 |------------------------------------------|------------------------------------------------------------------------------------------|
@@ -230,9 +237,10 @@ default (`COMPOSE_PROFILES=bundled-litellm`). To use a LiteLLM you already run:
    the database, never shown again, and used only server-side). What is saved in the
    app wins over `.env`; **Settl's own LiteLLM** stays one click away.
 
-If your proxy lists no embedding model (an Anthropic-only LiteLLM, say), the
-merchant memory stays on the offline hash embedder and the page says so; add an
-embedding model to your LiteLLM to switch it on.
+If your proxy lists no embedding model (a chat-only LiteLLM, say), the page says so
+and offers **Offline, no AI** for the merchant memory: tick it and save (or set
+`EMBEDDING_PROVIDER=hash` in `.env` before anything is saved). Nothing switches
+over by itself; add an embedding model to your LiteLLM to use AI there.
 
 From inside the containers a proxy on the same machine is `http://host.docker.internal:4000`
 (Docker Desktop provides that name; on Linux the backend service adds it via
@@ -247,20 +255,31 @@ rebuilds the app containers.
 That button is served by the optional `updater` sidecar in `docker-compose.yml`, a
 small container holding `git`, the Docker CLI and the Compose plugin, with the
 host's Docker socket and the repository directory mounted (at the same path as on
-the host, so Compose's relative bind mounts keep resolving). The backend talks to it
-over the Compose network only, authenticated with a token derived from
+the host, so Compose's relative bind mounts keep resolving). Compose takes that path
+from `$PWD`, so run every `docker compose` command from a shell inside the
+repository directory; Compose refuses to start if `PWD` is not set. The backend
+talks to it over the Compose network only (`UPDATER_URL`, `http://updater:9000`),
+authenticated with a token derived from
 `SECRET_KEY` (`sha256("settl-updater:" + SECRET_KEY)`); nothing else can trigger a
 rebuild, and the sidecar publishes no port. An update is
 `git pull --ff-only origin <branch>` followed by
-`docker compose up -d --build --remove-orphans backend frontend`; the updater never
-recreates itself, so a change to the sidecar needs one manual
-`docker compose up -d --build updater`. Mounting the Docker socket is root-equivalent
-on the host: if you would rather not, delete the `updater` service and the System
-tab shows the manual commands instead.
+`docker compose up -d --build --remove-orphans backend frontend`: the updater
+rebuilds only `backend` and `frontend` (starting `db` first, as their dependency). It never
+recreates itself or the `litellm` container, so a change to the sidecar needs a
+manual `docker compose up -d --build updater`, and a change to `litellm/config.yaml`
+a `docker compose restart litellm`.
+Mounting the Docker socket is root-equivalent on the host: if you would rather not,
+delete the `updater` service. The System tab then shows the manual commands
+instead, and since the running commit is read by the updater, it can no longer tell
+which commit is running or whether an update is available; it lists GitHub's latest
+commits as recent changes.
 
 The version check is one unauthenticated request to `api.github.com` for the last
 30 commits of `UPDATE_REPO` / `UPDATE_BRANCH` (cached for ten minutes, never more
 than once per page load); set `UPDATE_CHECK=false` in `.env` to never contact GitHub.
+`UPDATE_REPO` (`owner/repo` on GitHub, default `mattiaborsoi/personal-finance`) and
+`UPDATE_BRANCH` (default `main`) are `.env` variables too, for a fork; the branch is
+also the one the updater pulls (section 11).
 
 By hand:
 
@@ -378,9 +397,9 @@ Precedence for each raw description:
 3. **Merchant-key memory match** (`memory.lookup_by_key`): the *merchant key* is the
    first two words printed before any store number (`TESCO STORES 3021 LONDON` →
    `TESCO STORES`, `WAITROSE 123 LONDON` → `WAITROSE`, `UBER *TRIP HELP.UBER.COM` →
-   `UBER TRIP`). A memory row whose normalised pattern is the key or starts with it is
-   used directly → `source=memory`, confidence 1.0, `pending_review`, most reviewed
-   row first. This is how the same shop is recognised under another store number: the
+   `UBER TRIP`). A memory row whose normalised pattern is the key, or starts with the
+   key followed by a space, is used directly → `source=memory`, confidence 1.0,
+   `pending_review`, most reviewed row first. This is how the same shop is recognised under another store number: the
    offline hash embedder scores such pairs at 0.56–0.79, under the threshold. Rows that
    disagree on category or claim type (a shared bank prefix such as `CARD PAYMENT`)
    are not trusted and the vector search runs instead.
@@ -619,8 +638,10 @@ Reports are appended to `audit_reports`; closing a period runs one automatically
   the throttle or aim it at someone else by sending its own header.
   The API answers 429 with `Retry-After`.
 * **Uploads.** Files are written to the upload directory (created mode 700) under a
-  random name, capped at 25 MB, deleted after ingestion unless
-  `KEEP_UPLOADED_FILES=true`; only the sha256 is kept for duplicate detection.
+  random prefix followed by the sanitised original file name (`<uuid>_<name>`; the
+  name is also kept in `statement_uploads.filename`), capped at 25 MB, deleted after
+  ingestion unless `KEEP_UPLOADED_FILES=true`; only the sha256 is kept for duplicate
+  detection.
 * **Prompt hygiene.** Statement text sent to a model is JSON-quoted and clipped to
   200 characters, few-shot examples below 0.5 similarity are dropped, the system prompt
   states that the text is data and never instructions, and every model answer is
@@ -632,8 +653,10 @@ Reports are appended to `audit_reports`; closing a period runs one automatically
   proxies `/api/`) and reports only whether the app and its database are up. Everything
   is plain HTTP: keep it on the LAN or behind TLS.
 * **Browser.** nginx sends `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
-  `Referrer-Policy: no-referrer` and a strict CSP (`default-src 'self'`; no external
-  scripts, fonts or images; `frame-ancestors 'none'`). The SPA loads nothing from
+  `Referrer-Policy: no-referrer` and a CSP with `default-src 'self'` (no external
+  scripts, fonts or images; `style-src` also allows `'unsafe-inline'`, which the
+  chart library's inline style attributes need; `img-src` also allows `data:`;
+  `frame-ancestors 'none'`, `object-src 'none'`). The SPA loads nothing from
   third-party origins.
 * **Repository hygiene.** `.gitignore` excludes `.env`, `config.yaml`, uploads and
   every statement format. `.gitleaks.toml` extends the default secret rules with UK
@@ -662,7 +685,7 @@ the standard categories and card-payment patterns, no rules and no accounts.
 | `accounts`            | `id`, `institution` (as printed on statements; used to map uploads), optional `label` (a friendlier display name shown in the app in place of institution and account type, e.g. `HSBC Premier ··4471`; the last four digits are always appended), `account_type` (`checking`, `savings`, `credit`, `credit_supplementary`, `investment_cash`), `owner` (the spender), `identifier_last4`, `default_claim_type`, optional `billed_to` |
 | `deterministic_rules` | ordered regex → `category`, `claim_type`, optional `merchant`, `subcategory`, `is_internal_transfer`, `transfer_to_account` |
 | `transfers`           | `payment_patterns` (card-payment regexes), `match_window_days`, `amount_tolerance`          |
-| `llm`                 | `chat_model`, `embedding_model` (logical names from `litellm/config.yaml`), `similarity_threshold`, `top_k` |
+| `llm`                 | `chat_model`, `embedding_model` (logical names from `litellm/config.yaml`), optional `extraction_model` and `audit_model` (the models for PDF layout extraction and the monthly summary; both default to `chat_model`), `similarity_threshold`, `top_k` |
 | `auditor`             | `deviation_threshold`, `lookback_periods`                                                   |
 | `categories`          | the taxonomy offered to the classifier and the UI (`Uncategorized` is always appended)      |
 
@@ -687,10 +710,13 @@ documents are under `/api/settings/*` for the primary login (docs/API.md).
 | `LLM_PROVIDER`                             | `litellm` \| `none` — the default for "Use AI" in Settings → AI                   |
 | `EMBEDDING_PROVIDER`                       | `litellm` \| `hash` — the default embedding provider in Settings → AI             |
 | `KEEP_UPLOADED_FILES`                      | `false` (default) deletes statements after ingestion                             |
+| `UPDATE_CHECK`                             | `true` (default) lets Settings → System ask `api.github.com` for the newest commits; `false` never contacts GitHub |
+| `UPDATE_REPO`, `UPDATE_BRANCH`             | the GitHub `owner/repo` and branch compared with the running code (defaults `mattiaborsoi/personal-finance`, `main`); the updater pulls the same branch |
 
 The backend also reads (set by `docker-compose.yml`, or defaults for local
 development): `DATABASE_URL`, `BUNDLED_LITELLM_URL` (Compose sets
-`http://litellm:4000`; `http://localhost:4000` outside Docker), `CONFIG_PATH`,
+`http://litellm:4000`; `http://localhost:4000` outside Docker), `UPDATER_URL`
+(`http://updater:9000`), `CONFIG_PATH`,
 `UPLOAD_DIR`, `SESSION_TTL_SECONDS`, `LLM_TIMEOUT_SECONDS` (default 90: the PDF
 extraction timeout and the ceiling for the 20 s classification and 60 s audit
 timeouts), `EMBEDDING_DIMENSIONS` (must be 1536) and `CORS_ORIGINS`.
@@ -700,6 +726,7 @@ timeouts), `EMBEDDING_DIMENSIONS` (must be 1536) and `CORS_ORIGINS`.
 | object                  | purpose                                                                                     |
 |-------------------------|---------------------------------------------------------------------------------------------|
 | `accounts`              | the accounts (seeded once from `config.yaml`, then edited in the app): `label`, `default_claim_type`, `billed_to`, `is_active` (archived keeps history), `sort_order` |
+| `app_settings`          | one JSONB document per `key`, saved from Settings (`household`, `categories`, `rules`, `ai`); each overrides the matching `config.yaml` / `.env` defaults |
 | `ledger_periods`        | one row per `YYYY-MM`, `is_closed`, `closed_at`                                             |
 | `statement_uploads`     | file provenance and sha256 for duplicate detection; `period_from` / `period_to` (the months the file spans, NULL on older rows) beside the legacy `period_key` |
 | `transactions`          | the master ledger: amounts, category, `claim_type`, generated `is_claimable`, the two allocations, `review_status`, transfer flag and link, `classification_source` / `_confidence`, `fingerprint`, and the split columns `is_split`, `split_parent_id`, `split_index` |
@@ -751,7 +778,10 @@ The file is re-run on every start; new columns are added with
   not the other statement has arrived).
 * **Extra columns/tables:** `transactions.fingerprint` (idempotent re-uploads),
   `classification_source` / `classification_confidence` (approval-queue badges),
-  `statement_uploads`, `audit_reports` and `settlement_snapshots`.
+  `statement_uploads`, `audit_reports`, `settlement_snapshots`, `app_settings` (what
+  is saved under Settings) and the `accounts` detail columns (`label`,
+  `default_claim_type`, `billed_to`, `is_active`, `sort_order`) that let accounts be
+  edited in the app.
 * **Split transactions** are modelled as child rows in `transactions` rather than a
   separate table, so every engine (settlement, metrics, Auditor) sees parts through
   the same queries; the parent is filtered out of those engines with `is_split` and
@@ -793,6 +823,23 @@ time; no real statement is ever checked in. Inside Docker,
 `docker compose exec backend pytest -v` runs the same suite against a `_test`
 database on the `db` container.
 
+To run the API that the frontend dev server proxies to, start the database alone
+and run uvicorn from `backend/`. Settings come from the environment and from a
+`.env` in the current directory (here `backend/`, not the repository root), so
+export what the startup guard needs:
+
+```bash
+docker compose up -d db          # PostgreSQL + pgvector on 127.0.0.1:5432
+cd backend
+export DATABASE_URL=postgresql://postgres:<DB_PASSWORD from .env>@localhost:5432/financemaster
+export SECRET_KEY=$(openssl rand -hex 32) PRIMARY_PASSWORD=<8+ chars> SECONDARY_PASSWORD=<another>
+export LLM_PROVIDER=none EMBEDDING_PROVIDER=hash   # optional: no proxy needed
+uvicorn app.main:app --reload --port 8000
+```
+
+Without `CONFIG_PATH` it looks for `backend/config.yaml` and, finding none, starts
+from the built-in defaults.
+
 Frontend (Node 22):
 
 ```bash
@@ -813,29 +860,38 @@ stub or inject build-time settings for local verification.
 ## 15. Repository layout
 
 ```
-├── docker-compose.yml          # db (pgvector), litellm, backend, frontend (nginx)
-├── config.example.yaml         # sanitised template for the untracked config.yaml
+├── README.md, CONTRIBUTING.md, SECURITY.md, LICENSE
+├── docker-compose.yml          # db (pgvector), litellm (optional), backend, frontend (nginx), updater (optional)
+├── config.example.yaml         # sanitised template for the optional, untracked config.yaml
 ├── .env.example                # runtime secrets template
+├── .gitignore, .dockerignore   # secrets, statements, caches; the backend build context (repo root) trimmed
 ├── .gitleaks.toml              # secret + UK PII rules; .pre-commit-config.yaml wires them in
+├── .github/                    # workflows/ci.yml (ruff, pytest, updater lint, frontend gates, gitleaks),
+│                               # ISSUE_TEMPLATE/, PULL_REQUEST_TEMPLATE.md, CODEOWNERS
 ├── litellm/config.yaml         # logical model names -> providers
+├── updater/                    # self-update sidecar: Dockerfile, updater.py (git pull + compose rebuild)
 ├── backend/
-│   ├── Dockerfile
+│   ├── Dockerfile, pyproject.toml (pytest, ruff), requirements.txt
 │   ├── app/
-│   │   ├── main.py             # FastAPI app, lifespan (guards, schema, account sync)
+│   │   ├── main.py             # FastAPI app, lifespan (guards, schema, account seeding)
 │   │   ├── config.py           # Settings (.env) and AppConfig (config.yaml) models
+│   │   ├── database.py         # engine, session factory, init_db (runs schema.sql)
+│   │   ├── deps.py             # FastAPI dependencies: settings, config, AI settings, effective config
 │   │   ├── auth.py             # passwords -> signed tokens, startup guard
 │   │   ├── schema.sql          # canonical DDL, idempotent, run at start
 │   │   ├── models.py           # SQLAlchemy mapping of schema.sql
 │   │   ├── schemas.py          # Pydantic request/response models (API.md)
-│   │   ├── routers/            # auth, reference, periods, statements, transactions,
-│   │   │                       # transfers, claims, settlement, metrics, audit, memory
+│   │   ├── routers/            # accounts, ai, audit, auth, claims, memory, metrics, periods, reference,
+│   │   │                       # settlement, site_settings, statements, system, transactions, transfers
 │   │   └── services/
 │   │       ├── parsers/        # Agent 1: tabular, pdf_table, pdf_text, llm_extractor, registry
+│   │       │                   # (+ amounts, dates, columns, metadata, base helpers)
 │   │       ├── rules.py        # deterministic rules + merchant name cleaner
 │   │       ├── guesser.py      # Agent 2
 │   │       ├── memory.py       # pgvector merchant memory
 │   │       ├── embeddings.py   # LiteLLM / hashing embedding clients
 │   │       ├── llm.py          # LiteLLM JSON client, Null and Fake clients
+│   │       ├── providers.py    # builds the LLM / embedding clients from the AI settings
 │   │       ├── ingestion.py    # upload orchestration, fingerprints, mirrors
 │   │       ├── transfers.py    # transfer buffer and matching
 │   │       ├── settlement.py   # allocation and the four sums
@@ -843,13 +899,22 @@ stub or inject build-time settings for local verification.
 │   │       ├── splits.py       # split transactions
 │   │       ├── metrics.py      # macro / micro / liquidity / investment
 │   │       ├── auditor.py      # Agent 3
-│   │       ├── periods.py, accounts.py, providers.py
+│   │       ├── accounts.py     # accounts table: seeding, create / edit / archive
+│   │       ├── site_settings.py # Settings -> Household, Categories, Rules documents
+│   │       ├── ai_settings.py  # Settings -> AI: proxy, models, thresholds, connection test
+│   │       ├── updates.py      # Settings -> System: GitHub check, updater client
+│   │       └── periods.py
 │   └── tests/                  # pytest suite; fixtures/generate.py builds synthetic statements
 ├── frontend/
-│   ├── Dockerfile, nginx.conf, nginx-security-headers.conf
+│   ├── Dockerfile, .dockerignore, nginx.conf, nginx-security-headers.conf
+│   ├── package.json, package-lock.json, vite.config.ts, tsconfig.json, eslint.config.js,
+│   │   tailwind.config.js, postcss.config.js, index.html
+│   ├── README.md               # scripts, production image, source layout
 │   ├── DESIGN.md               # the design system
-│   └── src/                    # api.ts, auth/, config/, pages/, components/, lib/, test/
-└── docs/                       # TECHNICAL.md (this file), API.md, BLUEPRINT.md
+│   └── src/                    # main.tsx, App.tsx, api.ts, index.css; auth/, config/, hooks/,
+│                               # pages/, components/, lib/, test/
+└── docs/                       # TECHNICAL.md (this file), API.md, BLUEPRINT.md,
+                                # images/ (the README screenshots)
 ```
 
 ## 16. Frontend design system

@@ -1,8 +1,10 @@
 # System Specification & AI Execution Plan: Self-Hosted Personal Finance & Shared Ledger Engine
 
-This document is the architectural blueprint the implementation follows. Where the
-implementation deliberately deviates or extends it, `README.md` ("Design decisions")
-records why.
+This is the original specification Settl was built from, kept for reference and not
+maintained. It describes the design as planned, not the shipped product: where the
+implementation deviates from or extends it, [`TECHNICAL.md`](TECHNICAL.md) section 13
+("Design decisions") records why, and the rest of `TECHNICAL.md` describes what
+actually runs.
 
 ## 1. System Overview & Architecture Blueprint
 
