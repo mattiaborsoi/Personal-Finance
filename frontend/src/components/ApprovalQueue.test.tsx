@@ -40,6 +40,22 @@ describe('<ApprovalQueue />', () => {
     expect(screen.getByText('2 transactions pending review')).toBeInTheDocument();
   });
 
+  it('scrolls a wide queue inside a positioned wrapper so it cannot widen the page on a phone', async () => {
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      return undefined;
+    });
+
+    renderWithProviders(<ApprovalQueue period="2026-03" />);
+    await screen.findByRole('button', { name: 'Ocado' });
+
+    // The rows' screen-reader-only labels are absolutely positioned, so the scroller must be their
+    // containing block (relative) for its overflow clip to apply to them; the card never grows either.
+    expect(screen.getByRole('table').parentElement).toHaveClass('relative', 'overflow-x-auto');
+    expect(screen.getByRole('region', { name: 'Approval queue' })).toHaveClass('min-w-0');
+    expect((screen.getByLabelText('Category for Ocado') as HTMLSelectElement).labels?.[0]).toHaveClass('sr-only');
+  });
+
   it('names every row control after its merchant for screen readers, keeping the visible label short', async () => {
     mockFetch(({ method, url }) => {
       if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });

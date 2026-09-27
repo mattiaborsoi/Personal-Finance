@@ -245,7 +245,9 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
         <EmptyState icon={ListChecks} title="Nothing to review. All caught up." hint="New statement lines land here for a quick check." />
       )}
       {items.length > 0 && (
-        <div className="overflow-x-auto pt-1">
+        // relative: the rows' screen-reader-only labels are absolutely positioned, so without a
+        // positioned scroller they escape its clip at their static position and widen the page on a phone.
+        <div className="relative overflow-x-auto pt-1">
           <table className={cx(tableBase, tableFlush)}>
             <thead className="sr-only">
               <tr>
