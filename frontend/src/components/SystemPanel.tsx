@@ -20,6 +20,7 @@ interface Props {
 
 export const MANUAL_UPDATE_COMMANDS = 'git pull && docker compose up -d --build';
 export const UPDATE_ALREADY_RUNNING_MESSAGE = 'An update is already running.';
+export const ALREADY_UP_TO_DATE_TITLE = 'Already running the latest version';
 export const UPDATER_UNAVAILABLE_MESSAGE = 'The updater is not reachable, so the app cannot update itself.';
 
 /** While the app restarts mid-update the gateway answers 502/503/504, or nothing at all. */
@@ -187,7 +188,9 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
   const latestValue = !info.update_check_enabled ? 'Checks disabled' : info.latest ? info.latest.short : 'Not checked';
   const latestHint =
     info.update_check_enabled && info.latest ? `${formatDateTime(info.latest.date)} · ${info.latest.message}` : undefined;
-  const canUpdate = updater.available && updater.state !== 'running';
+  /** Nothing to install when the running commit is the latest; unknown (null) still allows it. */
+  const upToDate = info.update_available === false;
+  const canUpdate = updater.available && updater.state !== 'running' && !upToDate;
   const updatedTo = info.running.short ?? info.latest?.short ?? 'the latest version';
   const { changes } = info;
   /** Every update skipped is listed, not only the latest; with nothing to compare against, the newest commits. */
@@ -265,7 +268,9 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
                 ? 'Self-update is off: the updater is not reachable'
                 : updater.state === 'running'
                   ? UPDATE_ALREADY_RUNNING_MESSAGE
-                  : undefined
+                  : upToDate
+                    ? ALREADY_UP_TO_DATE_TITLE
+                    : undefined
             }
           >
             Update now

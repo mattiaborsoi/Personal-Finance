@@ -120,7 +120,7 @@ export function Layout() {
       </header>
 
       <main id="main" tabIndex={-1} className="min-w-0 flex-1 px-4 py-5 focus:outline-none sm:px-8 sm:py-8">
-        <div className="mx-auto max-w-6xl animate-rise">
+        <div className="mx-auto max-w-[100rem] animate-rise">
           <ReviewBadgeContext.Provider value={badgeSync}>
             <Outlet />
           </ReviewBadgeContext.Provider>

@@ -12,7 +12,6 @@ import {
   chipSoft,
   cx,
   focusRing,
-  selectCategory,
   selectCompact,
   trHover,
 } from '../lib/ui';
@@ -28,7 +27,7 @@ import { TransferToggle } from './TransferToggle';
 export type ApprovalDraft = Pick<TransactionPatch, 'category' | 'claim_type'>;
 
 /** How many cells a row spans, for the error row beneath it. */
-export const APPROVAL_COLUMNS = 8;
+export const APPROVAL_COLUMNS = 7;
 
 interface Props {
   transaction: TransactionOut;
@@ -98,14 +97,14 @@ export function ApprovalRow({
             />
           </label>
         </td>
-        <td className="w-full min-w-[15rem] max-w-0 px-2 py-3 align-middle">
+        <td className="w-full min-w-[14rem] px-2 py-3 align-middle">
           <div className="flex items-start gap-3">
             <MerchantAvatar name={merchant} className="mt-0.5" />
             <div className="min-w-0 flex-1">
-              <div className="flex items-baseline gap-2">
+              <div className="flex flex-wrap items-baseline gap-x-2">
                 <button
                   type="button"
-                  className={cx('min-w-0 max-w-[18rem] truncate rounded text-left font-semibold text-ink hover:underline', focusRing)}
+                  className={cx('line-clamp-2 min-w-0 break-words rounded text-left font-semibold text-ink hover:underline', focusRing)}
                   title={tx.raw_description}
                   aria-expanded={showRaw}
                   onClick={() => setShowRaw((s) => !s)}
@@ -115,7 +114,7 @@ export function ApprovalRow({
                 <span className="shrink-0 text-xs text-ink-3 tabular">{formatDate(tx.transaction_date)}</span>
               </div>
               {hasRawLine && (
-                <p className={cx('mt-0.5 max-w-[18rem] font-mono text-xs text-ink-3', showRaw ? 'break-all' : 'truncate')}>
+                <p className={cx('mt-0.5 w-0 min-w-full max-w-[22rem] font-mono text-xs text-ink-3', showRaw ? 'break-all' : 'truncate')}>
                   {tx.raw_description}
                 </p>
               )}
@@ -128,42 +127,44 @@ export function ApprovalRow({
         <td className="whitespace-nowrap px-2 py-3 text-right align-middle font-semibold tabular">
           <MoneyText value={tx.amount} tone />
         </td>
+        {/* Category and claim type share a cell: stacked below 2xl, side by side on a wide screen, so the row fits. */}
         <td className="px-2 py-3 align-middle">
-          <label htmlFor={`category-${id}`} className="sr-only">
-            Category for {merchant}
-          </label>
-          <select
-            id={`category-${id}`}
-            className={cx(selectCompact, selectCategory)}
-            value={category}
-            title={categoryLabel(category)}
-            onChange={(e) => onDraftChange({ ...draft, category: e.target.value })}
-            disabled={locked}
-          >
-            {categories.map((c) => (
-              <option key={c} value={c}>
-                {categoryLabel(c)}
-              </option>
-            ))}
-          </select>
-        </td>
-        <td className="px-2 py-3 align-middle">
-          <label htmlFor={`claim-${id}`} className="sr-only">
-            Claim type for {merchant}
-          </label>
-          <select
-            id={`claim-${id}`}
-            className={cx(selectCompact, 'w-56')}
-            value={claimType}
-            onChange={(e) => onDraftChange({ ...draft, claim_type: e.target.value as ClaimType })}
-            disabled={locked}
-          >
-            {config.claim_types.map((ct) => (
-              <option key={ct} value={ct}>
-                {claimTypeLabel(ct, names)}
-              </option>
-            ))}
-          </select>
+          <div className="flex flex-col gap-1.5 2xl:flex-row 2xl:items-center 2xl:gap-2">
+            <label htmlFor={`category-${id}`} className="sr-only">
+              Category for {merchant}
+            </label>
+            <select
+              id={`category-${id}`}
+              className={cx(selectCompact, 'w-44 2xl:w-auto 2xl:min-w-[11rem] 2xl:max-w-[16rem]')}
+              value={category}
+              title={categoryLabel(category)}
+              onChange={(e) => onDraftChange({ ...draft, category: e.target.value })}
+              disabled={locked}
+            >
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {categoryLabel(c)}
+                </option>
+              ))}
+            </select>
+            <label htmlFor={`claim-${id}`} className="sr-only">
+              Claim type for {merchant}
+            </label>
+            <select
+              id={`claim-${id}`}
+              className={cx(selectCompact, 'w-44')}
+              value={claimType}
+              title={claimTypeLabel(claimType, names)}
+              onChange={(e) => onDraftChange({ ...draft, claim_type: e.target.value as ClaimType })}
+              disabled={locked}
+            >
+              {config.claim_types.map((ct) => (
+                <option key={ct} value={ct}>
+                  {claimTypeLabel(ct, names)}
+                </option>
+              ))}
+            </select>
+          </div>
         </td>
         <td className="px-2 py-3 text-center align-middle">
           <TransferToggle transaction={tx} merchant={merchant} disabled={locked} title={closedTitle} onChange={onTransferChange} />
@@ -193,7 +194,8 @@ export function ApprovalRow({
               title={closedTitle}
             >
               <Check className="h-3.5 w-3.5" aria-hidden="true" />
-              Approve
+              {/* The label is the button's name either way; the word only shows where the row has room. */}
+              <span className="hidden 2xl:inline">Approve</span>
             </button>
           </span>
         </td>

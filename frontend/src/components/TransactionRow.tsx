@@ -60,9 +60,9 @@ const cell = `${cellBase} sm:py-3`;
 const partCell = `${cellBase} sm:py-2`;
 /** A cell that only exists to keep the table's columns; nothing to show on a phone. */
 const spacerCell = 'hidden sm:table-cell sm:px-2 sm:py-2';
-/** Full width on a phone; from `sm` as wide as the longest category, capped (pair with a `title`). */
-const categoryWidth = 'w-full sm:w-auto sm:min-w-[11rem] sm:max-w-[18rem]';
-const claimWidth = 'w-full sm:w-56';
+/** Full width on a phone; fixed on a laptop so the row fits; from `2xl` as wide as the longest category, capped (pair with a `title`). */
+const categoryWidth = 'w-full sm:w-40 2xl:w-auto 2xl:min-w-[11rem] 2xl:max-w-[18rem]';
+const claimWidth = 'w-full sm:w-36 2xl:w-56';
 
 function ErrorRow({ message }: { message: string }) {
   return (
@@ -156,7 +156,7 @@ export function TransactionRow({
   return (
     <>
       <tr className={cx(rowLayout, 'py-4', trHover, saving && 'opacity-60')}>
-        <td className={cx(cell, 'col-start-1 row-start-1 sm:w-full sm:min-w-[16rem] lg:min-w-[18rem]')}>
+        <td className={cx(cell, 'col-start-1 row-start-1 sm:w-full sm:min-w-[12rem] sm:max-w-0 2xl:min-w-[18rem]')}>
           <div className="flex items-start gap-3">
             <MerchantAvatar name={merchant} className="mt-0.5" />
             <div className="min-w-0 flex-1">
@@ -219,7 +219,7 @@ export function TransactionRow({
               </p>
               {hasRawLine && (
                 <p
-                  className={cx('mt-0.5 max-w-[22rem] font-mono text-xs text-ink-3', showRaw ? 'break-all' : 'truncate')}
+                  className={cx('mt-0.5 w-0 min-w-full max-w-[22rem] font-mono text-xs text-ink-3', showRaw ? 'break-all' : 'truncate')}
                   title={showRaw ? undefined : tx.raw_description}
                 >
                   {tx.raw_description}
@@ -283,6 +283,7 @@ export function TransactionRow({
                 id={`t-claim-${id}`}
                 className={cx(selectCompact, claimWidth)}
                 value={tx.claim_type ?? ''}
+                title={tx.claim_type ? claimTypeLabel(tx.claim_type, names) : undefined}
                 disabled={locked}
                 onChange={(e) => patch({ claim_type: e.target.value as ClaimType })}
               >

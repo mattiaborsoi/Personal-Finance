@@ -342,7 +342,7 @@ describe('the transactions list layout', () => {
     const row = select.closest('tr')!;
     expect(row).toHaveClass('grid', 'sm:table-row');
     expect(select).toHaveClass('w-full');
-    expect(screen.getByLabelText('Claim type for Ocado')).toHaveClass('w-full', 'sm:w-56');
+    expect(screen.getByLabelText('Claim type for Ocado')).toHaveClass('w-full', 'sm:w-36', '2xl:w-56');
     // The column headings are for the table only.
     expect(screen.getByRole('columnheader', { name: 'Amount' }).closest('thead')).toHaveClass('hidden', 'sm:table-header-group');
   });

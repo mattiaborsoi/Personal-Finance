@@ -369,7 +369,7 @@ export function RulesPanel() {
                             <span className="sm:hidden">Rule </span>
                             {n}
                           </td>
-                          <td className={cx(tdBase, 'min-w-[14rem]', stackCell)}>
+                          <td className={cx(tdBase, 'min-w-[10rem] 2xl:min-w-[14rem]', stackCell)}>
                             <StackLabel>Pattern</StackLabel>
                             <input
                               type="text"
@@ -385,7 +385,7 @@ export function RulesPanel() {
                               onChange={(e) => setRule(index, { pattern: e.target.value })}
                             />
                           </td>
-                          <td className={cx(tdBase, 'min-w-[11rem]', stackCell)}>
+                          <td className={cx(tdBase, 'min-w-[9rem] 2xl:min-w-[11rem]', stackCell)}>
                             <StackLabel>Category</StackLabel>
                             <select
                               className={cx(selectBase, flag('category').invalid && inputInvalid)}
@@ -404,7 +404,7 @@ export function RulesPanel() {
                               ))}
                             </select>
                           </td>
-                          <td className={cx(tdBase, 'min-w-[11rem]', stackCell)}>
+                          <td className={cx(tdBase, 'min-w-[9rem] 2xl:min-w-[11rem]', stackCell)}>
                             <StackLabel>Claim type</StackLabel>
                             <select
                               className={cx(selectBase, flag('claim_type').invalid && inputInvalid)}
@@ -422,7 +422,7 @@ export function RulesPanel() {
                               ))}
                             </select>
                           </td>
-                          <td className={cx(tdBase, 'min-w-[10rem]', stackCell)}>
+                          <td className={cx(tdBase, 'min-w-[7rem] 2xl:min-w-[10rem]', stackCell)}>
                             <StackLabel>Merchant</StackLabel>
                             <input
                               type="text"
@@ -437,7 +437,7 @@ export function RulesPanel() {
                               onChange={(e) => setRule(index, { merchant: e.target.value })}
                             />
                           </td>
-                          <td className={cx(tdBase, 'min-w-[12rem]', stackCell)}>
+                          <td className={cx(tdBase, 'min-w-[8rem] 2xl:min-w-[12rem]', stackCell)}>
                             <StackLabel>Transfer</StackLabel>
                             <div className="space-y-2">
                               <label className="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap text-sm text-ink-2">

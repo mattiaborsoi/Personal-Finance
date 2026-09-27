@@ -8,6 +8,7 @@ import { ReloadConfigContext } from '../config/ConfigContext';
 import { COMMIT_LATEST, systemInfo } from '../test/fixtures';
 import { fixtureConfig, jsonResponse, mockFetch, renderWithProviders, type RecordedCall } from '../test/utils';
 import {
+  ALREADY_UP_TO_DATE_TITLE,
   MANUAL_UPDATE_COMMANDS,
   SystemPanel,
   UPDATE_ALREADY_RUNNING_MESSAGE,
@@ -276,7 +277,9 @@ describe('<SystemPanel />', () => {
     expect(screen.getByText('Update log')).toBeInTheDocument();
     expect(screen.getByLabelText('Update log')).toHaveTextContent('Restarting… done');
     expect(screen.getByText('Up to date')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Update now' })).toBeEnabled();
+    // Nothing newer to install, so Update now rests until GitHub moves on.
+    expect(screen.getByRole('button', { name: 'Update now' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Update now' })).toHaveAttribute('title', ALREADY_UP_TO_DATE_TITLE);
 
     // Polling stops once the update has ended.
     const polls = systemGets(calls);
@@ -364,8 +367,30 @@ describe('<SystemPanel />', () => {
     expect(screen.queryByText('Restarting… the app is coming back up.')).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Update now' })).toBeEnabled();
+    // Back up to date, so there is nothing left to install.
+    expect(screen.getByRole('button', { name: 'Update now' })).toBeDisabled();
     expect(systemGets(calls)).toBe(polls);
+  });
+});
+
+describe('<SystemPanel /> Update now', () => {
+  it('rests when the running commit is already the latest, and says why', async () => {
+    mockFetch(({ url }) => (url === '/api/system' ? jsonResponse(systemInfo({ latest: LATEST, update_available: false })) : undefined));
+    renderPanel();
+    const button = await screen.findByRole('button', { name: 'Update now' });
+    expect(screen.getByText('Up to date')).toBeInTheDocument();
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', ALREADY_UP_TO_DATE_TITLE);
+  });
+
+  it('stays available when it is not known whether an update exists', async () => {
+    mockFetch(({ url }) =>
+      url === '/api/system'
+        ? jsonResponse(systemInfo({ running: { commit: null, short: null }, latest: LATEST, update_available: null }))
+        : undefined,
+    );
+    renderPanel();
+    expect(await screen.findByRole('button', { name: 'Update now' })).toBeEnabled();
   });
 });
 
