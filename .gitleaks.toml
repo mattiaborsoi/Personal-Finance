@@ -58,6 +58,9 @@ regex = '''sk-(?:proj-)?[A-Za-z0-9]{20,}'''
 
 [allowlist]
 description = "Lock files and the documented placeholder values"
+# 81557aa's backup tests used a fake "user:password@db.example" database URL that the
+# email rule matched; the next commit changed the host. Nothing real is in it.
+commits = ["81557aa7583fb208fde15f3ebab9da0f6fb2a687"]
 paths = [
   '''^frontend/package-lock\.json$''',
 ]
