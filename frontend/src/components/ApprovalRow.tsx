@@ -96,7 +96,8 @@ export function ApprovalRow({
             />
           </label>
         </td>
-        <td className="w-full min-w-[14rem] px-2 py-3 align-middle">
+        {/* w-full + max-w-0: this column takes the leftover width and never pushes the table wider. */}
+        <td className="w-full min-w-[13rem] max-w-0 px-2 py-3 align-middle">
           <div className="flex items-start gap-3">
             <MerchantAvatar name={merchant} className="mt-0.5" />
             <div className="min-w-0 flex-1">

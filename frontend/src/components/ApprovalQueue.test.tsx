@@ -38,6 +38,8 @@ describe('<ApprovalQueue />', () => {
     expect(within(rowFor('Ocado')).getByText('LLM')).toBeInTheDocument();
     expect(within(rowFor('Ocado')).getByText('62%')).toBeInTheDocument();
     expect(screen.getByText('2 transactions pending review')).toBeInTheDocument();
+    // Every column is named, so the transfer box has a heading.
+    expect(screen.getByRole('columnheader', { name: 'Transfer' })).toHaveAttribute('title', 'Internal transfer: money moving between your own accounts');
   });
 
   it('scrolls a wide queue inside a positioned wrapper so it cannot widen the page on a phone', async () => {

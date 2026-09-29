@@ -1,4 +1,4 @@
-import { ArrowLeftRight, SearchX } from 'lucide-react';
+import { SearchX } from 'lucide-react';
 import type { TransactionOut, TransactionPart, TransactionPatch } from '../api';
 import { cx, thBase } from '../lib/ui';
 import { EmptyState } from './EmptyState';
@@ -67,9 +67,8 @@ export function TransactionTable({
             <th scope="col" className={thBase}>
               Claim type
             </th>
-            <th scope="col" className={cx(thBase, 'text-center')} title="Internal transfer">
-              <ArrowLeftRight className="mx-auto h-3.5 w-3.5" aria-hidden="true" />
-              <span className="sr-only">Transfer</span>
+            <th scope="col" className={cx(thBase, 'text-center')} title="Internal transfer: money moving between your own accounts">
+              Transfer
             </th>
             <th scope="col" className={thBase}>
               <span className="sr-only">Actions</span>

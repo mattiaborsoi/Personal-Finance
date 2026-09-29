@@ -123,7 +123,7 @@ export function TransactionRow({
   return (
     <>
       <tr className={cx(rowLayout, 'py-4', trHover, saving && 'opacity-60')}>
-        <td className={cx(cell, 'col-start-1 row-start-1 sm:w-full sm:min-w-[11.5rem] sm:max-w-0 2xl:min-w-[18rem]')}>
+        <td className={cx(cell, 'col-start-1 row-start-1 sm:w-full sm:min-w-[10rem] sm:max-w-0 2xl:min-w-[18rem]')}>
           <div className="flex items-start gap-3">
             <MerchantAvatar name={merchant} className="mt-0.5" />
             <div className="min-w-0 flex-1">

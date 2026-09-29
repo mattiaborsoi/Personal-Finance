@@ -4,7 +4,7 @@ import { api, editErrorMessage, INTERNAL_TRANSFER_CATEGORY, type TransactionOut,
 import { useConfig } from '../config/ConfigContext';
 import { useAsync } from '../hooks/useAsync';
 import { accountLabel, plural } from '../lib/format';
-import { btnPrimary, btnSecondary, btnSmall, cardBase, checkboxBase, cx, selectCompact, tableBase, tableFlush } from '../lib/ui';
+import { btnPrimary, btnSecondary, btnSmall, cardBase, checkboxBase, cx, selectCompact, tableBase, tableFlush, thBase } from '../lib/ui';
 import { ApprovalRow, type ApprovalDraft } from './ApprovalRow';
 import { ClaimTypeHelp } from './ClaimTypeHelp';
 import { EmptyState } from './EmptyState';
@@ -348,15 +348,31 @@ export function ApprovalQueue({ period, closed = false, onChanged, account = '',
               '[&_:is(input,select,button,a)]:scroll-mt-44 md:[&_:is(input,select,button,a)]:scroll-mt-24',
             )}
           >
-            <thead className="sr-only">
+            {/* Visible from `sm` so every column says what it is (the transfer box above all); on a phone
+                the rows carry their own labels and the headings stay for screen readers only. */}
+            <thead className="max-sm:sr-only">
               <tr>
-                <th scope="col">Select</th>
-                <th scope="col">Transaction</th>
-                <th scope="col">Amount</th>
-                <th scope="col">Category and claim type</th>
-                <th scope="col">Transfer</th>
-                <th scope="col">Source</th>
-                <th scope="col">Actions</th>
+                <th scope="col" className={cx(thBase, 'px-2')}>
+                  <span className="sr-only">Select</span>
+                </th>
+                <th scope="col" className={cx(thBase, 'px-2')}>
+                  Transaction
+                </th>
+                <th scope="col" className={cx(thBase, 'px-2 text-right')}>
+                  Amount
+                </th>
+                <th scope="col" className={cx(thBase, 'px-2')}>
+                  Category · claim type
+                </th>
+                <th scope="col" className={cx(thBase, 'px-2 text-center')} title="Internal transfer: money moving between your own accounts">
+                  Transfer
+                </th>
+                <th scope="col" className={cx(thBase, 'px-2')}>
+                  Source
+                </th>
+                <th scope="col" className={cx(thBase, 'px-2')}>
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-hairline">
