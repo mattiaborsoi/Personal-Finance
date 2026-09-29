@@ -1,6 +1,6 @@
 import { ListChecks, Lock } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, editErrorMessage, type TransactionOut, type TransactionPatch } from '../api';
+import { api, editErrorMessage, INTERNAL_TRANSFER_CATEGORY, type TransactionOut, type TransactionPatch } from '../api';
 import { useConfig } from '../config/ConfigContext';
 import { useAsync } from '../hooks/useAsync';
 import { accountLabel, plural } from '../lib/format';
@@ -365,7 +365,15 @@ export function ApprovalQueue({ period, closed = false, onChanged, account = '',
                   key={tx.id}
                   transaction={tx}
                   draft={drafts[tx.id] ?? NO_DRAFT}
-                  onDraftChange={(draft) => setDraft(tx.id, draft)}
+                  onDraftChange={(draft) => {
+                    const picked = draft.category !== (drafts[tx.id] ?? NO_DRAFT).category;
+                    setDraft(tx.id, draft);
+                    // Filing it under Transfers › Internal ticks the transfer box straight away, as the server
+                    // would on approval, so the row shows what will happen.
+                    if (picked && draft.category === INTERNAL_TRANSFER_CATEGORY && !tx.is_internal_transfer) {
+                      void markTransfer(tx, true);
+                    }
+                  }}
                   selected={selected.has(tx.id)}
                   busy={busy.has(tx.id)}
                   disabled={closed}

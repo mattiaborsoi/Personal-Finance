@@ -23,6 +23,7 @@ from app.schemas import (
 )
 from app.services import ingestion, memory, rules, settlement, splits, transfers
 from app.services.embeddings import EmbeddingClient
+from app.services.guesser import INTERNAL_TRANSFER_CATEGORY
 from app.services.periods import PERIOD_KEY_RE
 from app.services.providers import get_embedder
 
@@ -171,6 +172,14 @@ def apply_update(db: Session, txn: Transaction, update: TransactionUpdate, confi
         if data["claim_type"] not in CLAIM_TYPES:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid claim_type")
         txn.claim_type = data["claim_type"]
+    # Filing a line under Transfers:Internal means it is money moving between accounts:
+    # tick the transfer flag too, unless the same request says otherwise.
+    if (
+        data.get("category") is not None
+        and data.get("is_internal_transfer") is None
+        and _wants_transfer_flag(txn)
+    ):
+        data["is_internal_transfer"] = True
     if data.get("is_internal_transfer") is not None:
         wanted = bool(data["is_internal_transfer"])
         if wanted and not txn.is_internal_transfer:
@@ -204,6 +213,22 @@ def _remember(db: Session, txn: Transaction, embedder: EmbeddingClient) -> None:
         category=txn.category,
         claim_type=txn.claim_type,
     )
+
+
+def _wants_transfer_flag(txn: Transaction) -> bool:
+    """A line filed under Transfers:Internal that is not yet flagged as a transfer (never a split)."""
+    return (
+        txn.category == INTERNAL_TRANSFER_CATEGORY
+        and not txn.is_internal_transfer
+        and not txn.is_split
+        and txn.split_parent_id is None
+    )
+
+
+def _flag_internal_category(db: Session, txn: Transaction, config: AppConfig) -> None:
+    """On approval, tick the transfer flag of a Transfers:Internal line the AI left unflagged."""
+    if _wants_transfer_flag(txn):
+        apply_update(db, txn, TransactionUpdate(is_internal_transfer=True), config)
 
 
 def _approve(
@@ -312,6 +337,7 @@ def approve_batch(
     for txn in rows:
         _ensure_editable(db, txn)
     for txn in rows:
+        _flag_internal_category(db, txn, config)
         _approve(db, txn, config, embedder, body.remember)
     db.commit()
     for txn in rows:
@@ -331,6 +357,8 @@ def approve_transaction(
     txn = _get_or_404(db, txn_id)
     _ensure_editable(db, txn)
     apply_update(db, txn, body, config)
+    if body.is_internal_transfer is None:
+        _flag_internal_category(db, txn, config)
     _approve(db, txn, config, embedder, body.remember)
     db.commit()
     db.refresh(txn)

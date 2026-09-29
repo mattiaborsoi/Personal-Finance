@@ -265,7 +265,11 @@ def ingest_statement(
     state = guesser.UploadState()
     for line, acc, fp in new_lines:
         cls = guesser.classify(db, config, embedder, llm, line.raw_text, acc, amount=line.amount, state=state)
-        alloc_p, alloc_s = settlement.allocate(line.amount, cls.claim_type, acc.owner, config)
+        # A line the classifier filed under Transfers:Internal is a transfer even when it
+        # did not say so; a transfer's own claim type is always personal.
+        internal = cls.is_internal_transfer or cls.category == guesser.INTERNAL_TRANSFER_CATEGORY
+        claim_type = "personal" if internal and not cls.is_internal_transfer else cls.claim_type
+        alloc_p, alloc_s = settlement.allocate(line.amount, claim_type, acc.owner, config)
         txn = Transaction(
             period_key=period_key_for(line.date),
             account_id=acc.id,
@@ -279,11 +283,11 @@ def ingest_statement(
             foreign_amount=line.foreign_amount,
             category=cls.category,
             subcategory=cls.subcategory,
-            claim_type=cls.claim_type,
+            claim_type=claim_type,
             allocated_primary_amount=alloc_p,
             allocated_secondary_amount=alloc_s,
             review_status=cls.review_status,
-            is_internal_transfer=cls.is_internal_transfer,
+            is_internal_transfer=internal,
             classification_source=cls.source,
             classification_confidence=Decimal(str(round(cls.confidence, 3))),
             fingerprint=fp,
@@ -298,7 +302,7 @@ def ingest_statement(
         else:
             auto += 1
 
-        is_transfer = cls.is_internal_transfer or transfers.is_transfer_description(line.raw_text, config)
+        is_transfer = internal or transfers.is_transfer_description(line.raw_text, config)
         if is_transfer and txn.amount != 0:
             entry = transfers.register_transfer(db, txn)
             if cls.transfer_to_account:

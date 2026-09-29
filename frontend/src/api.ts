@@ -27,6 +27,8 @@ export type MatchStatus = 'unmatched' | 'matched' | 'ignored' | string;
  * `config.categories`; there is no null/empty category on the wire.
  */
 export const UNCATEGORIZED = 'Uncategorized';
+/** Money moving between the household's own accounts; choosing it ticks the transfer flag. */
+export const INTERNAL_TRANSFER_CATEGORY = 'Transfers:Internal';
 
 export interface Session {
   token: string;

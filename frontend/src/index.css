@@ -140,6 +140,18 @@
   textarea {
     color-scheme: inherit;
   }
+  /* Every single-choice dropdown is drawn by us, not by the OS: macOS Chrome and Safari
+     otherwise ignore padding on a native menulist, so an icon inside the field (the
+     period selector's calendar) lands on the text. The chevron sits in the right-hand
+     padding every select class already reserves (pr-7 / pr-8). */
+  select:not([multiple]):not([size]) {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23858480' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+    background-position: right 0.6rem center;
+    background-repeat: no-repeat;
+    background-size: 0.875rem;
+  }
   input[type='date']::-webkit-calendar-picker-indicator {
     opacity: 0.6;
   }

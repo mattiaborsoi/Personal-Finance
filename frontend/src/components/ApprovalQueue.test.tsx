@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { PERIOD_CLOSED_MESSAGE } from '../api';
 import { ID_OCADO, ID_PART_A, ID_PART_B, ID_UBER, part, transaction } from '../test/fixtures';
-import { categoryValue, claimTypeValue, jsonResponse, mockFetch, pickCategory, pickClaimType, type RecordedCall, renderWithProviders } from '../test/utils';
+import { categoryValue, claimTypeValue, fixtureConfig, jsonResponse, mockFetch, pickCategory, pickClaimType, type RecordedCall, renderWithProviders } from '../test/utils';
 import { ApprovalQueue } from './ApprovalQueue';
 
 const uber = {
@@ -176,6 +176,29 @@ describe('<ApprovalQueue />', () => {
     // The restored row still shows what the user chose, not the original classification.
     expect(categoryValue(screen.getByLabelText('Category for Uber'))).toBe('Dining');
     expect(claimTypeValue(screen.getByLabelText('Claim type for Uber'))).toBe('shared_equal');
+  });
+
+  it('ticks the transfer box as soon as a line is filed under Transfers › Internal', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      if (method === 'PATCH' && url === `/api/transactions/${ID_UBER}`) {
+        return jsonResponse(transaction({ ...uber, is_internal_transfer: true, claim_type: 'personal' }));
+      }
+      return undefined;
+    });
+
+    renderWithProviders(<ApprovalQueue period="2026-03" />, {
+      config: { ...fixtureConfig, categories: [...fixtureConfig.categories, 'Transfers:Internal'] },
+    });
+    await screen.findByRole('button', { name: 'Uber' });
+    await pickCategory(user, screen.getByLabelText('Category for Uber'), 'Transfers:Internal');
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
+    expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ is_internal_transfer: true });
+    expect(await screen.findByLabelText('Mark Uber as a transfer')).toBeChecked();
+    // The category choice itself still waits for Approve.
+    expect(categoryValue(screen.getByLabelText('Category for Uber'))).toBe('Transfers:Internal');
   });
 
   it('marks a line as a transfer with the same PATCH as the transactions page and keeps it in the queue', async () => {
