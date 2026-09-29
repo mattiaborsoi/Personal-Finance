@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { PERIOD_CLOSED_MESSAGE } from '../api';
 import { ID_OCADO, ID_PART_A, ID_PART_B, ID_UBER, part, transaction } from '../test/fixtures';
-import { categoryValue, claimTypeValue, jsonResponse, mockFetch, pickCategory, pickClaimType, renderWithProviders } from '../test/utils';
+import { categoryValue, claimTypeValue, jsonResponse, mockFetch, pickCategory, pickClaimType, type RecordedCall, renderWithProviders } from '../test/utils';
 import { ApprovalQueue } from './ApprovalQueue';
 
 const uber = {
@@ -423,5 +423,155 @@ describe('<ApprovalQueue /> account filter', () => {
     renderWithProviders(<ApprovalQueue period="2026-03" onAccountChange={vi.fn()} />);
     await screen.findByRole('button', { name: 'Ocado' });
     expect(screen.queryByLabelText('Show lines from')).not.toBeInTheDocument();
+  });
+});
+
+describe('renaming and noting a line on Review', () => {
+  function patchCalls(calls: RecordedCall[]) {
+    return calls.filter((c) => c.method === 'PATCH');
+  }
+
+  it('renames the merchant in place, saves on Enter and keeps the line in the queue', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      if (method === 'PATCH' && url === `/api/transactions/${ID_OCADO}`) {
+        return jsonResponse(transaction({ id: ID_OCADO, cleaned_merchant: 'Ocado Retail' }));
+      }
+      return undefined;
+    });
+
+    renderWithProviders(<ApprovalQueue period="2026-03" />);
+    await user.click(await screen.findByRole('button', { name: 'Rename Ocado' }));
+    const input = screen.getByRole('textbox', { name: 'New name for Ocado' });
+    expect(input).toHaveValue('Ocado');
+    expect(input).toHaveFocus();
+    await user.clear(input);
+    await user.type(input, 'Ocado Retail{Enter}');
+
+    await waitFor(() => expect(patchCalls(calls)).toHaveLength(1));
+    expect(patchCalls(calls)[0]).toMatchObject({ url: `/api/transactions/${ID_OCADO}`, body: { cleaned_merchant: 'Ocado Retail' } });
+    expect(await screen.findByRole('button', { name: 'Ocado Retail' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Rename Ocado Retail' })).toHaveFocus());
+    // Renaming is not approving: nothing was posted and the line is still waiting.
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
+    expect(screen.getByText('2 transactions pending review')).toBeInTheDocument();
+    // Clicking the name still shows the full raw line.
+    const name = screen.getByRole('button', { name: 'Ocado Retail' });
+    expect(name).toHaveAttribute('aria-expanded', 'false');
+    await user.click(name);
+    expect(name).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('cancels a rename on Escape without a request', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      return undefined;
+    });
+
+    renderWithProviders(<ApprovalQueue period="2026-03" />);
+    await user.click(await screen.findByRole('button', { name: 'Rename Uber' }));
+    await user.type(screen.getByRole('textbox', { name: 'New name for Uber' }), ' Eats{Escape}');
+
+    expect(screen.getByRole('button', { name: 'Uber' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Rename Uber' })).toHaveFocus();
+    expect(patchCalls(calls)).toEqual([]);
+  });
+
+  it('adds a note with PATCH straight away, shows it under the description and keeps the line pending', async () => {
+    const user = userEvent.setup();
+    const note = 'Birthday present for Sam';
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      if (method === 'PATCH' && url === `/api/transactions/${ID_OCADO}`) {
+        return jsonResponse(transaction({ id: ID_OCADO, cleaned_merchant: 'Ocado', note }));
+      }
+      return undefined;
+    });
+
+    renderWithProviders(<ApprovalQueue period="2026-03" />);
+    await screen.findByRole('button', { name: 'Ocado' });
+    // A category draft is not sent with the note, and survives it.
+    await pickCategory(user, screen.getByLabelText('Category for Ocado'), 'Groceries');
+    await user.click(screen.getByRole('button', { name: 'Add a note to Ocado' }));
+    const input = screen.getByRole('textbox', { name: 'Note on Ocado' });
+    expect(input).toHaveFocus();
+    await user.type(input, `  ${note}  {Enter}`);
+
+    await waitFor(() => expect(patchCalls(calls)).toHaveLength(1));
+    expect(patchCalls(calls)[0].body).toEqual({ note });
+    const shown = await screen.findByTitle(note);
+    expect(shown).toHaveTextContent(note);
+    expect(shown).toHaveClass('w-0', 'min-w-full');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit the note on Ocado' })).toHaveFocus());
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
+    expect(categoryValue(screen.getByLabelText('Category for Ocado'))).toBe('Groceries');
+    expect(screen.getByText('2 transactions pending review')).toBeInTheDocument();
+  });
+
+  it('edits and clears a note, saving on blur', async () => {
+    const user = userEvent.setup();
+    const noted = [transaction({ id: ID_OCADO, cleaned_merchant: 'Ocado', note: 'Old note' }), transaction(uber)];
+    let saved: string | null = 'Old note';
+    const { calls } = mockFetch(({ method, url, body }) => {
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: noted, total: 2 });
+      if (method === 'PATCH' && url === `/api/transactions/${ID_OCADO}`) {
+        saved = (body as { note: string }).note || null;
+        return jsonResponse(transaction({ id: ID_OCADO, cleaned_merchant: 'Ocado', note: saved }));
+      }
+      return undefined;
+    });
+
+    renderWithProviders(<ApprovalQueue period="2026-03" />);
+    expect(await screen.findByTitle('Old note')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Edit the note on Ocado' }));
+    const input = screen.getByRole('textbox', { name: 'Note on Ocado' });
+    expect(input).toHaveValue('Old note');
+    await user.clear(input);
+    await user.type(input, 'New note');
+    await user.click(screen.getByRole('heading', { name: 'Approval queue' }));
+
+    await waitFor(() => expect(patchCalls(calls)).toHaveLength(1));
+    expect(patchCalls(calls)[0].body).toEqual({ note: 'New note' });
+    expect(await screen.findByTitle('New note')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Edit the note on Ocado' }));
+    await user.clear(screen.getByRole('textbox', { name: 'Note on Ocado' }));
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(patchCalls(calls)).toHaveLength(2));
+    expect(patchCalls(calls)[1].body).toEqual({ note: '' });
+    expect(await screen.findByRole('button', { name: 'Add a note to Ocado' })).toBeInTheDocument();
+    expect(screen.queryByTitle('New note')).not.toBeInTheDocument();
+  });
+
+  it('shows a refused note under the row', async () => {
+    const user = userEvent.setup();
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      if (method === 'PATCH') return jsonResponse({ detail: 'note must be at most 500 characters (got 501)' }, 422);
+      return undefined;
+    });
+
+    renderWithProviders(<ApprovalQueue period="2026-03" />);
+    await user.click(await screen.findByRole('button', { name: 'Add a note to Uber' }));
+    await user.type(screen.getByRole('textbox', { name: 'Note on Uber' }), 'Too long{Enter}');
+
+    expect(await within(rowFor('Uber').nextElementSibling as HTMLElement).findByRole('alert')).toHaveTextContent(
+      'note must be at most 500 characters (got 501)',
+    );
+    expect(screen.getByRole('button', { name: 'Add a note to Uber' })).toBeInTheDocument();
+  });
+
+  it('disables the rename and the note in a closed period', async () => {
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      return undefined;
+    });
+
+    renderWithProviders(<ApprovalQueue period="2026-03" closed />);
+    await screen.findByRole('button', { name: 'Ocado' });
+    expect(screen.getByRole('button', { name: 'Rename Ocado' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add a note to Ocado' })).toBeDisabled();
   });
 });

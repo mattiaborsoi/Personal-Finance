@@ -29,6 +29,7 @@ from app.services.providers import get_embedder
 router = APIRouter(prefix="/transactions", tags=["transactions"], dependencies=[Depends(require_primary)])
 
 REVIEW_STATUSES = ("pending_review", "auto_approved", "manual_approved")
+NOTE_MAX_LENGTH = 500
 
 
 def _escape_like(value: str) -> str:
@@ -132,12 +133,22 @@ def _flag_as_transfer(db: Session, txn: Transaction, config: AppConfig) -> None:
 def apply_update(db: Session, txn: Transaction, update: TransactionUpdate, config: AppConfig) -> Transaction:
     """Apply user corrections and recompute allocations (no status change).
 
-    ``null`` clears ``subcategory``; for every other field ``null`` means "leave as is".
+    ``null`` clears ``subcategory`` and ``note``; for every other field ``null`` means
+    "leave as is". A ``note`` is trimmed, ``""`` clears it too, and it may be at most
+    ``NOTE_MAX_LENGTH`` characters; it is allowed on split parents and parts alike.
     A ``category`` must be one of ``config.categories`` (matched ignoring case and
     stored in its configured spelling) or ``Uncategorized``; ``subcategory`` is free text.
     """
     data = update.model_dump(exclude_unset=True)
     _split_guard(txn, data)
+    if "note" in data:
+        note = (data["note"] or "").strip()
+        if len(note) > NOTE_MAX_LENGTH:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"note must be at most {NOTE_MAX_LENGTH} characters (got {len(note)})",
+            )
+        txn.note = note or None
     if data.get("category") is not None:
         cat = data["category"].strip()
         if not cat:
@@ -213,7 +224,7 @@ def list_transactions(
     status_: str | None = Query(default=None, alias="status"),
     account_id: str | None = Query(default=None),
     category: str | None = Query(default=None),
-    q: str | None = Query(default=None, description="case-insensitive search in description / merchant"),
+    q: str | None = Query(default=None, description="case-insensitive search in description / merchant / note"),
     include_transfers: bool = Query(default=True),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
@@ -237,10 +248,16 @@ def list_transactions(
         stmt = stmt.where(or_(Transaction.category == category, in_parts))
     if q:
         pattern = f"%{_escape_like(q.strip())}%"
+        part = Transaction.__table__.alias("note_part")
+        part_note = exists().where(
+            part.c.split_parent_id == Transaction.id, part.c.note.ilike(pattern, escape="\\")
+        )
         stmt = stmt.where(
             or_(
                 Transaction.raw_description.ilike(pattern, escape="\\"),
                 Transaction.cleaned_merchant.ilike(pattern, escape="\\"),
+                Transaction.note.ilike(pattern, escape="\\"),
+                part_note,
             )
         )
     if not include_transfers:
@@ -270,8 +287,10 @@ def update_transaction(
     txn = _get_or_404(db, txn_id)
     _ensure_editable(db, txn)
     apply_update(db, txn, body, config)
-    # Correcting an already-confirmed transaction is new evidence for the learning loop.
-    if txn.review_status != "pending_review":
+    # Correcting an already-confirmed transaction is new evidence for the learning loop;
+    # a note on its own says nothing about the classification.
+    classification_fields = body.model_fields_set - {"note"}
+    if txn.review_status != "pending_review" and classification_fields:
         _remember(db, txn, embedder)
     db.commit()
     db.refresh(txn)

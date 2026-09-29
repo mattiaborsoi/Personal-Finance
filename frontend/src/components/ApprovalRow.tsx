@@ -4,21 +4,15 @@ import { UNCATEGORIZED, type ClaimType, type TransactionOut, type TransactionPat
 import { useConfig } from '../config/ConfigContext';
 import { formatDate } from '../lib/dates';
 import { accountLabel } from '../lib/format';
-import {
-  btnIcon,
-  btnPrimary,
-  btnSmall,
-  checkboxBase,
-  chipSoft,
-  cx,
-  focusRing,
-  trHover,
-} from '../lib/ui';
+import { useInlineEdit } from '../hooks/useInlineEdit';
+import { btnIcon, btnPrimary, btnSmall, checkboxBase, chipSoft, cx, trHover } from '../lib/ui';
 import { CategoryPicker } from './CategoryPicker';
 import { ClaimTypeControl } from './ClaimTypeControl';
 import { MerchantAvatar } from './MerchantAvatar';
+import { MerchantName } from './MerchantName';
 import { MoneyText } from './MoneyText';
 import { SourceBadge } from './SourceBadge';
+import { NoteButton, NoteLine } from './TransactionNote';
 import { TransferToggle } from './TransferToggle';
 
 /**
@@ -45,6 +39,11 @@ interface Props {
   onSplit: () => void;
   /** Marks (or unmarks) the line as a transfer; it stays in the queue until approved. */
   onTransferChange: (isInternalTransfer: boolean) => void;
+  /**
+   * Saves a rename or a note straight away with PATCH (not part of the approve
+   * draft); the line stays in the queue with what the server returns.
+   */
+  onPatch: (patch: TransactionPatch) => void;
 }
 
 export function ApprovalRow({
@@ -59,6 +58,7 @@ export function ApprovalRow({
   onApprove,
   onSplit,
   onTransferChange,
+  onPatch,
 }: Props) {
   const config = useConfig();
   const [showRaw, setShowRaw] = useState(false);
@@ -78,6 +78,7 @@ export function ApprovalRow({
   const hasRawLine = Boolean(tx.raw_description) && tx.raw_description !== merchant;
   const locked = busy || disabled;
   const closedTitle = disabled ? 'This period is closed' : undefined;
+  const noteEdit = useInlineEdit({ value: tx.note ?? '', onSave: (note) => onPatch({ note }), blocked: busy });
 
   return (
     <>
@@ -99,23 +100,26 @@ export function ApprovalRow({
           <div className="flex items-start gap-3">
             <MerchantAvatar name={merchant} className="mt-0.5" />
             <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-baseline gap-x-2">
-                <button
-                  type="button"
-                  className={cx('line-clamp-2 min-w-0 break-words rounded text-left font-semibold text-ink hover:underline', focusRing)}
-                  title={tx.raw_description}
-                  aria-expanded={showRaw}
-                  onClick={() => setShowRaw((s) => !s)}
+              <div className="flex flex-wrap items-start gap-x-1.5">
+                <MerchantName
+                  merchant={merchant}
+                  nameTitle={tx.raw_description}
+                  expanded={showRaw}
+                  onToggle={() => setShowRaw((s) => !s)}
+                  closedTitle={closedTitle}
+                  busy={busy}
+                  onRename={(name) => onPatch({ cleaned_merchant: name })}
                 >
-                  {merchant}
-                </button>
-                <span className="shrink-0 text-xs text-ink-3 tabular">{formatDate(tx.transaction_date)}</span>
+                  <NoteButton edit={noteEdit} hasNote={Boolean(tx.note)} subject={merchant} closedTitle={closedTitle} />
+                </MerchantName>
+                <span className="ml-0.5 mt-0.5 shrink-0 text-xs text-ink-3 tabular">{formatDate(tx.transaction_date)}</span>
               </div>
               {hasRawLine && (
                 <p className={cx('mt-0.5 w-0 min-w-full max-w-[22rem] font-mono text-xs text-ink-3', showRaw ? 'break-all' : 'truncate')}>
                   {tx.raw_description}
                 </p>
               )}
+              <NoteLine edit={noteEdit} note={tx.note} subject={merchant} />
               <p className="mt-1 text-xs text-ink-3">
                 <span className={chipSoft}>{accountLabel(config.accounts, tx.account_id)}</span>
               </p>

@@ -52,6 +52,7 @@ export function mergePartUpdate(parent: TransactionOut, partId: string, updated:
         is_claimable: updated.is_claimable,
         allocated_primary_amount: updated.allocated_primary_amount ?? p.allocated_primary_amount,
         allocated_secondary_amount: updated.allocated_secondary_amount ?? p.allocated_secondary_amount,
+        note: updated.note,
       };
     }),
   };

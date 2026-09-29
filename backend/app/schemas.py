@@ -109,6 +109,7 @@ class TransactionPartOut(BaseModel):
     is_claimable: bool
     allocated_primary_amount: Decimal
     allocated_secondary_amount: Decimal
+    note: str | None = None
 
 
 class TransactionOut(BaseModel):
@@ -137,6 +138,7 @@ class TransactionOut(BaseModel):
     classification_source: str
     classification_confidence: Decimal | None
     source_file: str | None
+    note: str | None = None
     created_at: datetime | None
     is_split: bool = False
     split_parent_id: uuid.UUID | None = None
@@ -171,6 +173,8 @@ class TransactionUpdate(BaseModel):
     claim_type: ClaimType | None = None
     cleaned_merchant: str | None = None
     is_internal_transfer: bool | None = None
+    # Free text, trimmed; "" or null clears it. Never touches status or allocations.
+    note: str | None = None
 
 
 class ApproveRequest(TransactionUpdate):

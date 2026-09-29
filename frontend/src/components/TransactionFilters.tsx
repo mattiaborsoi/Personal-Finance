@@ -142,7 +142,7 @@ export function TransactionFilters({ periods, values, onChange }: Props) {
               autoComplete="off"
               spellCheck={false}
               className={cx(inputBase, 'pl-9')}
-              placeholder="Merchant or description, e.g. Tesco…"
+              placeholder="Merchant, description or note…"
               defaultValue={values.q}
             />
           </div>

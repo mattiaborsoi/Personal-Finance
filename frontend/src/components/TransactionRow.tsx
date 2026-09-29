@@ -1,25 +1,20 @@
-import { CircleAlert, CornerDownRight, Pencil, Scissors, Trash2, Ungroup } from 'lucide-react';
-import { useRef, useState, type KeyboardEvent } from 'react';
+import { CircleAlert, CornerDownRight, Scissors, Trash2, Ungroup } from 'lucide-react';
+import { useState } from 'react';
 import { UNCATEGORIZED, type TransactionOut, type TransactionPart, type TransactionPatch } from '../api';
 import { useConfig } from '../config/ConfigContext';
+import { useInlineEdit } from '../hooks/useInlineEdit';
 import { formatDate } from '../lib/dates';
 import { accountLabel, plural, reviewStatusLabel } from '../lib/format';
-import {
-  btnIcon,
-  btnIconSmall,
-  chipSoft,
-  cx,
-  focusRing,
-  inputCompact,
-  trHover,
-} from '../lib/ui';
+import { btnIcon, chipSoft, cx, trHover } from '../lib/ui';
 import { Badge, type BadgeTone } from './Badge';
 import { CategoryPicker } from './CategoryPicker';
 import { ClaimTypeControl } from './ClaimTypeControl';
 import { ConfirmButton } from './ConfirmButton';
 import { MerchantAvatar } from './MerchantAvatar';
+import { MerchantName } from './MerchantName';
 import { MoneyText } from './MoneyText';
 import { SourceBadge } from './SourceBadge';
+import { NoteButton, NoteLine } from './TransactionNote';
 import { TransferToggle } from './TransferToggle';
 
 interface Props {
@@ -95,12 +90,6 @@ export function TransactionRow({
   const [saving, setSaving] = useState(false);
   const [savingPart, setSavingPart] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
-  /** The name being typed while the merchant is renamed inline; null when not renaming. */
-  const [renameDraft, setRenameDraft] = useState<string | null>(null);
-  /** Set once Enter, Escape or blur has ended a rename, so the blur that follows the swap does not save twice. */
-  const renameEnded = useRef(false);
-  /** Focus goes back to the rename button when the rename ended from the keyboard. */
-  const refocusRename = useRef(false);
 
   async function patch(change: TransactionPatch) {
     setSaving(true);
@@ -121,30 +110,8 @@ export function TransactionRow({
   }
 
   const merchant = tx.cleaned_merchant || tx.raw_description;
-  // A split part never names itself: its parent carries the merchant (the server refuses the rename with 409).
-  const canRename = !tx.split_parent_id;
-
-  function startRename() {
-    if (saving) return;
-    renameEnded.current = false;
-    setRenameDraft(merchant);
-  }
-
-  /** Saves a changed, non-blank name through the row's PATCH (its errors show under the row); anything else just closes. */
-  function endRename(save: boolean) {
-    if (renameEnded.current || renameDraft === null) return;
-    renameEnded.current = true;
-    const name = renameDraft.trim();
-    setRenameDraft(null);
-    if (save && name && name !== merchant) void patch({ cleaned_merchant: name });
-  }
-
-  function renameKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== 'Enter' && event.key !== 'Escape') return;
-    event.preventDefault();
-    refocusRename.current = true;
-    endRename(event.key === 'Enter');
-  }
+  const closedTitle = readOnly ? 'This period is closed' : undefined;
+  const noteEdit = useInlineEdit({ value: tx.note ?? '', onSave: (note) => void patch({ note }), blocked: saving });
 
   const hasRawLine = Boolean(tx.raw_description) && tx.raw_description !== merchant;
   const locked = saving || readOnly;
@@ -155,61 +122,24 @@ export function TransactionRow({
   return (
     <>
       <tr className={cx(rowLayout, 'py-4', trHover, saving && 'opacity-60')}>
-        <td className={cx(cell, 'col-start-1 row-start-1 sm:w-full sm:min-w-[12rem] sm:max-w-0 2xl:min-w-[18rem]')}>
+        <td className={cx(cell, 'col-start-1 row-start-1 sm:w-full sm:min-w-[11.5rem] sm:max-w-0 2xl:min-w-[18rem]')}>
           <div className="flex items-start gap-3">
             <MerchantAvatar name={merchant} className="mt-0.5" />
             <div className="min-w-0 flex-1">
               <div className="flex items-start gap-1.5">
-                {renameDraft !== null ? (
-                  <input
-                    name="merchant_name"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className={cx(inputCompact, 'w-full max-w-[18rem] font-semibold')}
-                    aria-label={`New name for ${merchant}`}
-                    value={renameDraft}
-                    maxLength={255}
-                    autoFocus
-                    onFocus={(e) => e.currentTarget.select()}
-                    onChange={(e) => setRenameDraft(e.target.value)}
-                    onKeyDown={renameKeyDown}
-                    onBlur={() => endRename(true)}
-                  />
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      className={cx(
-                        'line-clamp-2 min-w-0 break-words rounded text-left font-semibold leading-snug text-ink hover:underline',
-                        focusRing,
-                      )}
-                      title={merchant}
-                      aria-expanded={showRaw}
-                      onClick={() => setShowRaw((s) => !s)}
-                    >
-                      {merchant}
-                    </button>
-                    {canRename && (
-                      <button
-                        type="button"
-                        ref={(el) => {
-                          if (el && refocusRename.current) {
-                            refocusRename.current = false;
-                            el.focus();
-                          }
-                        }}
-                        className={cx(btnIconSmall, '-my-0.5')}
-                        aria-label={`Rename ${merchant}`}
-                        title={readOnly ? 'This period is closed' : 'Rename the merchant'}
-                        // Not locked while saving, so focus can come back here after Enter; a click then is ignored.
-                        disabled={readOnly}
-                        onClick={startRename}
-                      >
-                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                      </button>
-                    )}
-                  </>
-                )}
+                <MerchantName
+                  merchant={merchant}
+                  nameTitle={merchant}
+                  expanded={showRaw}
+                  onToggle={() => setShowRaw((s) => !s)}
+                  // A split part never names itself: its parent carries the merchant (the server refuses the rename with 409).
+                  canRename={!tx.split_parent_id}
+                  closedTitle={closedTitle}
+                  busy={saving}
+                  onRename={(name) => void patch({ cleaned_merchant: name })}
+                >
+                  <NoteButton edit={noteEdit} hasNote={Boolean(tx.note)} subject={merchant} closedTitle={closedTitle} />
+                </MerchantName>
               </div>
               <p className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-ink-3">
                 <span className="shrink-0 tabular">{formatDate(tx.transaction_date)}</span>
@@ -224,6 +154,7 @@ export function TransactionRow({
                   {tx.raw_description}
                 </p>
               )}
+              <NoteLine edit={noteEdit} note={tx.note} subject={merchant} />
             </div>
           </div>
         </td>
@@ -354,6 +285,7 @@ export function TransactionRow({
             n={n}
             merchant={merchant}
             locked={partLocked}
+            readOnly={readOnly}
             saving={savingPart === part.id}
             error={partError}
             onPatch={(change) => patchPart(part, change)}
@@ -369,20 +301,32 @@ interface PartRowsProps {
   n: number;
   merchant: string;
   locked: boolean;
+  readOnly: boolean;
   saving: boolean;
   error?: string;
   onPatch: (patch: TransactionPatch) => void;
 }
 
 /** One indented sub-row per part of a split transaction, editable in place. */
-function PartRows({ part, n, merchant, locked, saving, error, onPatch }: PartRowsProps) {
+function PartRows({ part, n, merchant, locked, readOnly, saving, error, onPatch }: PartRowsProps) {
+  const subject = `${merchant} part ${n}`;
+  const noteEdit = useInlineEdit({ value: part.note ?? '', onSave: (note) => onPatch({ note }), blocked: saving });
   return (
     <>
       <tr className={cx(rowLayout, 'bg-surface-2/40 py-3', saving && 'opacity-60')}>
         <td className={cx(partCell, 'col-start-1 row-start-1')}>
-          <div className="flex items-center gap-2 pl-6 text-xs text-ink-2 sm:pl-11">
-            <CornerDownRight className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
-            <span>Part {n}</span>
+          <div className="pl-6 sm:pl-11">
+            <div className="flex items-center gap-2 text-xs text-ink-2">
+              <CornerDownRight className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
+              <span>Part {n}</span>
+              <NoteButton
+                edit={noteEdit}
+                hasNote={Boolean(part.note)}
+                subject={subject}
+                closedTitle={readOnly ? 'This period is closed' : undefined}
+              />
+            </div>
+            <NoteLine edit={noteEdit} note={part.note} subject={subject} className="ml-6" />
           </div>
         </td>
         <td className={spacerCell} />

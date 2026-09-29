@@ -131,6 +131,9 @@ CREATE TABLE IF NOT EXISTS transactions (
     -- The statement upload that brought the line in (its mirror legs and split parts
     -- carry it too); NULL on lines ingested before uploads were linked.
     upload_id UUID REFERENCES statement_uploads(id) ON DELETE SET NULL,
+    -- The user's own free-text note (what the payment was); the raw description,
+    -- which the fingerprint is built from, is never edited.
+    note TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 -- Upgrades for databases created before split transactions existed.
@@ -139,6 +142,8 @@ ALTER TABLE transactions ADD COLUMN IF NOT EXISTS split_parent_id UUID REFERENCE
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS split_index INT;
 -- Upgrade for databases created before lines were linked to their upload.
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS upload_id UUID REFERENCES statement_uploads(id) ON DELETE SET NULL;
+-- Upgrade for databases created before lines could carry a note.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS note TEXT;
 CREATE INDEX IF NOT EXISTS ix_transactions_period ON transactions (period_key);
 CREATE INDEX IF NOT EXISTS ix_transactions_account_date ON transactions (account_id, transaction_date);
 CREATE INDEX IF NOT EXISTS ix_transactions_review_status ON transactions (review_status);

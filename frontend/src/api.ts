@@ -214,6 +214,8 @@ export interface TransactionOut {
   classification_source: ClassificationSource;
   classification_confidence: number | string | null;
   source_file: string | null;
+  /** The user's own note on what the payment was; `raw_description` is never edited. */
+  note: string | null;
   created_at: string;
   /** True once the transaction has been split into parts (see `parts`). */
   is_split: boolean;
@@ -239,6 +241,8 @@ export interface TransactionPart {
   is_claimable: boolean;
   allocated_primary_amount: Money;
   allocated_secondary_amount: Money;
+  /** Each part may carry its own note. */
+  note: string | null;
 }
 
 /** One part as sent to `PUT /transactions/{id}/split`; the amount is signed like the parent. */
@@ -280,7 +284,12 @@ export interface TransactionPatch {
   claim_type?: ClaimType;
   cleaned_merchant?: string;
   is_internal_transfer?: boolean;
+  /** Trimmed by the server; `""` or `null` clears it; at most `NOTE_MAX_LENGTH` characters. Never changes the status. */
+  note?: string | null;
 }
+
+/** The longest note the server accepts (longer is a 422). */
+export const NOTE_MAX_LENGTH = 500;
 
 export interface ApproveBody extends TransactionPatch {
   remember: boolean;

@@ -137,8 +137,9 @@ export function ClaimTypeControl({ value, onChange, label, disabled = false, lab
             tabIndex={index === tabStop ? 0 : -1}
             disabled={disabled}
             className={cx(
-              'inline-flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-              checked ? 'bg-brand text-on-brand shadow-sm' : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
+              'inline-flex min-w-0 items-center justify-center gap-1 rounded-md px-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+              // The chosen segment may carry its word: it sizes to it, the icon-only ones share what is left.
+              checked ? 'flex-none bg-brand text-on-brand shadow-sm' : 'flex-1 text-ink-2 hover:bg-surface-2 hover:text-ink',
               focusRing,
             )}
             onClick={() => choose(index)}

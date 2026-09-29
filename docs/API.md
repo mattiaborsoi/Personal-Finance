@@ -187,16 +187,18 @@ id, period_key, account_id, transaction_date, post_date, raw_description, cleane
 amount, currency, original_currency, foreign_amount, category, subcategory, claim_type,
 is_claimable, allocated_primary_amount, allocated_secondary_amount, review_status,
 is_internal_transfer, linked_transfer_id, classification_source (rule|memory|llm|manual|transfer|none),
-classification_confidence, source_file, created_at,
+classification_confidence, source_file, note, created_at,
 is_split, split_parent_id, parts: [TransactionPart]
 ```
-TransactionPart: `id, split_index, amount, category, subcategory, claim_type, is_claimable, allocated_primary_amount, allocated_secondary_amount`
+TransactionPart: `id, split_index, amount, category, subcategory, claim_type, is_claimable, allocated_primary_amount, allocated_secondary_amount, note`
 
-The list never contains parts: a split transaction appears once, as its parent, with `is_split: true` and its parts embedded. The `category` filter matches a transaction whose own category **or** any part's category equals the value.
+`note` is the user's own free text on what the payment was (null when there is none). `raw_description` is exactly what the bank printed and is never edited, because the duplicate fingerprint is built from it.
+
+The list never contains parts: a split transaction appears once, as its parent, with `is_split: true` and its parts embedded. The `category` filter matches a transaction whose own category **or** any part's category equals the value. `q` is a case-insensitive substring search over `raw_description`, `cleaned_merchant` and `note`, and a parent also matches when one of its parts' notes does.
 
 `GET /api/transactions/{id}` → TransactionOut (works for a part too: `split_parent_id` is then set and `parts` is empty)
 
-`PATCH /api/transactions/{id}` body `{ category?, subcategory?, claim_type?, cleaned_merchant?, is_internal_transfer? }` → TransactionOut. Recomputes allocations; does **not** change review status. `null` clears `subcategory` and is ignored for the other fields. `category` must be one of the configured `categories` (matched ignoring case and stored in the configured spelling) or `Uncategorized`: anything else is **422** naming the value; `subcategory` is free text. Correcting an already-approved transaction updates merchant memory. On a split parent only `cleaned_merchant` may change (it is copied to the parts); `category`, `subcategory`, `claim_type` and `is_internal_transfer` answer **409**. On a part, `category`, `subcategory` and `claim_type` may change; `cleaned_merchant` and `is_internal_transfer` answer **409**.
+`PATCH /api/transactions/{id}` body `{ category?, subcategory?, claim_type?, cleaned_merchant?, is_internal_transfer?, note? }` → TransactionOut. Recomputes allocations; does **not** change review status. `null` clears `subcategory` and `note` and is ignored for the other fields. `note` is trimmed and `""` clears it; more than 500 characters is **422** `note must be at most 500 characters (got N)`. A note changes nothing else (status, classification, allocations, merchant memory), works on pending and approved lines, on a split parent and on each part (every part may carry its own), and, like every other edit, is **409** while the period is closed. `category` must be one of the configured `categories` (matched ignoring case and stored in the configured spelling) or `Uncategorized`: anything else is **422** naming the value; `subcategory` is free text. Correcting an already-approved transaction updates merchant memory. On a split parent only `cleaned_merchant` may change (it is copied to the parts); `category`, `subcategory`, `claim_type` and `is_internal_transfer` answer **409**. On a part, `category`, `subcategory` and `claim_type` may change; `cleaned_merchant` and `is_internal_transfer` answer **409**.
 
 `POST /api/transactions/{id}/approve` body `{ ...same optional corrections..., remember: true }` → TransactionOut with `review_status = manual_approved`. When `remember` is true the confirmed classification is written to merchant memory (learning loop); transfers, `Uncategorized` answers and split transactions are never remembered.
 

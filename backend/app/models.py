@@ -157,6 +157,8 @@ class Transaction(Base):
     upload_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("statement_uploads.id", ondelete="SET NULL")
     )
+    # The user's free-text note on what the payment was; raw_description stays untouched.
+    note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     account: Mapped[Account | None] = relationship(back_populates="transactions")

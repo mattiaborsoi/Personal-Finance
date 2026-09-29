@@ -514,3 +514,127 @@ describe('renaming a merchant inline', () => {
     expect(rename).toHaveAttribute('title', 'This period is closed');
   });
 });
+
+describe('notes on the transactions list', () => {
+  it('mentions notes in the search placeholder', async () => {
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse([]);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      return undefined;
+    });
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions' });
+    expect(await screen.findByLabelText('Search')).toHaveAttribute('placeholder', 'Merchant, description or note…');
+  });
+
+  it('adds, edits and clears a note on a row', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockFetch(({ method, url, body }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse([]);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      if (method === 'PATCH' && url === `/api/transactions/${ID_UBER}`) {
+        const note = (body as { note: string }).note || null;
+        return jsonResponse(transaction({ id: ID_UBER, cleaned_merchant: 'Uber', raw_description: 'UBER *TRIP', amount: '-12.00', note }));
+      }
+      return undefined;
+    });
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions' });
+    await user.click(await screen.findByRole('button', { name: 'Add a note to Uber' }));
+    const input = screen.getByRole('textbox', { name: 'Note on Uber' });
+    expect(input).toHaveFocus();
+    await user.type(input, 'Airport run with Priya{Enter}');
+
+    await waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(patches(calls)[0].body).toEqual({ note: 'Airport run with Priya' });
+    const shown = await screen.findByTitle('Airport run with Priya');
+    // Under the raw description, clamped, and never wider than its column.
+    expect(shown.previousElementSibling).toHaveTextContent('UBER *TRIP');
+    expect(shown).toHaveClass('w-0', 'min-w-full');
+    expect(within(shown).getByText('Airport run with Priya')).toHaveClass('line-clamp-2');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit the note on Uber' })).toHaveFocus());
+
+    // Escape leaves it as it was.
+    await user.click(screen.getByRole('button', { name: 'Edit the note on Uber' }));
+    expect(screen.getByRole('textbox', { name: 'Note on Uber' })).toHaveValue('Airport run with Priya');
+    await user.keyboard(' and back{Escape}');
+    expect(patches(calls)).toHaveLength(1);
+    expect(screen.getByTitle('Airport run with Priya')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Edit the note on Uber' }));
+    await user.clear(screen.getByRole('textbox', { name: 'Note on Uber' }));
+    await user.type(screen.getByRole('textbox', { name: 'Note on Uber' }), 'Airport run');
+    await user.click(screen.getByLabelText('Search'));
+    await waitFor(() => expect(patches(calls)).toHaveLength(2));
+    expect(patches(calls)[1].body).toEqual({ note: 'Airport run' });
+    expect(await screen.findByTitle('Airport run')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Edit the note on Uber' }));
+    await user.clear(screen.getByRole('textbox', { name: 'Note on Uber' }));
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(patches(calls)).toHaveLength(3));
+    expect(patches(calls)[2].body).toEqual({ note: '' });
+    expect(await screen.findByRole('button', { name: 'Add a note to Uber' })).toBeInTheDocument();
+    expect(screen.queryByTitle('Airport run')).not.toBeInTheDocument();
+  });
+
+  it('gives each part of a split its own note', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse([]);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: splitRows, total: 2 });
+      if (method === 'PATCH' && url === `/api/transactions/${ID_PART_B}`) {
+        return jsonResponse(
+          transaction({ id: ID_PART_B, split_parent_id: ID_OCADO, amount: '-15.90', category: 'Dining', claim_type: 'personal', note: 'Lunch for Tom' }),
+        );
+      }
+      return undefined;
+    });
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions' });
+    await user.click(await screen.findByRole('button', { name: 'Add a note to Ocado part 2' }));
+    await user.type(screen.getByRole('textbox', { name: 'Note on Ocado part 2' }), 'Lunch for Tom{Enter}');
+
+    await waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(patches(calls)[0]).toMatchObject({ url: `/api/transactions/${ID_PART_B}`, body: { note: 'Lunch for Tom' } });
+    expect(await screen.findByTitle('Lunch for Tom')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit the note on Ocado part 2' })).toBeInTheDocument();
+    // The parent and the other part are untouched.
+    expect(screen.getByRole('button', { name: 'Add a note to Ocado' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add a note to Ocado part 1' })).toBeInTheDocument();
+  });
+
+  it('shows a refused note under the row', async () => {
+    const user = userEvent.setup();
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse([]);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      if (method === 'PATCH') return jsonResponse({ detail: 'note must be at most 500 characters (got 501)' }, 422);
+      return undefined;
+    });
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions' });
+    await user.click(await screen.findByRole('button', { name: 'Add a note to Ocado' }));
+    await user.type(screen.getByRole('textbox', { name: 'Note on Ocado' }), 'Kettle{Enter}');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('note must be at most 500 characters (got 501)');
+    expect(screen.getByRole('button', { name: 'Add a note to Ocado' })).toBeInTheDocument();
+  });
+
+  it('disables the note button in a closed period', async () => {
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse(periods);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) {
+        return jsonResponse({ items: [transaction({ id: ID_OCADO, cleaned_merchant: 'Ocado', note: 'Weekly shop' })], total: 1 });
+      }
+      return undefined;
+    });
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions?period=2026-03' });
+    await screen.findByText(/March 2026 is closed/);
+    const button = screen.getByRole('button', { name: 'Edit the note on Ocado' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', 'This period is closed');
+    expect(screen.getByTitle('Weekly shop')).toBeInTheDocument();
+  });
+});

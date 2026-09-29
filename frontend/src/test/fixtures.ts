@@ -48,6 +48,7 @@ export function transaction(overrides: Partial<TransactionOut> = {}): Transactio
     classification_source: 'llm',
     classification_confidence: 0.62,
     source_file: 'statement.pdf',
+    note: null,
     created_at: '2026-03-06T10:00:00Z',
     is_split: false,
     split_parent_id: null,
@@ -341,6 +342,7 @@ export function part(overrides: Partial<TransactionPart> = {}): TransactionPart 
     is_claimable: true,
     allocated_primary_amount: '-17.96',
     allocated_secondary_amount: '-12.04',
+    note: null,
     ...overrides,
   };
 }

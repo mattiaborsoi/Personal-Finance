@@ -157,11 +157,11 @@ export function ApprovalQueue({ period, closed = false, onChanged, account = '',
   }
 
   /**
-   * Marking a line as a transfer is the same PATCH the transactions page sends.
-   * It does not approve the line, so the row stays in the queue with what the
-   * server now says about it (a transfer's claim type becomes personal).
+   * A PATCH that does not approve the line (a transfer flag, a rename, a note):
+   * the row stays in the queue with what the server now says about it.
+   * Resolves to the updated line, or null when the server refused (the error shows under the row).
    */
-  async function markTransfer(tx: TransactionOut, isInternalTransfer: boolean) {
+  async function patchRow(tx: TransactionOut, change: TransactionPatch): Promise<TransactionOut | null> {
     setRowErrors((prev) => {
       const next = { ...prev };
       delete next[tx.id];
@@ -169,18 +169,26 @@ export function ApprovalQueue({ period, closed = false, onChanged, account = '',
     });
     setBusyFor([tx.id], true);
     try {
-      const updated = await api.patchTransaction(tx.id, { is_internal_transfer: isInternalTransfer });
+      const updated = await api.patchTransaction(tx.id, change);
       queue.setData((prev) =>
         prev ? { ...prev, items: prev.items.map((t) => (t.id === tx.id ? updated : t)) } : prev,
       );
-      // The claim type the server chose replaces any unsaved choice; a category draft still stands.
-      setDrafts((prev) => (prev[tx.id] ? { ...prev, [tx.id]: { ...prev[tx.id], claim_type: undefined } } : prev));
-      onChanged?.();
+      return updated;
     } catch (err) {
       setRowErrors((prev) => ({ ...prev, [tx.id]: editErrorMessage(err) }));
+      return null;
     } finally {
       setBusyFor([tx.id], false);
     }
+  }
+
+  /** Marking a line as a transfer is the same PATCH the transactions page sends; it does not approve the line. */
+  async function markTransfer(tx: TransactionOut, isInternalTransfer: boolean) {
+    const updated = await patchRow(tx, { is_internal_transfer: isInternalTransfer });
+    if (!updated) return;
+    // The claim type the server chose (a transfer's is personal) replaces any unsaved choice; a category draft still stands.
+    setDrafts((prev) => (prev[tx.id] ? { ...prev, [tx.id]: { ...prev[tx.id], claim_type: undefined } } : prev));
+    onChanged?.();
   }
 
   /** Splitting counts as approval, so the row leaves the queue just like an approved one. */
@@ -364,6 +372,7 @@ export function ApprovalQueue({ period, closed = false, onChanged, account = '',
                   onApprove={(corrections) => approveOne(tx, corrections)}
                   onSplit={() => setSplitting(tx)}
                   onTransferChange={(on) => markTransfer(tx, on)}
+                  onPatch={(change) => void patchRow(tx, change)}
                 />
               ))}
             </tbody>
