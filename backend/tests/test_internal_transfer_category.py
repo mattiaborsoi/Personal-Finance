@@ -109,3 +109,4 @@ def test_ingestion_flags_a_line_the_classifier_files_as_an_internal_transfer(
         assert t["category"] == INTERNAL
         assert t["is_internal_transfer"] is True
         assert t["claim_type"] == "personal"
+

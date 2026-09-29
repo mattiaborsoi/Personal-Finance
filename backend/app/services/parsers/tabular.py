@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import AppConfig
+from app.services.parsers.amounts import parse_amount_parts
 from app.services.parsers.base import ParsedStatement, ParseError, StatementDocument, StatementMetadata
 from app.services.parsers.columns import (
     TableRowParser,
@@ -88,6 +89,42 @@ def _read_excel_rows(path: Path) -> list[list[Any]]:
     return [[None if (isinstance(v, float) and v != v) else v for v in row] for row in rows]
 
 
+SIGNED_CARD_EXPORT_WARNING = (
+    "This card export prints purchases with a minus sign, so its amounts were read as printed: "
+    "minus is money spent, no sign is money in (repayments and refunds)."
+)
+
+
+def card_column_is_signed(body: list[list[Any]], columns: dict[str, int], config: AppConfig | None) -> bool:
+    """True when a card export's single Amount column is signed like a bank account.
+
+    Card repayments are the tell: on a card they are money in, so if the lines that
+    look like repayments are the unsigned ones, a minus must mean money out. Without
+    a repayment in the file, the majority decides: on a card most lines are purchases,
+    so when most amounts carry a minus, the minus marks purchases.
+    """
+    amount_col = columns["amount"]
+    desc_col = columns.get("description")
+    negative = plain = payment_negative = payment_plain = 0
+    for row in body:
+        if amount_col >= len(row):
+            continue
+        parts = parse_amount_parts(clean_cell(row[amount_col]))
+        if parts is None or parts.marker is not None or parts.magnitude == 0:
+            continue
+        description = clean_cell(row[desc_col]) if desc_col is not None and desc_col < len(row) else ""
+        is_payment = config is not None and config.transfers.is_payment(description)
+        if parts.explicit_negative:
+            negative += 1
+            payment_negative += is_payment
+        else:
+            plain += 1
+            payment_plain += is_payment
+    if payment_negative or payment_plain:
+        return payment_plain > payment_negative
+    return negative > plain
+
+
 class TabularParser:
     """Parser for ``.csv`` / ``.xlsx`` / ``.xls`` exports."""
 
@@ -125,6 +162,13 @@ class TabularParser:
             has_markers = markers_present(body, [columns["amount"]])
             has_negatives = explicit_negatives_present(body, [columns["amount"]])
             plain_is_debit = meta.account_type_hint == "credit" or (has_markers and not has_negatives)
+            # Some card exports (HSBC's among them) are signed like a bank account: a
+            # minus on purchases, none on repayments. Reading those card-style would flip
+            # every line, so a card export whose column is already signed is read as printed.
+            if meta.account_type_hint == "credit" and not has_markers and has_negatives:
+                if card_column_is_signed(body, columns, self.config):
+                    plain_is_debit = False
+                    warnings.append(SIGNED_CARD_EXPORT_WARNING)
         else:
             plain_is_debit = False
 

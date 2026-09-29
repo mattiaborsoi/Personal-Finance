@@ -461,6 +461,54 @@ class TestTabular:
         assert [t.amount for t in result.transactions] == [D("-18.40"), D("357.99")]
         assert {t.card_last4 for t in result.transactions} == {"7715"}
 
+    def test_card_export_signed_like_a_bank_account_is_read_as_printed(self, config, tmp_path):
+        """HSBC-style card CSV: a minus on purchases, none on the repayment. Nothing may be flipped."""
+        path = _write_csv(
+            tmp_path / "card.csv",
+            ["Date", "Description", "Amount"],
+            [
+                ["03/08/2026", "TESCO STORES", "-12.50"],
+                ["04/08/2026", "PAYMENT RECEIVED - THANK YOU", "300.00"],
+                ["05/08/2026", "PRET A MANGER", "-4.20"],
+                ["06/08/2026", "REFUND ONLINE SHOP", "9.99"],
+            ],
+        )
+        meta = StatementMetadata(account_type_hint="credit")
+        result = TabularParser(config, metadata=meta).parse(StatementDocument(path))
+        assert [t.amount for t in result.transactions] == [D("-12.50"), D("300.00"), D("-4.20"), D("9.99")]
+        assert any("read as printed" in w for w in result.warnings)
+
+    def test_signed_card_export_without_a_repayment_goes_by_the_majority(self, config, tmp_path):
+        path = _write_csv(
+            tmp_path / "card.csv",
+            ["Date", "Description", "Amount"],
+            [
+                ["03/08/2026", "TESCO STORES", "-12.50"],
+                ["04/08/2026", "CINEMA", "-18.00"],
+                ["05/08/2026", "REFUND", "5.00"],
+            ],
+        )
+        meta = StatementMetadata(account_type_hint="credit")
+        result = TabularParser(config, metadata=meta).parse(StatementDocument(path))
+        assert [t.amount for t in result.transactions] == [D("-12.50"), D("-18.00"), D("5.00")]
+
+    def test_card_style_export_with_a_signed_repayment_is_still_flipped(self, config, tmp_path):
+        """Amex-style: charges unsigned, the repayment and refunds with a minus. The usual card reading."""
+        path = _write_csv(
+            tmp_path / "card.csv",
+            ["Date", "Description", "Amount"],
+            [
+                ["03/08/2026", "TESCO STORES", "12.50"],
+                ["04/08/2026", "PAYMENT RECEIVED - THANK YOU", "-300.00"],
+                ["05/08/2026", "REFUND", "-5.00"],
+                ["06/08/2026", "CINEMA", "18.00"],
+            ],
+        )
+        meta = StatementMetadata(account_type_hint="credit")
+        result = TabularParser(config, metadata=meta).parse(StatementDocument(path))
+        assert [t.amount for t in result.transactions] == [D("-12.50"), D("300.00"), D("5.00"), D("-18.00")]
+        assert not any("read as printed" in w for w in result.warnings)
+
     def test_amount_plus_type_column(self, config, tmp_path):
         path = _write_csv(
             tmp_path / "typed.csv",

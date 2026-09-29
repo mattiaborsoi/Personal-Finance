@@ -420,6 +420,13 @@ gives no hint), `PdfTableParser` (pdfplumber tables) and `PdfTextParser` (text-l
 regexes with date context inferred from the statement period). For PDFs both PDF
 parsers run and the one that finds more transactions wins (the table parser on a tie).
 
+On a card account a single Amount column is normally card-style (an unsigned amount
+is a charge; a minus, parentheses or `CR` mean money in). Some card exports are signed
+like a bank account instead, with a minus on purchases. `TabularParser` reads those as
+printed: when the lines matching the card-payment patterns are the unsigned ones, or,
+with no repayment in the file, when most amounts carry a minus. The upload then carries
+a warning saying so.
+
 The **LLM layout extractor** (`llm_extractor.py`) is a fallback only:
 
 * used only when no deterministic parser found any transaction, only for PDFs, and only
