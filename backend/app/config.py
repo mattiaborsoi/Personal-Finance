@@ -569,6 +569,14 @@ class Settings(BaseSettings):
     """Set to false to never contact GitHub (the System tab then only shows the running commit)."""
     github_api_url: str = "https://api.github.com"
 
+    # Database backups (Settings -> System -> Backups; see app/services/backups.py).
+    backup_dir: str = "/app/backups"
+    """Where ``pg_dump`` files are written (a named volume in docker-compose.yml)."""
+    backups_enabled: bool = True
+    """Set to false to turn the scheduled (nightly) dumps off; manual and pre-update dumps still work."""
+    backup_interval_hours: float = 24.0
+    """A scheduled dump is taken when the newest nightly one is at least this old."""
+
     @property
     def sqlalchemy_url(self) -> str:
         return normalise_database_url(self.database_url)

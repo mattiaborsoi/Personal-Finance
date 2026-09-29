@@ -2,12 +2,16 @@ import type {
   AccountOut,
   AiSettings,
   AuditReportOut,
+  BackupItem,
+  BackupKind,
+  BackupsSummary,
   CategoriesOut,
   HouseholdOut,
   MetricsOut,
   PeriodOut,
   Rule,
   RulesOut,
+  SettlementBalance,
   SettlementOut,
   StatementOut,
   SystemInfo,
@@ -121,6 +125,25 @@ export function settlement(overrides: Partial<SettlementOut> = {}): SettlementOu
         effect_on_secondary_owes: '-33.33',
       },
     ],
+    balance: settlementBalance(),
+    entries: [],
+    ledger_payments: [],
+    ...overrides,
+  };
+}
+
+/** The running balance for `settlement()`: nothing carried in, nothing paid, so the month's £45.90 is outstanding. */
+export function settlementBalance(overrides: Partial<SettlementBalance> = {}): SettlementBalance {
+  return {
+    carried_in: '0.00',
+    net: '45.90',
+    payments_ledger: '0.00',
+    payments_manual: '0.00',
+    adjustments: '0.00',
+    balance_out: '45.90',
+    from_period: null,
+    checkpoint: null,
+    before_checkpoint: false,
     ...overrides,
   };
 }
@@ -216,6 +239,19 @@ export const COMMIT_RUNNING = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
 export const COMMIT_LATEST = 'f9e8d7c6b5a40312f1e0d9c8b7a6958473625140';
 
 /** GET /api/system as it reads when the running commit is the latest and the updater is idle. */
+/** A synthetic backup made `hoursAgo` hours before now. */
+export function backupItem(hoursAgo: number, kind: BackupKind = 'nightly', bytes = 2_100_000): BackupItem {
+  const when = new Date(Date.now() - hoursAgo * 3_600_000);
+  const stamp = when.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+  return { name: `settl-${stamp}-${kind}.dump`, kind, created_at: when.toISOString(), bytes };
+}
+
+/** GET /api/system's `backups`: by default one nightly backup six hours old. */
+export function backupsSummary(overrides: Partial<BackupsSummary> = {}): BackupsSummary {
+  const recent = overrides.recent ?? [backupItem(6)];
+  return { enabled: true, count: recent.length, last: recent[0] ?? null, stale: recent.length === 0, recent, ...overrides };
+}
+
 export function systemInfo(overrides: Partial<SystemInfo> = {}): SystemInfo {
   return {
     app: { name: 'Settl', version: '0.1.0' },
@@ -228,6 +264,7 @@ export function systemInfo(overrides: Partial<SystemInfo> = {}): SystemInfo {
     update_available: false,
     update_check_enabled: true,
     updater: { available: true, state: 'idle', started_at: null, finished_at: null, log: null, error: null },
+    backups: backupsSummary(),
     ...overrides,
   };
 }

@@ -32,6 +32,11 @@ personal on secondary cards). Internal transfers and ``Transfers:*`` categories 
 enter the settlement. Only ``auto_approved``/``manual_approved`` transactions count;
 the number of still-pending transactions is reported so the UI can warn.
 
+``settlement_payments_received`` is the signed total of the period's approved
+``Transfers:Settlement`` lines in both directions (positive = the secondary paid the
+primary); see :mod:`app.services.balance`. It is reported, never subtracted from
+``net_owed_by_secondary``: the running balance does that.
+
 Every item contributes to exactly one of the four sums, so
 ``net_owed_by_secondary == sum1 - sum2 + sum3 - sum4`` holds to the penny:
 
@@ -194,7 +199,10 @@ def compute_settlement(db: Session, period_key: str, config: AppConfig) -> Settl
         + summary.secondary_personal_on_primary_paid
         - summary.primary_personal_on_secondary_paid
     )
-    summary.settlement_payments_received = quantize(_settlement_payments_received(db, period_key), decimals)
+    # Imported here: the balance module builds on this one.
+    from app.services.balance import ledger_payments_total
+
+    summary.settlement_payments_received = ledger_payments_total(db, period_key, config)
     summary.pending_review_count = _pending_review_count(db, period_key)
     summary.unsettled_claim_count = unsettled
     summary.lines = lines
@@ -334,14 +342,3 @@ def _pending_review_count(db: Session, period_key: str) -> int:
     )
     return int(db.scalar(stmt) or 0)
 
-
-def _settlement_payments_received(db: Session, period_key: str) -> Decimal:
-    """Approved credits categorised ``Transfers:Settlement`` (money the partner sent)."""
-    stmt = select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-        Transaction.period_key == period_key,
-        Transaction.review_status.in_(APPROVED_STATUSES),
-        Transaction.is_split.is_not(True),
-        Transaction.category == SETTLEMENT_CATEGORY,
-        Transaction.amount > 0,
-    )
-    return _as_decimal(db.scalar(stmt) or 0)

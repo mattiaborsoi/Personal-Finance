@@ -1,8 +1,11 @@
-"""Settings -> System: version information, self-update and reset."""
+"""Settings -> System: version information, self-update, database backups and reset."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.auth import require_primary
@@ -10,6 +13,7 @@ from app.config import AppConfig, Settings
 from app.database import get_db
 from app.deps import get_config, get_settings
 from app.schemas import ResetCounts, ResetOut, ResetRequest
+from app.services import backups as backups_service
 from app.services import reset as reset_service
 from app.services.updates import (
     GitHubClient,
@@ -43,7 +47,7 @@ def get_system(
     github: GitHubClient = Depends(get_github),
     updater: UpdaterClient = Depends(get_updater),
 ) -> dict:
-    return system_info(settings, github, updater)
+    return {**system_info(settings, github, updater), "backups": backups_service.summary(settings)}
 
 
 @router.post("/check")
@@ -52,17 +56,80 @@ def check_for_updates(
     github: GitHubClient = Depends(get_github),
     updater: UpdaterClient = Depends(get_updater),
 ) -> dict:
-    return system_info(settings, github, updater, force_check=True)
+    info = system_info(settings, github, updater, force_check=True)
+    return {**info, "backups": backups_service.summary(settings)}
+
+
+PRE_UPDATE_BACKUP_FAILED = "The backup before updating failed, so the update was not started"
 
 
 @router.post("/update", status_code=status.HTTP_202_ACCEPTED)
-def start_update(updater: UpdaterClient = Depends(get_updater)) -> dict:
+def start_update(
+    skip_backup: bool = Query(False, description="Update without taking a pre-update backup first."),
+    settings: Settings = Depends(get_settings),
+    updater: UpdaterClient = Depends(get_updater),
+) -> dict:
+    """Take a ``pre-update`` dump, then ask the updater to pull and rebuild.
+
+    **409** when an update is already running, or when the dump fails (nothing is
+    started; ``?skip_backup=true`` updates without one). **503** when the updater is
+    not reachable.
+    """
+    current = updater.status()
+    if not current.available:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "the updater is not reachable")
+    if current.state == "running":
+        raise HTTPException(status.HTTP_409_CONFLICT, "an update is already running")
+    if not skip_backup:
+        try:
+            backups_service.create_backup(settings, "pre-update")
+        except Exception as exc:  # noqa: BLE001 - any failure refuses the update
+            raise HTTPException(status.HTTP_409_CONFLICT, f"{PRE_UPDATE_BACKUP_FAILED}: {exc}") from exc
     try:
         return updater.start_update()
     except UpdateAlreadyRunning as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except UpdaterUnavailable as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+
+
+@router.get("/backups")
+def list_backups(settings: Settings = Depends(get_settings)) -> list[dict]:
+    """Every backup in ``BACKUP_DIR``, newest first."""
+    return [b.to_dict() for b in backups_service.list_backups(settings)]
+
+
+@router.post("/backups", status_code=status.HTTP_201_CREATED)
+def create_backup(settings: Settings = Depends(get_settings)) -> dict:
+    """Take a ``manual`` dump now (waits for a dump already running); **500** when ``pg_dump`` fails."""
+    try:
+        made = backups_service.create_backup(settings, "manual")
+    except backups_service.BackupError as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"The backup failed: {exc}") from exc
+    backups_service.prune_backups(settings)
+    return made.to_dict()
+
+
+def _backup_path(settings: Settings, name: str) -> Path:
+    try:
+        return backups_service.resolve_backup(settings, name)
+    except backups_service.InvalidBackupName as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such backup") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such backup") from exc
+
+
+@router.get("/backups/{name}", response_class=FileResponse)
+def download_backup(name: str, settings: Settings = Depends(get_settings)) -> FileResponse:
+    """The dump file itself (``application/octet-stream``, as an attachment)."""
+    path = _backup_path(settings, name)
+    return FileResponse(path, media_type="application/octet-stream", filename=path.name)
+
+
+@router.delete("/backups/{name}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_backup(name: str, settings: Settings = Depends(get_settings)) -> Response:
+    backups_service.delete_backup(settings, _backup_path(settings, name).name)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/reset", response_model=ResetOut)

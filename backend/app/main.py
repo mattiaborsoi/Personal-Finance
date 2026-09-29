@@ -35,6 +35,7 @@ from app.routers import (
     transfers,
 )
 from app.services.accounts import seed_accounts
+from app.services.backups import BackupScheduler, scheduler_wanted
 from app.services.periods import PeriodClosedError
 
 log = logging.getLogger(__name__)
@@ -88,7 +89,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.llm_provider,
         settings.embedding_provider,
     )
-    yield
+    # Nightly database dumps into BACKUP_DIR (off with BACKUPS_ENABLED=false, and under tests).
+    scheduler = BackupScheduler(settings) if scheduler_wanted(settings) else None
+    if scheduler is not None:
+        scheduler.start()
+        log.info("backups: scheduled dumps into %s every %sh", settings.backup_dir, settings.backup_interval_hours)
+    else:
+        log.info("backups: scheduled dumps are off")
+    try:
+        yield
+    finally:
+        if scheduler is not None:
+            scheduler.stop()
 
 
 def create_app(*, with_lifespan: bool = True) -> FastAPI:

@@ -5,6 +5,7 @@ import {
   categoryLabel,
   categoryOptions,
   deviationToPercent,
+  formatBytes,
   formatPercent,
   formatSignedPercent,
   ratioToPercent,
@@ -104,5 +105,14 @@ describe('categoryOptions', () => {
     expect(categoryLabel('Transport:Taxi:Night')).toBe('Transport › Taxi › Night');
     // A leading colon is not a group.
     expect(categoryLabel(':Odd')).toBe(':Odd');
+  });
+});
+
+describe('formatBytes', () => {
+  it('uses decimal units with one decimal place', () => {
+    expect(formatBytes(512)).toBe('512 B');
+    expect(formatBytes(31_460)).toBe('31.5 KB');
+    expect(formatBytes(2_100_000)).toBe('2.1 MB');
+    expect(formatBytes(3_400_000_000)).toBe('3.4 GB');
   });
 });

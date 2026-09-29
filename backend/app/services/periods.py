@@ -9,10 +9,18 @@ from datetime import UTC, date, datetime
 from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
-from app.models import AuditReport, LedgerPeriod, PartnerClaim, SettlementSnapshot, StatementUpload, Transaction
+from app.models import (
+    AuditReport,
+    LedgerPeriod,
+    PartnerClaim,
+    SettlementEntry,
+    SettlementSnapshot,
+    StatementUpload,
+    Transaction,
+)
 
 # Every table with a foreign key to ``ledger_periods`` (keep in step with schema.sql).
-_REFERENCING_MODELS = (Transaction, PartnerClaim, StatementUpload, AuditReport, SettlementSnapshot)
+_REFERENCING_MODELS = (Transaction, PartnerClaim, StatementUpload, AuditReport, SettlementSnapshot, SettlementEntry)
 
 PERIOD_KEY_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
@@ -42,6 +50,13 @@ def previous_period_key(period_key: str, steps: int = 1) -> str:
             month = 12
             year -= 1
     return f"{year:04d}-{month:02d}"
+
+
+def next_period_key(period_key: str) -> str:
+    start, _ = period_bounds(period_key)
+    if start.month == 12:
+        return f"{start.year + 1:04d}-01"
+    return f"{start.year:04d}-{start.month + 1:02d}"
 
 
 def get_or_create_period(db: Session, period_key: str) -> LedgerPeriod:
@@ -78,7 +93,7 @@ def reopen_period(db: Session, period_key: str) -> LedgerPeriod:
 
 
 def is_referenced(db: Session, period_key: str) -> bool:
-    """True when any transaction, claim, upload, audit report or snapshot files under ``period_key``."""
+    """True when a transaction, claim, upload, audit report, snapshot or settlement entry files under it."""
     db.flush()
     return any(
         db.scalar(select(exists().where(model.period_key == period_key))) for model in _REFERENCING_MODELS

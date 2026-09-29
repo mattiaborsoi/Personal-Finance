@@ -37,6 +37,8 @@ review_status_enum = ENUM(
     "pending_review", "auto_approved", "manual_approved", name="review_status_enum", create_type=False
 )
 transfer_state_enum = ENUM("unmatched", "matched", "ignored", name="transfer_state_enum", create_type=False)
+SETTLEMENT_ENTRY_KINDS: tuple[str, ...] = ("payment", "adjustment", "checkpoint")
+settlement_entry_kind_enum = ENUM(*SETTLEMENT_ENTRY_KINDS, name="settlement_entry_kind", create_type=False)
 
 
 class Base(DeclarativeBase):
@@ -257,4 +259,31 @@ class SettlementSnapshot(Base):
     primary_personal_on_secondary_paid: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     settlement_payments_received: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
     line_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # The running balance at close (NULL on snapshots taken before it existed).
+    carried_in: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    payments: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    adjustments: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    balance_out: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     snapshot_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SettlementEntry(Base):
+    """A payment, adjustment or agreed balance (checkpoint) recorded against a month.
+
+    ``amount`` is the positive sum paid for a ``payment`` (by ``paid_by``), the signed
+    change to "secondary owes" for an ``adjustment`` and the agreed closing balance
+    for a ``checkpoint`` (at most one per month).
+    """
+
+    __tablename__ = "settlement_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    period_key: Mapped[str] = mapped_column(String(7), ForeignKey("ledger_periods.period_key"), nullable=False)
+    entry_date: Mapped[date] = mapped_column(Date, nullable=False)
+    kind: Mapped[str] = mapped_column(settlement_entry_kind_enum, nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    paid_by: Mapped[str | None] = mapped_column(String(64))
+    net_at_checkpoint: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())

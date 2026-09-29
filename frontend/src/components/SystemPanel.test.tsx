@@ -5,10 +5,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ResetCounts, SystemInfo } from '../api';
 import { App } from '../App';
 import { ReloadConfigContext } from '../config/ConfigContext';
-import { COMMIT_LATEST, systemInfo } from '../test/fixtures';
+import { backupItem, backupsSummary, COMMIT_LATEST, systemInfo } from '../test/fixtures';
 import { fixtureConfig, jsonResponse, mockFetch, renderWithProviders, type RecordedCall } from '../test/utils';
 import {
   ALREADY_UP_TO_DATE_TITLE,
+  BackupsCard,
   MANUAL_UPDATE_COMMANDS,
   SystemPanel,
   UPDATE_ALREADY_RUNNING_MESSAGE,
@@ -595,5 +596,175 @@ describe('<SystemPanel /> danger zone', () => {
       'Reset, but the rest of Settl shows the old settings until you reload the page: Could not reach the server.',
     );
     expect(screen.getByTestId('location')).toHaveTextContent('/settings?tab=system');
+  });
+});
+
+describe('<BackupsCard />', () => {
+  it('shows the newest backup with how long ago, its kind and size, and the recent ones', async () => {
+    const older = backupItem(30, 'pre-update', 1_900_000);
+    mockFetch(() => undefined);
+
+    renderWithProviders(<BackupsCard summary={backupsSummary({ recent: [backupItem(6), older] })} />);
+
+    const card = screen.getByRole('region', { name: 'Backups' });
+    expect(card).toHaveTextContent('Last backup 6 hours ago (nightly, 2.1 MB)');
+    const rows = within(screen.getByRole('list', { name: 'Recent backups' })).getAllByRole('listitem');
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toHaveTextContent('before an update');
+    expect(rows[1]).toHaveTextContent('1.9 MB');
+    expect(card).toHaveTextContent('2 backups on the server.');
+    expect(screen.queryByText(/more than a day and a half ago/)).not.toBeInTheDocument();
+  });
+
+  it('warns when there is no backup yet', () => {
+    mockFetch(() => undefined);
+
+    renderWithProviders(<BackupsCard summary={backupsSummary({ recent: [] })} />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('There is no backup of the database yet. Back up now.');
+    expect(screen.getByText('No backups yet')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download latest' })).toBeDisabled();
+  });
+
+  it('warns when the newest backup is stale, and says when nightly backups are off', () => {
+    mockFetch(() => undefined);
+    const old = backupItem(40);
+
+    renderWithProviders(<BackupsCard summary={backupsSummary({ recent: [old], stale: true, enabled: false })} />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('more than a day and a half ago');
+    expect(screen.getByText(/Nightly backups are turned off on this server/)).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Backups' })).toHaveTextContent('Last backup 1 day ago (nightly, 2.1 MB)');
+  });
+
+  it('backs up now with a spinner, then shows the new backup and clears the warning', async () => {
+    const user = userEvent.setup();
+    const made = backupItem(0, 'manual', 2_200_000);
+    let finish: (() => void) | undefined;
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'POST' && url === '/api/system/backups') {
+        return new Promise<Response>((resolve) => {
+          finish = () => resolve(jsonResponse(made, 201));
+        });
+      }
+      if (method === 'GET' && url === '/api/system/backups') return jsonResponse([made]);
+      return undefined;
+    });
+
+    renderWithProviders(<BackupsCard summary={backupsSummary({ recent: [], stale: true })} />);
+    await user.click(screen.getByRole('button', { name: 'Back up now' }));
+
+    expect(await screen.findByRole('button', { name: 'Backing up…' })).toBeDisabled();
+    finish?.();
+    expect(await screen.findByText('Last backup just now (manual, 2.2 MB)')).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back up now' })).toBeEnabled();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(['POST /api/system/backups', 'GET /api/system/backups']);
+    expect(calls[0].headers.Authorization).toBe('Bearer primary-token');
+  });
+
+  it('shows the reason when a backup fails', async () => {
+    const user = userEvent.setup();
+    mockFetch(({ method, url }) =>
+      method === 'POST' && url === '/api/system/backups'
+        ? jsonResponse({ detail: 'The backup failed: pg_dump failed: could not connect' }, 500)
+        : undefined,
+    );
+
+    renderWithProviders(<BackupsCard summary={backupsSummary()} />);
+    await user.click(screen.getByRole('button', { name: 'Back up now' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The backup failed: pg_dump failed: could not connect');
+  });
+
+  it('downloads the latest backup with the session header and saves it under its own name', async () => {
+    const user = userEvent.setup();
+    const latest = backupItem(6);
+    const createObjectURL = vi.fn((blob: Blob) => (blob.size > 0 ? 'blob:settl-backup' : ''));
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true, writable: true });
+    Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true, writable: true });
+    const saved: { href: string; download: string }[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      saved.push({ href: this.href, download: this.download });
+    });
+    const { calls } = mockFetch(({ method, url }) =>
+      method === 'GET' && url === `/api/system/backups/${latest.name}`
+        ? new Response(new Blob(['PGDMP synthetic']), { status: 200, headers: { 'Content-Type': 'application/octet-stream' } })
+        : undefined,
+    );
+
+    renderWithProviders(<BackupsCard summary={backupsSummary({ recent: [latest] })} />);
+    await user.click(screen.getByRole('button', { name: 'Download latest' }));
+
+    await waitFor(() => expect(saved).toEqual([{ href: 'blob:settl-backup', download: latest.name }]));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].headers.Authorization).toBe('Bearer primary-token');
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('asks before deleting a backup, then deletes it and refreshes the list', async () => {
+    const user = userEvent.setup();
+    const newest = backupItem(6);
+    const older = backupItem(30, 'manual');
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'DELETE' && url === `/api/system/backups/${older.name}`) return new Response(null, { status: 204 });
+      if (method === 'GET' && url === '/api/system/backups') return jsonResponse([newest]);
+      return undefined;
+    });
+
+    renderWithProviders(<BackupsCard summary={backupsSummary({ recent: [newest, older] })} />);
+    const rows = within(screen.getByRole('list', { name: 'Recent backups' })).getAllByRole('listitem');
+    await user.click(within(rows[1]).getByRole('button', { name: /^Delete the backup from/ }));
+
+    const prompt = within(rows[1]).getByRole('group', { name: 'Delete this backup?' });
+    expect(calls).toHaveLength(0); // nothing deleted before confirming
+    await user.click(within(prompt).getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() =>
+      expect(within(screen.getByRole('list', { name: 'Recent backups' })).getAllByRole('listitem')).toHaveLength(1),
+    );
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `DELETE /api/system/backups/${older.name}`,
+      'GET /api/system/backups',
+    ]);
+  });
+
+  it('is part of the System tab', async () => {
+    mockFetch(({ method, url }) => (method === 'GET' && url === '/api/system' ? jsonResponse(systemInfo()) : undefined));
+
+    renderPanel();
+
+    expect(await screen.findByRole('region', { name: 'Backups' })).toHaveTextContent('Last backup 6 hours ago (nightly, 2.1 MB)');
+  });
+});
+
+describe('<SystemPanel /> update with a pre-update backup', () => {
+  it('explains a failed backup instead of "already running", and can update without one after confirming', async () => {
+    const user = userEvent.setup();
+    const detail = 'The backup before updating failed, so the update was not started: pg_dump failed: disk full';
+    let posts = 0;
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/system') return jsonResponse(behind);
+      if (method === 'POST' && url.startsWith('/api/system/update')) {
+        posts += 1;
+        return posts === 1 ? jsonResponse({ detail }, 409) : jsonResponse({ state: 'running', started_at: STARTED_AT }, 202);
+      }
+      return undefined;
+    });
+
+    renderPanel();
+    await confirmUpdate(user);
+
+    expect(await screen.findByText(detail)).toBeInTheDocument();
+    expect(screen.queryByText(UPDATE_ALREADY_RUNNING_MESSAGE)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Update without a backup' }));
+    const group = screen.getByRole('group', { name: /^Update without a backup\?/ });
+    await user.click(within(group).getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(posts).toBe(2));
+    const updates = calls.filter((c) => c.method === 'POST').map((c) => c.url);
+    expect(updates).toEqual(['/api/system/update', '/api/system/update?skip_backup=true']);
   });
 });

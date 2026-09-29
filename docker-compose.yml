@@ -77,9 +77,16 @@ services:
       - UPDATE_CHECK=${UPDATE_CHECK:-true}
       - UPDATE_REPO=${UPDATE_REPO:-mattiaborsoi/personal-finance}
       - UPDATE_BRANCH=${UPDATE_BRANCH:-main}
+      # Settings -> System -> Backups: nightly pg_dump files, kept in the "backups" volume.
+      - BACKUP_DIR=/app/backups
+      - BACKUPS_ENABLED=${BACKUPS_ENABLED:-true}
+      - BACKUP_INTERVAL_HOURS=${BACKUP_INTERVAL_HOURS:-24}
     volumes:
       - ./config.yaml:/app/config/config.yaml:ro
       - ./uploads:/app/uploads
+      # A named volume, so it works wherever the repository lives. To keep the dumps in a
+      # host folder instead, bind one over it in docker-compose.override.yml.
+      - backups:/app/backups
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
@@ -93,7 +100,12 @@ services:
     restart: always
     logging: *default-logging
     depends_on:
-      - backend
+      backend:
+        condition: service_started
+      # Only so that every `docker compose up -d --build backend frontend` (what the
+      # updater runs) also runs the clean-up below; the frontend never waits for it.
+      maintenance:
+        condition: service_started
     ports:
       # Bind to a specific LAN / VPN address instead of all interfaces if the host
       # has a public interface, e.g. "192.168.1.10:80:80".
@@ -118,5 +130,22 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${PWD:?run docker compose from a shell inside the repository}:${PWD}
 
+  # One-shot clean-up, started alongside the frontend on every update: removes
+  # dangling (untagged) images that carry the com.settl.project=settl label, i.e.
+  # the previous builds of Settl's own images, and exits. Images of other projects
+  # on the host, tagged images, images in use and the build cache are never touched.
+  # It needs the Docker socket but no repository mount.
+  maintenance:
+    build:
+      context: ./updater
+      labels:
+        com.settl.service: maintenance
+    restart: "no"
+    logging: *default-logging
+    command: ["python", "maintenance.py"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
 volumes:
   pgdata:
+  backups:

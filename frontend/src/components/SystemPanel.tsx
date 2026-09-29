@@ -1,9 +1,19 @@
-import { Cog, Download, RefreshCw, RotateCw } from 'lucide-react';
+import { Cog, DatabaseBackup, Download, HardDriveDownload, LoaderCircle, RefreshCw, RotateCw, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { api, errorMessage, isApiError, type SystemInfo } from '../api';
-import { formatDate, formatDateTime } from '../lib/dates';
-import { plural } from '../lib/format';
-import { btnPrimary, btnSecondary, cx, eyebrow, focusRing } from '../lib/ui';
+import {
+  api,
+  BACKUP_BEFORE_UPDATE_FAILED,
+  errorMessage,
+  isApiError,
+  type BackupItem,
+  type BackupKind,
+  type BackupsSummary,
+  type SystemInfo,
+} from '../api';
+import { formatDate, formatDateTime, timeAgo } from '../lib/dates';
+import { saveBlob } from '../lib/download';
+import { formatBytes, plural } from '../lib/format';
+import { btnIcon, btnPrimary, btnSecondary, cx, eyebrow, focusRing } from '../lib/ui';
 import { Badge, type BadgeTone } from './Badge';
 import { Card } from './Card';
 import { ConfirmButton } from './ConfirmButton';
@@ -22,6 +32,18 @@ export const MANUAL_UPDATE_COMMANDS = 'git pull && docker compose up -d --build'
 export const UPDATE_ALREADY_RUNNING_MESSAGE = 'An update is already running.';
 export const ALREADY_UP_TO_DATE_TITLE = 'Already running the latest version';
 export const UPDATER_UNAVAILABLE_MESSAGE = 'The updater is not reachable, so the app cannot update itself.';
+/** The System tab warns once the newest backup is older than this; the server uses the same limit. */
+export const BACKUP_STALE_HOURS = 36;
+
+const BACKUP_KIND_LABELS: Record<BackupKind, string> = {
+  nightly: 'nightly',
+  manual: 'manual',
+  'pre-update': 'before an update',
+};
+
+function isStale(last: BackupItem | null, now = Date.now()): boolean {
+  return !last || now - new Date(last.created_at).getTime() > BACKUP_STALE_HOURS * 3_600_000;
+}
 
 /** While the app restarts mid-update the gateway answers 502/503/504, or nothing at all. */
 function isRestartError(err: unknown): boolean {
@@ -69,6 +91,8 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
    */
   const [completedHere, setCompletedHere] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  /** The server's reason when the backup before an update failed (so nothing was started). */
+  const [backupFailed, setBackupFailed] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -140,10 +164,11 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
     }
   }
 
-  async function startUpdate() {
+  async function startUpdate(skipBackup = false) {
     setActionError(null);
+    setBackupFailed(null);
     try {
-      const started = await api.startUpdate();
+      const started = await api.startUpdate(skipBackup);
       setRestarting(false);
       setWatching(true);
       setInfo((prev) =>
@@ -155,7 +180,9 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
           : prev,
       );
     } catch (err) {
-      if (isApiError(err, 409)) {
+      if (isApiError(err, 409) && err.message.startsWith(BACKUP_BEFORE_UPDATE_FAILED)) {
+        setBackupFailed(err.message);
+      } else if (isApiError(err, 409)) {
         setActionError(UPDATE_ALREADY_RUNNING_MESSAGE);
         setWatching(true);
       } else if (isApiError(err, 503)) {
@@ -260,7 +287,7 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
           </button>
           <ConfirmButton
             confirmLabel={`Update ${info.app.name} now? The app will restart.`}
-            onConfirm={startUpdate}
+            onConfirm={() => startUpdate()}
             icon={Download}
             disabled={!canUpdate}
             title={
@@ -280,6 +307,20 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
           </p>
         </div>
         <ErrorMessage message={actionError} onDismiss={() => setActionError(null)} className="mt-4" />
+        {backupFailed && (
+          <div className="mt-4 space-y-3">
+            <ErrorMessage message={backupFailed} onDismiss={() => setBackupFailed(null)} />
+            <ConfirmButton
+              tone="danger"
+              confirmLabel="Update without a backup? If the update goes wrong, there is no copy of the data from just before it."
+              onConfirm={() => startUpdate(true)}
+              icon={Download}
+              disabled={!canUpdate}
+            >
+              Update without a backup
+            </ConfirmButton>
+          </div>
+        )}
       </Card>
 
       <Card icon={Download} title="Update">
@@ -344,10 +385,169 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
           </div>
         ) : (
           <p className="text-sm text-ink-2">
-            Updating pulls the latest commit from GitHub, rebuilds the app and restarts it. Nothing is running now.
+            Updating backs up the database, pulls the latest commit from GitHub, rebuilds the app and restarts it.
+            Nothing is running now.
           </p>
         )}
       </Card>
+
+      {info.backups && <BackupsCard summary={info.backups} />}
     </>
+  );
+}
+
+/** Settings -> System -> Backups: the newest backup, "Back up now", downloads and the recent list. */
+export function BackupsCard({ summary }: { summary: BackupsSummary }) {
+  /** The list as re-read after "Back up now" or a delete; until then, the summary from GET /api/system. */
+  const [items, setItems] = useState<BackupItem[] | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [announcement, setAnnouncement] = useState('');
+
+  const recent = (items ?? summary.recent).slice(0, 5);
+  const count = items ? items.length : summary.count;
+  const last = items ? (items[0] ?? null) : summary.last;
+  const stale = items ? isStale(last) : summary.stale;
+
+  async function reload(fallback?: BackupItem) {
+    try {
+      setItems(await api.listBackups());
+    } catch {
+      if (fallback) setItems((prev) => [fallback, ...(prev ?? summary.recent)]);
+    }
+  }
+
+  async function backUpNow() {
+    setCreating(true);
+    setError(null);
+    setAnnouncement('');
+    try {
+      const made = await api.createBackup();
+      setAnnouncement(`Backed up: ${formatBytes(made.bytes)}.`);
+      await reload(made);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function download(item: BackupItem) {
+    setDownloading(item.name);
+    setError(null);
+    try {
+      saveBlob(await api.downloadBackup(item.name), item.name);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setDownloading(null);
+    }
+  }
+
+  async function remove(item: BackupItem) {
+    setError(null);
+    try {
+      await api.deleteBackup(item.name);
+      setAnnouncement(`Deleted the backup from ${formatDateTime(item.created_at)}.`);
+      await reload();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  return (
+    <Card
+      icon={DatabaseBackup}
+      title="Backups"
+      description="Copies of the database, taken every night and before each update, kept on the server."
+    >
+      <div className="space-y-4">
+        {stale && (
+          <Notice tone="warning" role="status">
+            {last
+              ? `The last backup is from ${formatDateTime(last.created_at)}, more than a day and a half ago. Back up now, and check the server logs if this keeps happening.`
+              : 'There is no backup of the database yet. Back up now.'}
+          </Notice>
+        )}
+        {!summary.enabled && (
+          <Notice tone="neutral">
+            Nightly backups are turned off on this server (BACKUPS_ENABLED=false). Backups before updates and
+            &ldquo;Back up now&rdquo; still work.
+          </Notice>
+        )}
+        <p className="text-sm text-ink">
+          {last
+            ? `Last backup ${timeAgo(last.created_at)} (${BACKUP_KIND_LABELS[last.kind]}, ${formatBytes(last.bytes)})`
+            : 'No backups yet'}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className={btnPrimary} onClick={backUpNow} disabled={creating}>
+            {creating ? (
+              <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <DatabaseBackup className="h-4 w-4" aria-hidden="true" />
+            )}
+            {creating ? 'Backing up…' : 'Back up now'}
+          </button>
+          <button
+            type="button"
+            className={btnSecondary}
+            onClick={() => last && download(last)}
+            disabled={!last || downloading !== null}
+          >
+            <HardDriveDownload className="h-4 w-4" aria-hidden="true" />
+            Download latest
+          </button>
+          <p aria-live="polite" className="sr-only">
+            {announcement}
+          </p>
+        </div>
+        {recent.length > 0 && (
+          <section>
+            <h3 className={eyebrow}>Recent backups</h3>
+            <ul aria-label="Recent backups" className="mt-2 divide-y divide-hairline overflow-hidden rounded-xl border border-hairline">
+              {recent.map((item) => {
+                const when = formatDateTime(item.created_at);
+                return (
+                  <li key={item.name} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
+                    <span className="min-w-0 flex-1 text-ink">{when}</span>
+                    <span className="text-xs text-ink-3">{BACKUP_KIND_LABELS[item.kind]}</span>
+                    <span className="w-16 text-right text-xs tabular-nums text-ink-3">{formatBytes(item.bytes)}</span>
+                    <span className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        className={btnIcon}
+                        onClick={() => download(item)}
+                        disabled={downloading !== null}
+                        aria-label={`Download the backup from ${when}`}
+                        title="Download"
+                      >
+                        <Download className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                      <ConfirmButton
+                        iconOnly
+                        tone="danger"
+                        icon={Trash2}
+                        ariaLabel={`Delete the backup from ${when}`}
+                        confirmLabel="Delete this backup?"
+                        onConfirm={() => remove(item)}
+                      >
+                        Delete
+                      </ConfirmButton>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="mt-2 text-xs text-ink-3">
+              {plural(count, 'backup')} on the server. Older ones are removed automatically: the last 14 days, 8 weeks
+              and 12 months of nightly backups are kept, and the last 10 taken before updates or by hand.
+            </p>
+          </section>
+        )}
+        <ErrorMessage message={error} onDismiss={() => setError(null)} />
+      </div>
+    </Card>
   );
 }

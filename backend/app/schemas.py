@@ -325,7 +325,99 @@ class SettlementSnapshotOut(BaseModel):
     primary_personal_on_secondary_paid: Decimal
     settlement_payments_received: Decimal
     line_count: int
+    # The running balance at close; ``None`` on snapshots taken before it was recorded.
+    carried_in: Decimal | None = None
+    payments: Decimal | None = None
+    adjustments: Decimal | None = None
+    balance_out: Decimal | None = None
     snapshot_at: datetime | None = None
+
+
+SettlementEntryKind = Literal["payment", "adjustment", "checkpoint"]
+
+
+class SettlementEntryCreate(BaseModel):
+    """A payment made outside the ledger, an adjustment, or the month's agreed balance.
+
+    ``amount``: payment -> positive sum paid by ``paid_by``; adjustment -> signed change
+    to what the secondary owes (non-zero); checkpoint -> the agreed closing balance in
+    "secondary owes primary" terms (0 allowed, negative = primary owes).
+    """
+
+    kind: SettlementEntryKind
+    entry_date: date
+    amount: Decimal = Field(max_digits=12, decimal_places=2)
+    paid_by: str | None = None
+    note: str | None = Field(default=None, max_length=500)
+
+
+class SettlementEntryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    period_key: str
+    kind: SettlementEntryKind
+    entry_date: date
+    amount: Decimal
+    paid_by: str | None = None
+    note: str | None = None
+    net_at_checkpoint: Decimal | None = None
+    created_by: str | None = None
+    created_at: datetime | None = None
+
+
+class SettlementCheckpointOut(BaseModel):
+    """The month's agreed balance; ``drift`` is what the month's net moved since it was set."""
+
+    id: uuid.UUID
+    amount: Decimal
+    entry_date: date
+    note: str | None = None
+    net_at_checkpoint: Decimal | None = None
+    drift: Decimal
+    drifted: bool
+
+
+class SettlementAnchorOut(BaseModel):
+    """The set balance an earlier month holds, which this month's carried-in figure starts from."""
+
+    period_key: str
+    entry_date: date
+    amount: Decimal
+
+
+class SettlementBalance(BaseModel):
+    """The running balance, in "secondary owes primary" terms (negative = primary owes).
+
+    ``balance_out = carried_in + net - payments_ledger - payments_manual + adjustments``,
+    unless the month holds a checkpoint, in which case ``balance_out`` is its amount and
+    ``carried_in`` is 0 (nothing earlier is looked at).
+    """
+
+    carried_in: Decimal
+    net: Decimal
+    payments_ledger: Decimal
+    payments_manual: Decimal
+    adjustments: Decimal
+    balance_out: Decimal
+    from_period: str
+    checkpoint: SettlementCheckpointOut | None = None
+    before_checkpoint: bool = False
+    later_checkpoint_period: str | None = None
+    """The first later month whose set balance makes this one history (with ``before_checkpoint``)."""
+    anchored_on: SettlementAnchorOut | None = None
+    """The set balance in an earlier month that the carried-in figure starts from, if any."""
+
+
+class LedgerPaymentLine(BaseModel):
+    """An approved ``Transfers:Settlement`` line; ``effect`` > 0 reduces what the secondary owes."""
+
+    transaction_id: uuid.UUID
+    date: date
+    amount: Decimal
+    account_id: str | None
+    description: str
+    effect: Decimal
 
 
 class SettlementSummary(BaseModel):
@@ -339,12 +431,17 @@ class SettlementSummary(BaseModel):
     secondary_personal_on_primary_paid: Decimal
     primary_personal_on_secondary_paid: Decimal
     net_owed_by_secondary: Decimal
+    # Signed total of the month's approved Transfers:Settlement lines (both directions):
+    # positive = the secondary paid the primary, reducing what the secondary owes.
     settlement_payments_received: Decimal = Decimal("0")
     pending_review_count: int = 0
     unsettled_claim_count: int = 0
     settlement_due_date: date | None = None
     snapshot: SettlementSnapshotOut | None = None
     lines: list[SettlementLine] = Field(default_factory=list)
+    balance: SettlementBalance | None = None
+    entries: list[SettlementEntryOut] = Field(default_factory=list)
+    ledger_payments: list[LedgerPaymentLine] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #

@@ -227,3 +227,16 @@ export function stableHash(value: string): number {
   for (let i = 0; i < value.length; i += 1) h = (h * 31 + value.charCodeAt(i)) | 0;
   return Math.abs(h);
 }
+
+/** 2_100_000 -> "2.1 MB" (decimal units, as file managers show them). */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 1000) return `${Math.max(0, Math.round(bytes || 0))} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = bytes / 1000;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit += 1;
+  }
+  return `${value.toFixed(1)} ${units[unit]}`;
+}

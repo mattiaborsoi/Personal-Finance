@@ -219,6 +219,36 @@ CREATE TABLE IF NOT EXISTS settlement_snapshots (
     snapshot_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Upgrades: the running balance recorded alongside the month's own figures.
+ALTER TABLE settlement_snapshots ADD COLUMN IF NOT EXISTS carried_in NUMERIC(12, 2);
+ALTER TABLE settlement_snapshots ADD COLUMN IF NOT EXISTS payments NUMERIC(12, 2);
+ALTER TABLE settlement_snapshots ADD COLUMN IF NOT EXISTS adjustments NUMERIC(12, 2);
+ALTER TABLE settlement_snapshots ADD COLUMN IF NOT EXISTS balance_out NUMERIC(12, 2);
+
+-- Settlement entries: payments made outside the ledger, adjustments and agreed
+-- balances (checkpoints). All amounts are in "secondary owes primary" terms except a
+-- payment's, which is the positive amount paid by ``paid_by``. One checkpoint per month.
+DO $$ BEGIN
+    CREATE TYPE settlement_entry_kind AS ENUM ('payment', 'adjustment', 'checkpoint');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE TABLE IF NOT EXISTS settlement_entries (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    period_key VARCHAR(7) NOT NULL REFERENCES ledger_periods(period_key),
+    entry_date DATE NOT NULL,
+    kind settlement_entry_kind NOT NULL,
+    amount NUMERIC(12, 2) NOT NULL,   -- payment: positive; adjustment: signed; checkpoint: agreed balance_out
+    paid_by VARCHAR(64),              -- payments only
+    net_at_checkpoint NUMERIC(12, 2), -- checkpoints only: the month's net when the balance was set
+    note TEXT,
+    created_by VARCHAR(64),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS ix_settlement_entries_period ON settlement_entries (period_key);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_settlement_checkpoint ON settlement_entries (period_key) WHERE kind = 'checkpoint';
+
 -- Investment cash-basis position -------------------------------------------
 -- Transfers into an investment account are recorded on that account as
 -- positive amounts (deposits) and transfers out as negative amounts.

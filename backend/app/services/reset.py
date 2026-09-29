@@ -4,10 +4,11 @@ Two scopes:
 
 * ``transactions``: every transaction (split parts and mirror legs included), every
   transfer-buffer row, statement upload, audit report and settlement snapshot, and
-  every ledger period no partner claim files under (closed ones included: the
-  ledger is being wiped). Partner claims, merchant memory, accounts and the
-  settings documents are kept.
-* ``everything``: all of the above plus partner claims, every ledger period,
+  every ledger period no partner claim or settlement entry files under (closed ones
+  included: the ledger is being wiped). Partner claims, settlement entries (payments,
+  adjustments and agreed balances), merchant memory, accounts and the settings
+  documents are kept.
+* ``everything``: all of the above plus partner claims, settlement entries, every ledger period,
   merchant memory, the ``app_settings`` documents (AI, household, categories,
   rules) and the accounts, which are then seeded again from ``config.yaml`` exactly
   as on first start, so the installation looks like day one. Logins are unaffected
@@ -30,6 +31,7 @@ from app.models import (
     LedgerPeriod,
     MerchantMemory,
     PartnerClaim,
+    SettlementEntry,
     SettlementSnapshot,
     StatementUpload,
     Transaction,
@@ -76,12 +78,16 @@ def reset(db: Session, scope: str, config: AppConfig) -> dict[str, int]:
     _delete(db, delete(SettlementSnapshot))
     if everything:
         counts["claims"] = _delete(db, delete(PartnerClaim))
+        _delete(db, delete(SettlementEntry))
 
-    # Every table filing under a period is empty now, apart from the claims kept by a
-    # ``transactions`` reset: their periods stay.
+    # Every table filing under a period is empty now, apart from the claims and
+    # settlement entries kept by a ``transactions`` reset: their periods stay.
     periods = select(LedgerPeriod.period_key)
     if not everything:
-        periods = periods.where(~exists().where(PartnerClaim.period_key == LedgerPeriod.period_key))
+        periods = periods.where(
+            ~exists().where(PartnerClaim.period_key == LedgerPeriod.period_key),
+            ~exists().where(SettlementEntry.period_key == LedgerPeriod.period_key),
+        )
     keys = list(db.scalars(periods))
     if keys:
         counts["periods"] = _delete(db, delete(LedgerPeriod).where(LedgerPeriod.period_key.in_(keys)))

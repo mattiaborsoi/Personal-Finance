@@ -162,6 +162,21 @@ Rules:
   its form from `dialogBody` (the scrolling body) and `dialogFooter` (the actions).
   `Tabs` (roving focus with the arrow keys, Home and End; the caller owns the
   active id and renders the panel), as on the Settings page.
+* Settlement is a running balance, not a month on its own. The banner's headline is
+  what is outstanding at the end of the month (`balanceHeadline` of `balance_out`,
+  labelled "Outstanding at end of March 2026"), never the month's gross; one line under
+  it gives the working in words ("Carried in £266.50 owed by Sam · this month £45.90
+  owed by Sam · Sam paid £100.00", plus "adjusted …" when there are adjustments). The
+  working panel lists Carried in, This month (the four sums, lines behind `?lines=open`),
+  Payments (ledger transfers and payments recorded by hand), Adjustments and Outstanding;
+  its signed figures are always the change to what the secondary owes. An agreed balance
+  (checkpoint) shows as a "Balance set on …" chip and replaces the sum; drift since then is
+  a warning `Notice` with "Set it again", and a month before a later checkpoint gets a
+  neutral "history, not carried forward" `Notice`. "Record a payment" and "Set the
+  balance" are primary-only `Modal` forms; a hand-recorded payment that matches an
+  approved ledger payment within 7 days gets a non-blocking warning. The partner's tile
+  (`SettlementNetLine`) speaks from the viewer's side ("You owe Alex £312.40") with the
+  month so far underneath.
 * Icons: `lucide-react`, 16px (`h-4 w-4`) inline, 20px in feature tiles, always
   `aria-hidden` next to a visible label.
 

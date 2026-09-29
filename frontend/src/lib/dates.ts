@@ -131,3 +131,19 @@ export function formatDateTime(iso: string | null | undefined): string {
   if (Number.isNaN(d.getTime())) return iso;
   return `${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+/** "just now", "5 minutes ago", "6 hours ago", "3 days ago"; older than 30 days, the date. */
+export function timeAgo(iso: string | null | undefined, now: Date = new Date()): string {
+  if (!iso) return '—';
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return iso;
+  const minutes = Math.floor((now.getTime() - then.getTime()) / 60_000);
+  if (minutes < 1) return 'just now';
+  const unit = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'} ago`;
+  if (minutes < 60) return unit(minutes, 'minute');
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return unit(hours, 'hour');
+  const days = Math.floor(hours / 24);
+  if (days <= 30) return unit(days, 'day');
+  return `on ${formatDate(iso)}`;
+}

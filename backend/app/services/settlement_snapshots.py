@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import AppConfig
 from app.models import SettlementSnapshot
-from app.services import settlement
+from app.services import balance, settlement
 from app.services.periods import period_bounds
 
 
@@ -26,8 +26,9 @@ def settlement_due_date(period_key: str, config: AppConfig) -> date:
 
 
 def snapshot_settlement(db: Session, period_key: str, config: AppConfig) -> SettlementSnapshot:
-    """Compute the live settlement and upsert it as the period's snapshot."""
+    """Compute the live settlement and running balance and upsert them as the period's snapshot."""
     summary = settlement.compute_settlement(db, period_key, config)
+    running = balance.compute_balance(db, period_key, config, cache={period_key: summary})
     row = db.get(SettlementSnapshot, period_key)
     if row is None:
         row = SettlementSnapshot(period_key=period_key)
@@ -39,6 +40,10 @@ def snapshot_settlement(db: Session, period_key: str, config: AppConfig) -> Sett
     row.primary_personal_on_secondary_paid = summary.primary_personal_on_secondary_paid
     row.settlement_payments_received = summary.settlement_payments_received
     row.line_count = len(summary.lines)
+    row.carried_in = running.carried_in
+    row.payments = running.payments_ledger + running.payments_manual
+    row.adjustments = running.adjustments
+    row.balance_out = running.balance_out
     row.snapshot_at = datetime.now(UTC)
     db.flush()
     return row

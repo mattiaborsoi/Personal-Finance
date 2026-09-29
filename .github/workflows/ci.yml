@@ -37,7 +37,7 @@ jobs:
       - run: pip install -r backend/requirements.txt
       - run: ruff check .
         working-directory: backend
-      - run: ruff check --config backend/pyproject.toml updater && python -m py_compile updater/updater.py
+      - run: ruff check --config backend/pyproject.toml updater && python -m py_compile updater/updater.py updater/maintenance.py
       - run: pytest -v
         working-directory: backend
 

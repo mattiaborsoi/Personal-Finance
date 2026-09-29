@@ -130,14 +130,28 @@ Primary login only. Each is one `app_settings` document; `config.yaml` (or the b
   "update_available": true | false | null,
   "update_check_enabled": true,
   "updater": {"available", "state": "idle|running|succeeded|failed", "started_at", "finished_at", "log", "error"},
-  "checked_at": "<iso>"
+  "checked_at": "<iso>",
+  "backups": {
+    "enabled": true, "count": 12, "stale": false,
+    "last": {"name": "settl-20260929-020000-nightly.dump", "kind": "nightly", "created_at": "<iso>", "bytes": 2100000} | null,
+    "recent": [ {"name", "kind", "created_at", "bytes"}, ... ]
+  }
 }
 ```
-`running` comes from the updater sidecar (the commit checked out on disk); `latest` from GitHub (the newest of the last 30 commits on the branch, one request cached for ten minutes) and `null` when the check is disabled (`UPDATE_CHECK=false`) or the host is offline. `changes` lists the commits newer than `running`, newest first, each `message` being the first line of the commit message: the changelog of every update skipped, empty when up to date. When `running` is older than all 30 fetched, `changes` holds those 30 and `changes_truncated` is `true`; when `running` is unknown, `changes` is simply the newest commits. `update_available` is `null` whenever either side is unknown.
+`running` comes from the updater sidecar (the commit checked out on disk); `latest` from GitHub (the newest of the last 30 commits on the branch, one request cached for ten minutes) and `null` when the check is disabled (`UPDATE_CHECK=false`) or the host is offline. `changes` lists the commits newer than `running`, newest first, each `message` being the first line of the commit message: the changelog of every update skipped, empty when up to date. When `running` is older than all 30 fetched, `changes` holds those 30 and `changes_truncated` is `true`; when `running` is unknown, `changes` is simply the newest commits. `update_available` is `null` whenever either side is unknown. `backups` describes the database dumps (below): `enabled` is whether the scheduled nightly dumps are on (`BACKUPS_ENABLED`), `last` the newest backup of any kind, `stale` is `true` when there is none or the newest is more than 36 hours old, and `recent` the newest five.
 
 `POST /api/system/check` → the same body after a fresh look at GitHub.
 
-`POST /api/system/update` → **202** `{ state: "running", started_at }`. The updater runs `git pull --ff-only` and `docker compose up -d --build` for the app services; poll `GET /api/system` (expect a short outage while the backend restarts). **409** while an update is running, **503** when the updater container is not deployed or not reachable.
+`POST /api/system/update` (optional `?skip_backup=true`) → **202** `{ state: "running", started_at }`. The backend first takes a `pre-update` backup, then asks the updater to run `git pull --ff-only` and `docker compose up -d --build` for the app services; poll `GET /api/system` (expect a short outage while the backend restarts). **409** while an update is running, and **409** `The backup before updating failed, so the update was not started: <reason>` when the dump fails (nothing is started; repeat with `?skip_backup=true` to update without one). **503** when the updater container is not deployed or not reachable (no backup is taken then).
+
+### Backups
+
+A backup is one `pg_dump -Fc` file in `BACKUP_DIR` named `settl-YYYYMMDD-HHMMSS-<kind>.dump` (UTC), `kind` being `nightly` (the scheduler), `manual` (`POST` below) or `pre-update` (`POST /api/system/update`). An item is `{ "name", "kind", "created_at": "<iso>", "bytes" }`. All of these are primary only.
+
+- `GET /api/system/backups` → every backup, newest first.
+- `POST /api/system/backups` → **201** the new `manual` item (waits for a dump already running, then prunes old backups). **500** `The backup failed: <reason>` when `pg_dump` fails.
+- `GET /api/system/backups/{name}` → the file (`application/octet-stream`, `Content-Disposition: attachment`). `name` must match `^settl-\d{8}-\d{6}-(nightly|manual|pre-update)\.dump$` exactly and exist in `BACKUP_DIR`; anything else (other files, `..`, encoded slashes) is **404**.
+- `DELETE /api/system/backups/{name}` → **204**; **404** as above.
 
 `POST /api/system/reset` body `{ "scope": "transactions" | "everything", "confirm": "<phrase>" }` →
 ```json
@@ -159,7 +173,7 @@ One database transaction; `deleted` counts the rows removed (`accounts` counts t
 
 `POST /api/periods/{period_key}/reopen` → PeriodOut
 
-While a period is closed, `PATCH`/`approve`/`approve-batch`/`DELETE`/`split` on its transactions and `DELETE` on its claims return **409**; uploads adding new lines to it and new claims dated in it are refused the same way. Transfer matching is exempt (the buffer persists across closes). `transaction_count` and `pending_review_count` count split transactions once (through the parent).
+While a period is closed, `PATCH`/`approve`/`approve-batch`/`DELETE`/`split` on its transactions and `DELETE` on its claims return **409**; uploads adding new lines to it, new claims dated in it, and settlement payments or adjustments dated in it (or deleted from it) are refused the same way. A settlement checkpoint may still be set or removed. Closing records the running balance (`carried_in`, `payments`, `adjustments`, `balance_out`) in the snapshot; reopening a month and changing it moves every later month's live balance until the next checkpoint. Transfer matching is exempt (the buffer persists across closes). `transaction_count` and `pending_review_count` count split transactions once (through the parent).
 
 ## Statements
 
@@ -248,7 +262,9 @@ ClaimOut: `id, period_key, claim_date, paid_by, merchant, description, amount, c
 
 ## Settlement
 
-`GET /api/settlement/{period_key}` →
+All money is a string with two decimals, in "secondary owes primary" terms unless stated: positive = the secondary user owes the primary user, negative = the primary owes the secondary.
+
+`GET /api/settlement/{period_key}` (both roles) →
 ```json
 {
   "period_key", "primary_user_id", "secondary_user_id", "primary_ratio", "secondary_ratio",
@@ -259,13 +275,46 @@ ClaimOut: `id, period_key, claim_date, paid_by, merchant, description, amount, c
   "settlement_due_date",
   "snapshot": null | { "period_key", "net_owed_by_secondary", "secondary_share_of_primary_paid_shared",
                        "primary_share_of_secondary_paid_shared", "secondary_personal_on_primary_paid",
-                       "primary_personal_on_secondary_paid", "settlement_payments_received", "line_count", "snapshot_at" },
-  "lines": [ {source, id, date, merchant, amount, claim_type, paid_by, primary_share, secondary_share, effect_on_secondary_owes} ]
+                       "primary_personal_on_secondary_paid", "settlement_payments_received", "line_count",
+                       "carried_in", "payments", "adjustments", "balance_out", "snapshot_at" },
+  "lines": [ {source, id, date, merchant, amount, claim_type, paid_by, primary_share, secondary_share, effect_on_secondary_owes} ],
+  "balance": {
+    "carried_in", "net", "payments_ledger", "payments_manual", "adjustments", "balance_out",
+    "from_period",
+    "checkpoint": null | { "id", "amount", "entry_date", "note", "net_at_checkpoint", "drift", "drifted" },
+    "before_checkpoint"
+  },
+  "entries": [ {id, period_key, kind, entry_date, amount, paid_by, note, net_at_checkpoint, created_by, created_at} ],
+  "ledger_payments": [ {transaction_id, date, amount, account_id, description, effect} ]
 }
 ```
-`net_owed_by_secondary` > 0 means the secondary user pays the primary user. `settlement_due_date` is the configured settlement day in the following month. `snapshot` is the figure recorded when the period was closed (the settlement ledger); the rest is always computed live. A split transaction contributes one line per part (with the part's `id`), never a line for the parent.
+`net_owed_by_secondary` is the month's own figure: what its approved items move between the two of you, before any money changes hands. `settlement_due_date` is the configured settlement day in the following month. `snapshot` is what was recorded when the period was closed (the settlement ledger); its four balance fields are `null` on snapshots taken before the running balance existed. Everything else is computed live. A split transaction contributes one line per part (with the part's `id`), never a line for the parent.
 
-`POST /api/settlement/{period_key}/mark-settled` → `{ settled_claims }` marks the period's claims `is_settled`.
+`settlement_payments_received` is the signed total of the month's approved `Transfers:Settlement` lines in **both** directions (the same figure as `balance.payments_ledger`): positive when, on balance, the secondary paid the primary. Before the running balance it only summed credits; a debit (the primary paying the partner) now counts negatively. It is reported, never subtracted from `net_owed_by_secondary`.
+
+`balance` is the running balance:
+
+* `carried_in` is the previous calendar month's `balance_out` (0 before the first month holding any transaction, claim or settlement entry; months with no data count as zero).
+* `balance_out = carried_in + net - payments_ledger - payments_manual + adjustments`.
+* `payments_ledger` is the signed effect of `ledger_payments`: on an account the primary pays for, a credit (the partner paid in) is `+amount` and a debit (the primary paid the partner) is `-|amount|`; on an account the secondary pays for the signs flip. Each line's `effect` is its share of that total.
+* `payments_manual` is the month's `payment` entries: `+amount` when paid by the secondary, `-amount` when paid by the primary. `adjustments` is the signed sum of the `adjustment` entries.
+* When the month holds a checkpoint (an agreed balance), `balance_out` is its `amount` and `carried_in` is `0`: nothing earlier is looked at, and payments, adjustments and approvals in that month no longer move it. `checkpoint.drift` is the month's `net` now minus `net_at_checkpoint` (the net when the balance was set); `drifted` is `drift != 0`, so the UI can say "£x approved since the balance was set".
+* `from_period` is where the walk started: the nearest checkpoint month at or before this one, or the first month with data.
+* `before_checkpoint` is `true` when a later month holds a checkpoint: this month is history and its balance is not carried forward.
+
+`entries` are the month's settlement entries (all kinds), oldest `entry_date` first.
+
+`POST /api/settlement/entries` (primary) body `{ kind, entry_date, amount, paid_by?, note? }` → **201** entry (the `entries` item shape). `period_key` is the month of `entry_date` (the period row is created if missing).
+
+* `kind: "payment"`: money changing hands outside the ledger. `paid_by` must be one of the two configured user ids and `amount` > 0 (the sum paid). Also marks the month's partner claims settled, as `mark-settled` does.
+* `kind: "adjustment"`: `amount` is the signed change to what the secondary owes; it must not be 0.
+* `kind: "checkpoint"`: `amount` is the agreed `balance_out` for the month (0 and negative allowed). A month has at most one: posting another replaces its date, amount and note. `net_at_checkpoint` is set to the month's current net.
+
+`amount` has at most two decimals; `paid_by` on anything but a payment is **422**; `note` is trimmed, at most 500 characters. **422** on any of these, an unknown `kind` or a bad date. **409** `period 2026-08 is closed; reopen it first` for a payment or adjustment dated in a closed period; a checkpoint may be set on a closed period (it does not change the snapshot already recorded). **403** for a secondary session.
+
+`DELETE /api/settlement/entries/{id}` (primary) → **204**. **404** for an unknown id; **409** for a payment or adjustment in a closed period (a checkpoint may be removed). When the entry was the only thing filed under its month and the period is open, the empty period is removed with it.
+
+`POST /api/settlement/{period_key}/mark-settled` (primary) → `{ settled_claims }` marks the period's claims `is_settled`. It records no money; use a `payment` entry or an approved `Transfers:Settlement` line for that.
 
 ## Metrics
 

@@ -19,6 +19,7 @@ import {
   periodKeyForDate,
   periodLabel,
   periodRangeLabel,
+  timeAgo,
 } from './dates';
 
 const september = new Date(2026, 8, 25); // local time, so no timezone surprises
@@ -131,5 +132,17 @@ describe('month names in sentences', () => {
   it('lists months in calendar order whatever order they come in', () => {
     expect(monthsPhrase(['2026-08', '2026-07'], september)).toBe('July and August');
     expect(monthsPhrase(['2026-01', '2025-12'], september)).toBe('December 2025 and January');
+  });
+});
+
+describe('timeAgo', () => {
+  const now = new Date('2026-09-29T12:00:00Z');
+  it('reads like a sentence, and falls back to the date after a month', () => {
+    expect(timeAgo('2026-09-29T11:59:30Z', now)).toBe('just now');
+    expect(timeAgo('2026-09-29T11:59:00Z', now)).toBe('1 minute ago');
+    expect(timeAgo('2026-09-29T06:00:00Z', now)).toBe('6 hours ago');
+    expect(timeAgo('2026-09-27T12:00:00Z', now)).toBe('2 days ago');
+    expect(timeAgo('2026-07-01T12:00:00Z', now)).toBe('on 1 Jul 2026');
+    expect(timeAgo(null, now)).toBe('—');
   });
 });

@@ -201,9 +201,11 @@ def test_default_github_dependency_is_a_shared_client():
     assert isinstance(system_router.get_updater(settings), UpdaterClient)
 
 
-def test_system_endpoints_are_primary_only(client, primary_headers, secondary_headers):
+def test_system_endpoints_are_primary_only(client, primary_headers, secondary_headers, monkeypatch):
     from app.routers import system as system_router
 
+    # The pre-update backup is covered in test_backups.py; here it simply succeeds.
+    monkeypatch.setattr(system_router.backups_service, "create_backup", lambda settings, kind: None)
     settings = _settings()
     fake = FakeUpdater(settings)
     client.app.dependency_overrides[system_router.get_github] = lambda: GitHubClient(

@@ -270,10 +270,41 @@ authenticated with a token derived from
 rebuild, and the sidecar publishes no port. An update is
 `git pull --ff-only origin <branch>` followed by
 `docker compose up -d --build --remove-orphans backend frontend`: the updater
-rebuilds only `backend` and `frontend` (starting `db` first, as their dependency). It never
+rebuilds only `backend` and `frontend` (starting `db` first, as their dependency, and
+the one-shot `maintenance` clean-up below). It never
 recreates itself or the `litellm` container, so a change to the sidecar needs a
 manual `docker compose up -d --build updater`, and a change to `litellm/config.yaml`
 a `docker compose restart litellm`.
+Before asking the updater for anything, the backend takes a `pre-update` database
+backup (next section) and refuses the update, with the reason, if that fails; the
+System tab then offers **Update without a backup** (`?skip_backup=true`).
+
+**Old images.** Every rebuild leaves the previous `backend` and `frontend` images
+behind, untagged ("dangling"). The `maintenance` service in `docker-compose.yml`
+removes them: it is built from `updater/` (which has the Docker CLI), mounts the
+Docker socket and nothing else, and runs
+`docker image prune --force --filter label=com.settl.project=settl` once and exits
+(always with status 0, so a failed clean-up never fails an update). `frontend`
+depends on it with `condition: service_started`, which is why every
+`docker compose up -d --build backend frontend` (the updater's command) starts it
+without waiting for it. It only ever removes dangling images carrying the
+`com.settl.project=settl` label that Settl's Dockerfiles set: never tagged or in-use
+images, never another project's, never the build cache. An image only becomes
+dangling once its replacement is built, so each update removes the images the
+*previous* update left, and the first update that ships the label cannot clean the
+unlabelled images built before it. To reclaim those once, by hand, on the host:
+
+```bash
+# Look first: the untagged images Compose built for the project "settl"
+# (use your project name: the folder name, or COMPOSE_PROJECT_NAME).
+docker images --filter dangling=true --filter label=com.docker.compose.project=settl
+docker image prune --force --filter label=com.docker.compose.project=settl
+```
+
+Compose labels the images it builds with the project name, so this touches only
+Settl's. Do **not** run `docker image prune` (or `docker system prune`, or
+`docker builder prune`) without a filter on a host that runs other projects: it
+removes every project's unused images or build cache, not only Settl's.
 Mounting the Docker socket is root-equivalent on the host: if you would rather not,
 delete the `updater` service. The System tab then shows the manual commands
 instead, and since the running commit is read by the updater, it can no longer tell
@@ -298,13 +329,61 @@ time the backend boots (section 12), so there is no migration step.
 
 ### Backups and restore
 
-* **Back up:** `docker compose exec db pg_dump -U postgres financemaster > backup.sql`.
-  The dump carries the ledger, the settlement snapshots, the audits and everything the
-  merchant memory has learned.
-* **Restore** into a fresh database:
-  `docker compose exec -T db psql -U postgres financemaster < backup.sql`.
-* `.env` (and `config.yaml`, if you use one) is not in the database; keep a copy
-  alongside the dump.
+The backend backs the database up by itself (`app/services/backups.py`), with a
+`pg_dump` 16 installed in its image to match the `pgvector/pgvector:pg16` server.
+Each backup is one custom-format dump (`pg_dump -Fc`) named
+`settl-YYYYMMDD-HHMMSS-<kind>.dump` (UTC) in `BACKUP_DIR` (`/app/backups`):
+
+* **nightly**: a background thread wakes every 30 minutes and takes one when the
+  newest nightly dump is at least `BACKUP_INTERVAL_HOURS` (default 24) old. It works
+  that out from the files, so restarts neither skip nor double a backup.
+  `BACKUPS_ENABLED=false` in `.env` turns it off.
+* **pre-update**: taken by **Update now** before the updater is called (see Updating).
+* **manual**: **Settings → System → Backups → Back up now**.
+
+A dump is written under a temporary name and renamed when `pg_dump` succeeds; one
+lock makes sure two dumps never run at once; the database password reaches
+`pg_dump` only through `PGPASSWORD`, and each dump logs one line with its name and
+size. After every scheduled or manual dump, old ones are pruned: the backend keeps
+the newest nightly dump of each of the last 14 days, 8 ISO weeks and 12 months,
+the last 10 pre-update and the last 10 manual dumps, and never the newest of any
+kind. The System tab shows the newest backup, warns when there is none or it is
+more than 36 hours old, and downloads or deletes them.
+
+**Where they live.** `docker-compose.yml` mounts a named volume, `backups`, at
+`/app/backups` (Docker names it `<project>_backups`), which works whatever folder
+the repository is in. A backup inside Docker still dies with the disk: download
+one now and then (**Download latest**), or keep them in a host folder that your
+own backup tool copies, by binding one over the volume in
+`docker-compose.override.yml`:
+
+```yaml
+services:
+  backend:
+    volumes:
+      - ../data/backups:/app/backups
+```
+
+**Restore.** This replaces everything in the database with the dump. Run the
+commands where you normally run `docker compose` (with the same `COMPOSE_*`
+variables if you use an override); `docker exec <project>-backend-1 …` works too.
+
+```bash
+docker compose stop frontend      # keep everyone out while it runs
+# A backup still on the server: restore it by name.
+docker compose exec backend ls /app/backups
+docker compose exec backend python -m app.restore settl-20260929-020000-nightly.dump
+# A downloaded one: copy it into the container first.
+docker compose cp ~/Downloads/settl-20260929-020000-nightly.dump backend:/app/backups/
+docker compose exec backend python -m app.restore settl-20260929-020000-nightly.dump
+# Then restart the backend, so schema.sql brings the schema up to date.
+docker compose restart backend && docker compose start frontend
+```
+
+`python -m app.restore <file>` runs
+`pg_restore --clean --if-exists --no-owner` against `DATABASE_URL` after asking you
+to type `RESTORE` (`--yes` skips the question). `.env` and `config.yaml` are not in
+the dump: keep a copy of both alongside the backups.
 
 ### Starting over (Settings → System → Danger zone)
 
@@ -531,9 +610,19 @@ One `ledger_periods` row per calendar month (`YYYY-MM`). Closing a period
 (`POST /api/periods/{key}/close`) refuses with 409 while transactions are still
 `pending_review` unless `force=true`, then runs the Auditor, writes the settlement
 snapshot and locks the period. While closed, `PATCH`, approve, split and delete on
-its transactions, and delete on its claims, return 409; uploads adding new lines and
-claims dated in it are refused the same way. Reopening lifts the lock; the snapshot
-stays and is shown next to the live figure.
+its transactions, and delete on its claims, return 409; uploads adding new lines,
+claims dated in it and settlement payments or adjustments dated in it (added or
+deleted) are refused the same way. A settlement checkpoint may still be set or removed
+on a closed month: it is an agreement about the balance, not a change to the ledger.
+Reopening lifts the lock; the snapshot stays and is shown next to the live figure.
+Because the running balance (section 6) is always recomputed, reopening a month and
+changing it moves the live `carried_in` and `balance_out` of every later month up to
+the next checkpoint; their snapshots keep the figures recorded when they were closed.
+
+A settlement entry files under the month of its `entry_date` and keeps that
+`ledger_periods` row alive (`periods._REFERENCING_MODELS`). Settings → System → Reset
+keeps the entries, and their months, on the `transactions` scope, like partner claims,
+and deletes them on `everything`.
 
 ## 6. Settlement maths (`app/services/settlement.py`)
 
@@ -569,13 +658,64 @@ net_owed_by_secondary =
 
 Each item contributes to exactly one sum; an item borne entirely by its payer has no
 effect and is left out of `lines`. Refunds carry their sign through, so a refunded
-shared item reduces the debt. Approved credits categorised `Transfers:Settlement`
-(the partner's transfer to you) are reported as `settlement_payments_received` and are
-neither spend nor income. The API also reports `pending_review_count` so the UI can
-warn that the figure may still move.
+shared item reduces the debt. Approved lines categorised `Transfers:Settlement` (money
+changing hands between the two of you, either way) are neither spend nor income: they
+never enter `net_owed_by_secondary` and are reported, signed, as
+`settlement_payments_received` (see the payments rule below). The API also reports
+`pending_review_count` so the UI can warn that the figure may still move.
+
+**The running balance (`app/services/balance.py`).** Under the old spreadsheet the
+partner did not pay each month's net to the penny: they paid part of a big month and
+carried the rest, and what was agreed in the past does not match the ledger. So the
+month's net is only one input to a balance carried from month to month, all in
+"secondary owes primary" terms (negative = the primary owes):
+
+```
+carried_in(P)  = balance_out(previous calendar month)       (0 before the first month with data)
+balance_out(P) = carried_in(P) + net(P) - payments(P) + adjustments(P)
+checkpoint(P)  : balance_out(P) := agreed amount; nothing earlier is looked at
+```
+
+* `net(P)` is `net_owed_by_secondary`, unchanged.
+* **Payments rule.** `payments(P)` is the signed reduction of what the secondary owes:
+  `payments_ledger + payments_manual`. `payments_ledger` covers every approved,
+  non-split-parent `Transfers:Settlement` line filed under P, whatever its sign. Who
+  paid is decided by the account's payer (`payer_for_account`, as for spend): on an
+  account the primary pays for, a credit is the secondary paying the primary
+  (`+amount`, reduces the debt) and a debit is the primary paying the secondary
+  (`-|amount|`, increases it); on an account the secondary pays for the signs flip.
+  `payments_manual` is the month's `payment` entries (money that never shows in an
+  uploaded statement): `+amount` when `paid_by` is the secondary, `-amount` when it
+  is the primary. Recording a payment also marks the month's partner claims settled.
+* `adjustments(P)` is the signed sum of the month's `adjustment` entries.
+* **Checkpoint.** The owner records the balance both agreed at a point in time (for
+  example "as at the end of the month: 0, settled"). It is absolute: that month's
+  `balance_out` is the agreed amount, its `carried_in` is reported as 0, and nothing
+  earlier is read. Approvals, payments or adjustments added to that month afterwards
+  do not move it; instead `drift = net(P) now - net_at_checkpoint` (the net stored
+  when the checkpoint was recorded) lets the UI say "£x approved since the balance was
+  set". One checkpoint per month (`ux_settlement_checkpoint`); recording another
+  replaces it. Nothing is preset: the owner sets the first checkpoint after reviewing
+  the data.
+* **The walk.** `compute_balance` starts at the nearest checkpoint at or before P,
+  else the first month holding any transaction, claim or settlement entry, and steps
+  forward one calendar month at a time to P. A month without a `ledger_periods` row
+  counts as zero net and zero payments. Each month's net and ledger payments come from
+  one `compute_settlement` call, cached per request; the entries of the whole range are
+  read in one query. A month earlier than a checkpoint still reports its own walk, with
+  `before_checkpoint = true`: it is history and is not carried past the checkpoint.
+* **Edge cases.** Everything is keyed on `period_key`, not the calendar date: a
+  settlement transfer dated early in the next month (paying last month's debt) counts
+  in the month it is filed under, so it moves only the per-month view; the carried
+  balance ends up the same one month later. Payment and adjustment entries take their
+  month from `entry_date`. A negative `balance_out` means the primary owes the
+  secondary and carries forward the same way.
 
 **Snapshot and due date.** Closing a period upserts the summary into
-`settlement_snapshots` (the persisted settlement ledger). `settlement_due_date` is
+`settlement_snapshots` (the persisted settlement ledger), including the running balance
+at that moment: `carried_in`, `payments` (ledger plus manual), `adjustments` and
+`balance_out` (null on snapshots taken before these columns existed). A checkpoint set
+on a closed month changes the live balance, not the snapshot. `settlement_due_date` is
 `settlement.settlement_day_of_month` in the month after the period.
 
 ## 7. Split transactions

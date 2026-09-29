@@ -374,6 +374,85 @@ export interface SettlementOut {
   /** The figures recorded when the period was closed; null while it is open. */
   snapshot: SettlementSnapshot | null;
   lines: SettlementLine[];
+  /** The running balance: what was carried in, the month, payments, adjustments and what is outstanding. */
+  balance: SettlementBalance;
+  /** Payments, adjustments and the agreed balance recorded by hand against this month. */
+  entries: SettlementEntry[];
+  /** Approved Transfers:Settlement transactions in this month; `description` is the cleaned merchant name. */
+  ledger_payments: SettlementLedgerPayment[];
+}
+
+/**
+ * The running settlement balance for a month, all in "secondary owes primary"
+ * terms (positive = the secondary owes the primary, negative = the other way).
+ * `balance_out` = `carried_in` + `net` - (`payments_ledger` + `payments_manual`) + `adjustments`,
+ * unless the month has a checkpoint, when it is the checkpoint's amount.
+ */
+export interface SettlementBalance {
+  carried_in: Money;
+  net: Money;
+  payments_ledger: Money;
+  payments_manual: Money;
+  adjustments: Money;
+  balance_out: Money;
+  /** The month the balance was carried in from; the month itself when nothing came before it. */
+  from_period: string | null;
+  checkpoint: SettlementCheckpoint | null;
+  /** A later month has a checkpoint: this month is history and is not carried forward. */
+  before_checkpoint: boolean;
+  /** That later month (the first one with a set balance), when `before_checkpoint`. */
+  later_checkpoint_period?: string | null;
+  /** The set balance in an earlier month that `carried_in` starts from, if any. */
+  anchored_on?: { period_key: string; entry_date: string; amount: Money } | null;
+}
+
+export interface SettlementCheckpoint {
+  id: string;
+  /** The agreed balance at the end of the month (secondary-owes terms). */
+  amount: Money;
+  entry_date: string;
+  note: string | null;
+  /** The month's net when the balance was set. */
+  net_at_checkpoint: Money;
+  /** The month's net now less `net_at_checkpoint`: how far it has moved since (secondary-owes terms). */
+  drift: Money;
+  drifted: boolean;
+}
+
+export type SettlementEntryKind = 'payment' | 'adjustment' | 'checkpoint';
+
+export interface SettlementEntry {
+  id: string;
+  period_key: string;
+  kind: SettlementEntryKind;
+  entry_date: string;
+  /** Payment: positive, paid by `paid_by`. Adjustment: signed change to what the secondary owes. Checkpoint: the agreed balance. */
+  amount: Money;
+  paid_by: string | null;
+  note: string | null;
+  /** Checkpoints only: the month's net when the balance was set. */
+  net_at_checkpoint: Money | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface SettlementEntryCreate {
+  kind: SettlementEntryKind;
+  entry_date: string;
+  amount: Money;
+  /** Payments only: a 422 on an adjustment or checkpoint. */
+  paid_by?: string;
+  note?: string;
+}
+
+export interface SettlementLedgerPayment {
+  transaction_id: string;
+  date: string;
+  amount: Money;
+  account_id: string;
+  description: string;
+  /** Positive when the line takes money off what the secondary owes (the secondary paid), negative the other way. */
+  effect: Money;
 }
 
 export interface SettlementSnapshot {
@@ -385,6 +464,11 @@ export interface SettlementSnapshot {
   primary_personal_on_secondary_paid: Money;
   settlement_payments_received: Money;
   line_count: number;
+  /** The running balance at close; missing or null on snapshots taken before it existed. */
+  carried_in?: Money | null;
+  payments?: Money | null;
+  adjustments?: Money | null;
+  balance_out?: Money | null;
   snapshot_at: string | null;
 }
 
@@ -533,6 +617,33 @@ export interface SystemInfo {
     log: string | null;
     error: string | null;
   };
+  /** Database backups (pg_dump files on the server). */
+  backups: BackupsSummary;
+}
+
+/** How the server's 409 detail starts when the pre-update backup failed (and the update was not started). */
+export const BACKUP_BEFORE_UPDATE_FAILED = 'The backup before updating failed';
+
+/** Why a backup was taken: by the nightly schedule, from "Back up now", or just before an update. */
+export type BackupKind = 'nightly' | 'manual' | 'pre-update';
+
+export interface BackupItem {
+  /** settl-YYYYMMDD-HHMMSS-<kind>.dump */
+  name: string;
+  kind: BackupKind;
+  created_at: string;
+  bytes: number;
+}
+
+export interface BackupsSummary {
+  /** false: scheduled (nightly) backups are turned off on the server; manual ones still work. */
+  enabled: boolean;
+  count: number;
+  last: BackupItem | null;
+  /** true when there is no backup, or the newest is more than 36 hours old. */
+  stale: boolean;
+  /** The newest few, newest first. */
+  recent: BackupItem[];
 }
 
 export interface UpdateStarted {
@@ -1019,6 +1130,38 @@ async function request<T>(method: string, path: string, options: RequestOptions 
   return data as T;
 }
 
+/** A file download (GET) with the session header; errors are reported like `request`'s. */
+async function requestBlob(path: string): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  const session = readSession();
+  if (session?.token) headers.Authorization = `Bearer ${session.token}`;
+  let response: Response;
+  try {
+    response = await fetch(buildUrl(path), { method: 'GET', headers });
+  } catch {
+    throw new ApiError(0, null, 'Could not reach the server. Check your connection and try again.');
+  }
+  if (response.status === 401) {
+    writeSession(null);
+    unauthorizedHandler?.();
+    throw new ApiError(401, null, 'Your session has expired. Please sign in again.');
+  }
+  if (!response.ok) {
+    let detail: unknown;
+    try {
+      detail = ((await response.json()) as { detail?: unknown }).detail ?? null;
+    } catch {
+      detail = null;
+    }
+    throw new ApiError(
+      response.status,
+      detail,
+      describeDetail(detail) || `The download could not be completed (${response.status}). Try again.`,
+    );
+  }
+  return response.blob();
+}
+
 function looksLikeMarkup(text: string): boolean {
   return /^\s*</.test(text);
 }
@@ -1104,6 +1247,11 @@ export const api = {
   getSettlement: (periodKey: string) => request<SettlementOut>('GET', `/settlement/${enc(periodKey)}`),
   markSettled: (periodKey: string) =>
     request<MarkSettledResponse>('POST', `/settlement/${enc(periodKey)}/mark-settled`),
+  /** 201. 409 for a payment or adjustment in a closed period; a checkpoint is allowed there and replaces the month's one. Recording a payment settles the month's claims. 422 for more than two decimals. */
+  createSettlementEntry: (body: SettlementEntryCreate) =>
+    request<SettlementEntry>('POST', '/settlement/entries', { body }),
+  /** 204. 409 for a payment or adjustment in a closed period; a checkpoint may be removed there. */
+  deleteSettlementEntry: (id: string) => request<void>('DELETE', `/settlement/entries/${enc(id)}`),
 
   // Metrics
   getMetrics: (periodKey: string) => request<MetricsOut>('GET', `/metrics/${enc(periodKey)}`),
@@ -1125,8 +1273,20 @@ export const api = {
   getSystem: () => request<SystemInfo>('GET', '/system'),
   /** Same body as `getSystem`, after a fresh look at GitHub (bypasses the server's cache). */
   checkForUpdates: () => request<SystemInfo>('POST', '/system/check'),
-  /** 202 once started; 409 when an update is already running, 503 when the updater is unavailable. */
-  startUpdate: () => request<UpdateStarted>('POST', '/system/update'),
+  /**
+   * 202 once started. The server takes a pre-update backup first: 409 when that fails
+   * (`BACKUP_BEFORE_UPDATE_FAILED`; pass `skipBackup` to update without one) or when an
+   * update is already running; 503 when the updater is unavailable.
+   */
+  startUpdate: (skipBackup = false) =>
+    request<UpdateStarted>('POST', '/system/update', { query: { skip_backup: skipBackup || undefined } }),
+  /** Every backup, newest first. */
+  listBackups: () => request<BackupItem[]>('GET', '/system/backups'),
+  /** Takes a manual backup now (waits for one already running); 500 when pg_dump fails. */
+  createBackup: () => request<BackupItem>('POST', '/system/backups'),
+  /** The dump file itself, for saving. */
+  downloadBackup: (name: string) => requestBlob(`/system/backups/${enc(name)}`),
+  deleteBackup: (name: string) => request<void>('DELETE', `/system/backups/${enc(name)}`),
   /** 422 when `confirm` is not the scope's phrase (`RESET_PHRASES`); logins stay valid either way. */
   resetSystem: (body: ResetBody) => request<ResetOut>('POST', '/system/reset', { body }),
 
