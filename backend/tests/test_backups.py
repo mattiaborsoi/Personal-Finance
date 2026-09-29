@@ -25,7 +25,7 @@ from tests.test_system import _settings as _system_settings
 
 NOW = datetime(2026, 9, 29, 12, 0, 0, tzinfo=UTC)
 SECRET = "s3cr3t:p@ss/word"
-DB_URL = "postgresql://settl:s3cr3t%3Ap%40ss%2Fword@db.example:5433/ledger"
+DB_URL = "postgresql://settl:s3cr3t%3Ap%40ss%2Fword@dbhost:5433/ledger"
 
 
 def _settings(tmp_path: Path, **overrides) -> Settings:
@@ -101,7 +101,7 @@ def test_names_round_trip_and_reject_anything_else():
 def test_connection_details_come_from_the_url_and_the_password_only_via_pgpassword(monkeypatch):
     monkeypatch.setenv("PGSERVICE", "should-not-leak")
     conn, password = backups.pg_connection(DB_URL)
-    assert conn == {"PGHOST": "db.example", "PGPORT": "5433", "PGUSER": "settl", "PGDATABASE": "ledger"}
+    assert conn == {"PGHOST": "dbhost", "PGPORT": "5433", "PGUSER": "settl", "PGDATABASE": "ledger"}
     assert password == SECRET
     env = backups.pg_env("postgresql+psycopg://settl:pw@db:5432/ledger")
     assert env["PGPASSWORD"] == "pw" and env["PGHOST"] == "db" and "PGSERVICE" not in env
@@ -126,7 +126,7 @@ def test_create_backup_writes_a_complete_file_without_the_password_on_the_comman
     assert cmd[:2] == ["pg_dump", "-Fc"]
     assert Path(cmd[cmd.index("--file") + 1]).name.endswith(".partial")  # written under a temporary name
     assert SECRET not in " ".join(cmd) and env["PGPASSWORD"] == SECRET
-    assert env["PGDATABASE"] == "ledger" and env["PGHOST"] == "db.example"
+    assert env["PGDATABASE"] == "ledger" and env["PGHOST"] == "dbhost"
     assert SECRET not in caplog.text and "settl-20260929-120000-manual.dump (15 B)" in caplog.text
 
     # A second one in the same second gets the next second rather than overwriting.
