@@ -97,4 +97,12 @@ describe('categoryOptions', () => {
     expect(categoryLabel('Uncategorized')).toBe('Uncategorised');
     expect(categoryLabel('Groceries')).toBe('Groceries');
   });
+
+  it('reads a grouped name as "Group › Name"', () => {
+    expect(categoryLabel('Bills:Water')).toBe('Bills › Water');
+    expect(categoryLabel('Housing: Mortgage')).toBe('Housing › Mortgage');
+    expect(categoryLabel('Transport:Taxi:Night')).toBe('Transport › Taxi › Night');
+    // A leading colon is not a group.
+    expect(categoryLabel(':Odd')).toBe(':Odd');
+  });
 });

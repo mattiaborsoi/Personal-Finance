@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { PERIOD_CLOSED_MESSAGE } from '../api';
 import { ID_OCADO, ID_PART_A, ID_PART_B, ID_UBER, part, transaction } from '../test/fixtures';
-import { jsonResponse, mockFetch, renderWithProviders } from '../test/utils';
+import { categoryValue, claimTypeValue, jsonResponse, mockFetch, pickCategory, pickClaimType, renderWithProviders } from '../test/utils';
 import { ApprovalQueue } from './ApprovalQueue';
 
 const uber = {
@@ -53,7 +53,8 @@ describe('<ApprovalQueue />', () => {
     // containing block (relative) for its overflow clip to apply to them; the card never grows either.
     expect(screen.getByRole('table').parentElement).toHaveClass('relative', 'overflow-x-auto');
     expect(screen.getByRole('region', { name: 'Approval queue' })).toHaveClass('min-w-0');
-    expect((screen.getByLabelText('Category for Ocado') as HTMLSelectElement).labels?.[0]).toHaveClass('sr-only');
+    // The row controls are named with aria-label, so no visually hidden label can escape the clip.
+    expect(screen.getByRole('button', { name: 'Category for Ocado' })).toHaveAttribute('aria-label', 'Category for Ocado');
   });
 
   it('names every row control after its merchant for screen readers, keeping the visible label short', async () => {
@@ -72,8 +73,9 @@ describe('<ApprovalQueue />', () => {
     expect(screen.getByRole('checkbox', { name: 'Mark Ocado as a transfer' })).not.toBeChecked();
     expect(screen.getByRole('button', { name: 'Split Ocado' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Transfer' })).toBeInTheDocument();
-    // The category select carries its full name as a tooltip, since long names can be clipped.
-    expect(screen.getByLabelText('Category for Uber')).toHaveAttribute('title', 'Transport:Taxi');
+    // The category button carries its full name as a tooltip, since long names can be clipped.
+    expect(screen.getByLabelText('Category for Uber')).toHaveAttribute('title', 'Transport › Taxi');
+    expect(screen.getByRole('radiogroup', { name: 'Claim type for Uber' })).toBeInTheDocument();
   });
 
   it('offers no empty "Uncategorised" or "Not set" option that the backend would ignore', async () => {
@@ -85,16 +87,25 @@ describe('<ApprovalQueue />', () => {
     renderWithProviders(<ApprovalQueue period="2026-03" />);
     await screen.findByRole('button', { name: 'Ocado' });
 
-    const category = screen.getByLabelText('Category for Ocado') as HTMLSelectElement;
-    const options = Array.from(category.options).map((o) => o.value);
-    expect(options).not.toContain('');
-    expect(options).toContain('Uncategorized');
+    const user = userEvent.setup();
+    const category = screen.getByRole('button', { name: 'Category for Ocado' });
     // The literal backend value is what is selected, labelled in British English.
-    expect(category.value).toBe('Uncategorized');
-    expect(category.selectedOptions[0].textContent).toBe('Uncategorised');
+    expect(categoryValue(category)).toBe('Uncategorized');
+    expect(category).toHaveTextContent('Uncategorised');
+    await user.click(category);
+    const values = within(screen.getByRole('listbox', { name: 'Categories' }))
+      .getAllByRole('option')
+      .map((o) => o.dataset.value);
+    expect(values).not.toContain('');
+    expect(values).toContain('Uncategorized');
+    await user.keyboard('{Escape}');
 
-    const claim = screen.getByLabelText('Claim type for Ocado') as HTMLSelectElement;
-    expect(Array.from(claim.options).map((o) => o.value)).not.toContain('');
+    const claim = screen.getByRole('radiogroup', { name: 'Claim type for Ocado' });
+    const claims = within(claim)
+      .getAllByRole('radio')
+      .map((r) => r.dataset.value);
+    expect(claims).not.toContain('');
+    expect(claims).toHaveLength(5);
   });
 
   it('sends corrected fields with remember:true when a dropdown was changed', async () => {
@@ -110,8 +121,8 @@ describe('<ApprovalQueue />', () => {
     renderWithProviders(<ApprovalQueue period="2026-03" />);
     await screen.findByRole('button', { name: 'Ocado' });
 
-    await user.selectOptions(screen.getByLabelText('Category for Ocado'), 'Groceries');
-    await user.selectOptions(screen.getByLabelText('Claim type for Ocado'), 'shared_equal');
+    await pickCategory(user, screen.getByLabelText('Category for Ocado'), 'Groceries');
+    await pickClaimType(user, screen.getByLabelText('Claim type for Ocado'), 'shared_equal');
     await user.click(screen.getByRole('button', { name: 'Approve Ocado' }));
 
     await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true));
@@ -156,15 +167,15 @@ describe('<ApprovalQueue />', () => {
     renderWithProviders(<ApprovalQueue period="2026-03" />);
     await screen.findByRole('button', { name: 'Uber' });
 
-    await user.selectOptions(screen.getByLabelText('Category for Uber'), 'Dining');
-    await user.selectOptions(screen.getByLabelText('Claim type for Uber'), 'shared_equal');
+    await pickCategory(user, screen.getByLabelText('Category for Uber'), 'Dining');
+    await pickClaimType(user, screen.getByLabelText('Claim type for Uber'), 'shared_equal');
     await user.click(screen.getByRole('button', { name: 'Approve Uber' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(PERIOD_CLOSED_MESSAGE);
     expect(screen.getByRole('button', { name: 'Uber' })).toBeInTheDocument();
     // The restored row still shows what the user chose, not the original classification.
-    expect((screen.getByLabelText('Category for Uber') as HTMLSelectElement).value).toBe('Dining');
-    expect((screen.getByLabelText('Claim type for Uber') as HTMLSelectElement).value).toBe('shared_equal');
+    expect(categoryValue(screen.getByLabelText('Category for Uber'))).toBe('Dining');
+    expect(claimTypeValue(screen.getByLabelText('Claim type for Uber'))).toBe('shared_equal');
   });
 
   it('marks a line as a transfer with the same PATCH as the transactions page and keeps it in the queue', async () => {
@@ -182,7 +193,7 @@ describe('<ApprovalQueue />', () => {
     renderWithProviders(<ApprovalQueue period="2026-03" onChanged={onChanged} />);
     await screen.findByRole('button', { name: 'Uber' });
     // An unsaved category choice must survive the toggle.
-    await user.selectOptions(screen.getByLabelText('Category for Uber'), 'Dining');
+    await pickCategory(user, screen.getByLabelText('Category for Uber'), 'Dining');
     await user.click(screen.getByLabelText('Mark Uber as a transfer'));
 
     await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
@@ -196,8 +207,8 @@ describe('<ApprovalQueue />', () => {
     expect(screen.getByRole('button', { name: 'Uber' })).toBeInTheDocument();
     expect(screen.getByText('2 transactions pending review')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Split Uber' })).toBeDisabled();
-    expect((screen.getByLabelText('Claim type for Uber') as HTMLSelectElement).value).toBe('personal');
-    expect((screen.getByLabelText('Category for Uber') as HTMLSelectElement).value).toBe('Dining');
+    expect(claimTypeValue(screen.getByLabelText('Claim type for Uber'))).toBe('personal');
+    expect(categoryValue(screen.getByLabelText('Category for Uber'))).toBe('Dining');
     expect(onChanged).toHaveBeenCalledTimes(1);
   });
 
@@ -285,18 +296,18 @@ describe('<ApprovalQueue />', () => {
     await screen.findByRole('button', { name: 'Ocado' });
 
     // The row's unsaved dropdown choices become the first part's defaults.
-    await user.selectOptions(screen.getByLabelText('Category for Ocado'), 'Groceries');
-    await user.selectOptions(screen.getByLabelText('Claim type for Ocado'), 'shared_equal');
+    await pickCategory(user, screen.getByLabelText('Category for Ocado'), 'Groceries');
+    await pickClaimType(user, screen.getByLabelText('Claim type for Ocado'), 'shared_equal');
     await user.click(within(rowFor('Ocado')).getByRole('button', { name: 'Split Ocado' }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Split Ocado' });
-    expect((within(dialog).getByLabelText('Category for part 1') as HTMLSelectElement).value).toBe('Groceries');
-    expect((within(dialog).getByLabelText('Claim type for part 1') as HTMLSelectElement).value).toBe('shared_equal');
+    expect(categoryValue(within(dialog).getByLabelText('Category for part 1'))).toBe('Groceries');
+    expect(claimTypeValue(within(dialog).getByLabelText('Claim type for part 1'))).toBe('shared_equal');
 
     await user.clear(within(dialog).getByLabelText('Amount for part 1'));
     await user.type(within(dialog).getByLabelText('Amount for part 1'), '30');
     await user.type(within(dialog).getByLabelText('Amount for part 2'), '15.90');
-    await user.selectOptions(within(dialog).getByLabelText('Category for part 2'), 'Dining');
+    await pickCategory(user, within(dialog).getByLabelText('Category for part 2'), 'Dining');
     await user.click(within(dialog).getByRole('button', { name: 'Save split' }));
 
     await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));

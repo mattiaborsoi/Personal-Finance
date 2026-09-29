@@ -71,7 +71,8 @@ def update_household(
 def _categories(db: Session, base: AppConfig) -> CategoriesOut:
     categories, stored = site_settings.load_categories(db, base)
     rules, _ = site_settings.load_rules(db, base)
-    return site_settings.categories_out(categories, stored, site_settings.category_usage(db, rules))
+    usage = site_settings.category_usage(db, rules)
+    return site_settings.categories_out(categories, stored, usage, base.category_emojis)
 
 
 @router.get("/categories", response_model=CategoriesOut)

@@ -1,5 +1,7 @@
+import { UNCATEGORIZED } from '../api';
 import { useConfig } from '../config/ConfigContext';
-import { accountLabel } from '../lib/format';
+import { categoryEmoji } from '../lib/categories';
+import { accountLabel, categoryLabel } from '../lib/format';
 import { toNumber } from '../lib/money';
 import { cx, tableBase, tdBase, thBase } from '../lib/ui';
 import type { Breakdown } from '../lib/views';
@@ -72,11 +74,19 @@ export function CategoryBreakdown({ breakdown, accentClass = 'bg-brand' }: Props
       ) : (
         <ul className="space-y-3">
           {rows.map((row) => {
+            const emoji = row.category ? categoryEmoji(row.category, config.category_emojis) : '';
             const width = Math.max(2, Math.round((Math.abs(toNumber(row.amount)) / max) * 100));
             return (
               <li key={row.category}>
                 <div className="flex items-center justify-between gap-3 text-sm">
-                  <span className="truncate text-ink">{row.category || 'Uncategorised'}</span>
+                  <span className="flex min-w-0 items-center gap-1.5 text-ink">
+                    {emoji && (
+                      <span className="shrink-0" aria-hidden="true">
+                        {emoji}
+                      </span>
+                    )}
+                    <span className="truncate">{categoryLabel(row.category || UNCATEGORIZED)}</span>
+                  </span>
                   <MoneyText value={row.amount} className="shrink-0 font-semibold" />
                 </div>
                 {/* Thin bar with a 4px rounded data-end, on a track one step off the surface. */}

@@ -29,13 +29,6 @@ export const inputInvalid = 'border-critical hover:border-critical';
 export const selectCompact = `block h-8 cursor-pointer py-1 pl-2.5 pr-7 text-xs ${controlBase}`;
 /** 32px text input for editing a value in place inside a row (a merchant name); set its width explicitly. */
 export const inputCompact = `block h-8 px-2.5 py-1 text-sm ${controlBase}`;
-/**
- * Width for a row's category select: as wide as its longest option (so
- * "Subscriptions:Software" is not clipped), never narrower than the claim-type
- * select's neighbour column looks right beside, and capped so one very long
- * name cannot push the table out; pair it with a `title` carrying the full name.
- */
-export const selectCategory = 'w-auto min-w-[11rem] max-w-[18rem]';
 /** 44px inputs for the mobile-first claim form. */
 export const inputTall = 'min-h-[44px] text-base';
 export const checkboxBase = `h-4 w-4 cursor-pointer rounded border-control bg-surface accent-brand ${focusRing}`;

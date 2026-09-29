@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ID_OCADO, ID_PART_A, ID_PART_B, part, transaction } from '../test/fixtures';
-import { jsonResponse, mockFetch, renderWithProviders } from '../test/utils';
+import { categoryValue, claimTypeValue, jsonResponse, mockFetch, pickCategory, pickClaimType, renderWithProviders } from '../test/utils';
 import { SplitDialog } from './SplitDialog';
 
 const tx = transaction({
@@ -37,6 +37,24 @@ function saveButton(): HTMLElement {
 }
 
 describe('<SplitDialog />', () => {
+  it('closes only the category menu on Escape, not the dialog around it', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    mockFetch(() => undefined);
+    renderWithProviders(<SplitDialog transaction={tx} onClose={onClose} onSaved={vi.fn()} />);
+
+    const picker = screen.getByRole('button', { name: 'Category for part 2' });
+    await user.click(picker);
+    expect(screen.getByRole('combobox', { name: 'Search categories' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(picker).toHaveFocus();
+    expect(onClose).not.toHaveBeenCalled();
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('opens with the total in part 1, focus on its amount, and Save disabled while part 2 is empty', () => {
     mockFetch(() => undefined);
     renderWithProviders(<SplitDialog transaction={tx} onClose={vi.fn()} onSaved={vi.fn()} />);
@@ -48,10 +66,10 @@ describe('<SplitDialog />', () => {
     expect(amountFor(1)).toHaveFocus();
     expect(amountFor(1)).toHaveValue('45.90');
     expect(amountFor(2)).toHaveValue('');
-    expect((screen.getByLabelText('Category for part 1') as HTMLSelectElement).value).toBe('Groceries');
-    expect((screen.getByLabelText('Claim type for part 1') as HTMLSelectElement).value).toBe('shared_proportional');
-    expect((screen.getByLabelText('Category for part 2') as HTMLSelectElement).value).toBe('Groceries');
-    expect((screen.getByLabelText('Claim type for part 2') as HTMLSelectElement).value).toBe('personal');
+    expect(categoryValue(screen.getByLabelText('Category for part 1'))).toBe('Groceries');
+    expect(claimTypeValue(screen.getByLabelText('Claim type for part 1'))).toBe('shared_proportional');
+    expect(categoryValue(screen.getByLabelText('Category for part 2'))).toBe('Groceries');
+    expect(claimTypeValue(screen.getByLabelText('Claim type for part 2'))).toBe('personal');
     expect(remainderLine()).toHaveTextContent('£0.00 left to allocate');
     expect(saveButton()).toBeDisabled();
     screen.getAllByRole('button', { name: /^Remove part/ }).forEach((b) => expect(b).toBeDisabled());
@@ -130,8 +148,8 @@ describe('<SplitDialog />', () => {
     await user.clear(amountFor(1));
     await user.type(amountFor(1), '30');
     await user.type(amountFor(2), '15.9');
-    await user.selectOptions(screen.getByLabelText('Category for part 2'), 'Dining');
-    await user.selectOptions(screen.getByLabelText('Claim type for part 2'), 'secondary_personal');
+    await pickCategory(user, screen.getByLabelText('Category for part 2'), 'Dining');
+    await pickClaimType(user, screen.getByLabelText('Claim type for part 2'), 'secondary_personal');
     await user.click(saveButton());
 
     await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
@@ -222,8 +240,8 @@ describe('<SplitDialog />', () => {
 
     expect(amountFor(1)).toHaveValue('30.00');
     expect(amountFor(2)).toHaveValue('15.90');
-    expect((screen.getByLabelText('Category for part 2') as HTMLSelectElement).value).toBe('Dining');
-    expect((screen.getByLabelText('Claim type for part 2') as HTMLSelectElement).value).toBe('personal');
+    expect(categoryValue(screen.getByLabelText('Category for part 2'))).toBe('Dining');
+    expect(claimTypeValue(screen.getByLabelText('Claim type for part 2'))).toBe('personal');
     expect(remainderLine()).toHaveTextContent('£0.00 left to allocate');
     expect(saveButton()).toBeEnabled();
   });
@@ -239,9 +257,9 @@ describe('<SplitDialog />', () => {
       />,
     );
 
-    expect((screen.getByLabelText('Category for part 1') as HTMLSelectElement).value).toBe('Dining');
-    expect((screen.getByLabelText('Claim type for part 1') as HTMLSelectElement).value).toBe('shared_equal');
-    expect((screen.getByLabelText('Category for part 2') as HTMLSelectElement).value).toBe('Dining');
+    expect(categoryValue(screen.getByLabelText('Category for part 1'))).toBe('Dining');
+    expect(claimTypeValue(screen.getByLabelText('Claim type for part 1'))).toBe('shared_equal');
+    expect(categoryValue(screen.getByLabelText('Category for part 2'))).toBe('Dining');
   });
 
   it('adds and removes parts between two and twenty', async () => {

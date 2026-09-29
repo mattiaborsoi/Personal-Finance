@@ -7,7 +7,8 @@ table:
 * ``household``: the two people's display names and incomes, how shared costs are
   split, the rounding, the settlement day and the currency;
 * ``categories``: the taxonomy offered to the classifier and the review queue, in
-  the order the menus show it;
+  the order the menus show it, and the emoji chosen for each category group (the
+  part of a name before the first ``:``) where it differs from the built-in default;
 * ``rules``: the deterministic rules tried before any AI call, the card-payment
   patterns that feed the transfer buffer, and the matching window and tolerance.
 
@@ -48,6 +49,7 @@ from app.config import (
     TransfersSection,
     UserConfig,
     UsersSection,
+    category_group,
 )
 from app.models import AppSetting, MerchantMemory, Transaction
 
@@ -65,6 +67,7 @@ MAX_CATEGORY_LENGTH = 128  # transactions.category is VARCHAR(128)
 MAX_MERCHANT_LENGTH = 255  # transactions.cleaned_merchant is VARCHAR(255)
 MAX_SUBCATEGORY_LENGTH = 128
 MAX_PATTERN_LENGTH = 512
+MAX_EMOJI_LENGTH = 8
 
 
 class SiteSettingsError(ValueError):
@@ -128,6 +131,9 @@ class Household(BaseModel):
 
 class Categories(BaseModel):
     categories: list[str]
+    emojis: dict[str, str] = Field(default_factory=dict)
+    """Group -> emoji saved in the app, over :attr:`AppConfig.category_emojis`; ``""``
+    means "no emoji" and hides a default. Only groups in ``categories`` are kept."""
 
 
 class Rule(BaseModel):
@@ -175,9 +181,12 @@ class HouseholdUpdate(BaseModel):
 
 
 class CategoriesUpdate(BaseModel):
-    """``PUT /settings/categories``: the whole list, in the order the menus should show it."""
+    """``PUT /settings/categories``: the whole list, in the order the menus should show it,
+    and/or the group emojis. A field left out keeps its saved value; ``emojis`` given
+    replaces the saved map entirely (``{}``: the defaults apply again)."""
 
-    categories: list[str]
+    categories: list[str] | None = None
+    emojis: dict[str, str] | None = None
 
 
 class CategoryRename(BaseModel):
@@ -262,6 +271,12 @@ class CategoryOut(BaseModel):
 
 class CategoriesOut(BaseModel):
     categories: list[CategoryOut]
+    emojis: dict[str, str]
+    """The effective group -> emoji map (saved values over the defaults) for the groups
+    in the list; ``""`` marks a group whose default emoji was removed."""
+    default_emojis: dict[str, str] = Field(default_factory=dict)
+    """The built-in (or ``config.yaml``) emoji of each group in the list that has one,
+    so the editor can show it and send only real overrides."""
     stored: bool
 
 
@@ -539,8 +554,17 @@ def apply_household(config: AppConfig, household: Household) -> AppConfig:
     return config.model_copy(update={"users": users, "settlement": settlement, "app": app})
 
 
+def _check_stored_categories(doc: Categories) -> Categories:
+    """A stored document, normalised; emojis for groups no longer listed (or no longer
+    valid) are dropped rather than failing the whole document."""
+    names = normalise_categories(doc.categories).categories
+    groups = _groups(names)
+    emojis = {group: emoji for group, emoji in doc.emojis.items() if group in groups and _valid_emoji(emoji)}
+    return Categories(categories=names, emojis=emojis)
+
+
 def load_categories(db: Session, config: AppConfig) -> tuple[Categories, bool]:
-    return _load(db, CATEGORIES_KEY, categories_defaults(config), lambda doc: normalise_categories(doc.categories))
+    return _load(db, CATEGORIES_KEY, categories_defaults(config), _check_stored_categories)
 
 
 def save_categories(db: Session, categories: Categories) -> None:
@@ -551,7 +575,8 @@ def apply_categories(config: AppConfig, categories: Categories) -> AppConfig:
     names = list(categories.categories)
     if UNCATEGORIZED not in names:
         names.append(UNCATEGORIZED)
-    return config.model_copy(update={"categories": names})
+    emojis = effective_emojis(Categories(categories=names, emojis=categories.emojis), config.category_emojis)
+    return config.model_copy(update={"categories": names, "category_emojis": emojis})
 
 
 def load_rules(db: Session, config: AppConfig) -> tuple[Rules, bool]:
@@ -657,11 +682,70 @@ def category_usage(db: Session, rules: Rules) -> dict[str, CategoryUsage]:
     return usage
 
 
-def categories_out(categories: Categories, stored: bool, usage: dict[str, CategoryUsage]) -> CategoriesOut:
+def _groups(names: list[str]) -> list[str]:
+    """The category groups of ``names``, each once, in menu order."""
+    return list(dict.fromkeys(category_group(name) for name in names))
+
+
+def _valid_emoji(value: str) -> bool:
+    """``""`` (no emoji) or 1 to 8 characters that are not all letters or digits."""
+    if value == "":
+        return True
+    return len(value) <= MAX_EMOJI_LENGTH and value == value.strip() and not value.isalnum()
+
+
+def effective_emojis(categories: Categories, defaults: dict[str, str]) -> dict[str, str]:
+    """Group -> emoji for the groups in ``categories``: the saved value, else the default.
+
+    ``""`` (saved to hide a default) is kept so the editor can tell "removed" from
+    "never had one"; groups with neither a saved value nor a default are left out.
+    """
+    out: dict[str, str] = {}
+    for group in _groups(categories.categories):
+        value = categories.emojis[group] if group in categories.emojis else defaults.get(group)
+        if value is not None:
+            out[group] = value
+    return out
+
+
+def check_emojis(emojis: dict[str, str], names: list[str]) -> dict[str, str]:
+    """The submitted group -> emoji map, keys spelt as the groups of ``names`` (matched
+    ignoring case), values trimmed; raise :class:`SiteSettingsError` naming the group."""
+    groups = _groups(names)
+    out: dict[str, str] = {}
+    for raw_group, raw_value in emojis.items():
+        wanted = (raw_group or "").strip()
+        group = wanted if wanted in groups else next((g for g in groups if g.lower() == wanted.lower()), None)
+        if group is None:
+            raise SiteSettingsError(f"emoji for {wanted!r}: {wanted!r} is not a category group")
+        if group in out:
+            raise SiteSettingsError(f"emoji for {group!r} is given twice")
+        value = raw_value.strip()
+        if raw_value and not value:
+            raise SiteSettingsError(f"emoji for {group!r} must not be blank (send \"\" for no emoji)")
+        if not _valid_emoji(value):
+            raise SiteSettingsError(
+                f"emoji for {group!r} must be an emoji or a short symbol "
+                f"(1 to {MAX_EMOJI_LENGTH} characters, not only letters or digits)"
+            )
+        out[group] = value
+    return out
+
+
+def _prune_emojis(emojis: dict[str, str], names: list[str]) -> dict[str, str]:
+    groups = set(_groups(names))
+    return {group: emoji for group, emoji in emojis.items() if group in groups}
+
+
+def categories_out(
+    categories: Categories, stored: bool, usage: dict[str, CategoryUsage], default_emojis: dict[str, str]
+) -> CategoriesOut:
     return CategoriesOut(
         categories=[
             CategoryOut(name=name, in_use=usage.get(name.lower(), CategoryUsage())) for name in categories.categories
         ],
+        emojis=effective_emojis(categories, default_emojis),
+        default_emojis={g: default_emojis[g] for g in _groups(categories.categories) if default_emojis.get(g)},
         stored=stored,
     )
 
@@ -678,9 +762,15 @@ def _usage_sentence(usage: CategoryUsage) -> str:
 
 
 def update_categories(db: Session, base: AppConfig, effective: AppConfig, body: CategoriesUpdate) -> Categories:
-    """Replace the taxonomy (adds, removals, reordering); a removal still in use is refused."""
+    """Replace the taxonomy (adds, removals, reordering) and/or the group emojis; a
+    removal still in use is refused. Emojis of groups no longer listed are dropped."""
     current, _ = load_categories(db, base)
-    proposed = normalise_categories(body.categories)
+    names = normalise_categories(body.categories).categories if body.categories is not None else current.categories
+    if body.emojis is None:
+        emojis = _prune_emojis(current.emojis, names)
+    else:
+        emojis = check_emojis(body.emojis, names)
+    proposed = Categories(categories=names, emojis=emojis)
     rules, _ = load_rules(db, base)
     usage = category_usage(db, rules)
     kept = {name.lower() for name in proposed.categories}
@@ -715,7 +805,16 @@ def rename_category(db: Session, base: AppConfig, effective: AppConfig, body: Ca
         clash = next((name for name in current.categories if name.lower() == target.lower()), None)
         if clash is not None:
             raise SiteSettingsConflict(f"category {clash!r} already exists")
-    proposed = normalise_categories([target if name == match else name for name in current.categories])
+    names = normalise_categories([target if name == match else name for name in current.categories]).categories
+    emojis = dict(current.emojis)
+    old_group, new_group = category_group(match), category_group(target)
+    old_groups, new_groups = set(_groups(current.categories)), set(_groups(names))
+    if old_group not in new_groups and new_group not in old_groups:
+        # The whole group was renamed (its only category): its emoji goes with it.
+        carried = effective_emojis(current, base.category_emojis).get(old_group)
+        if carried is not None:
+            emojis[new_group] = carried
+    proposed = Categories(categories=names, emojis=_prune_emojis(emojis, names))
     validate_full(apply_categories(effective, proposed))
 
     for model in (Transaction, MerchantMemory):

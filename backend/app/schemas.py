@@ -489,3 +489,17 @@ class HealthOut(BaseModel):
 
     status: str
     database: str
+
+
+class CategoryCount(BaseModel):
+    category: str
+    count: int
+
+
+class CategorySuggestionsOut(BaseModel):
+    """``GET /categories/suggestions``: what the category picker offers first."""
+
+    merchant: list[CategoryCount]
+    """Categories this merchant was filed under before, most used first."""
+    frequent: list[CategoryCount]
+    """The most used categories over the last 12 months, most used first."""

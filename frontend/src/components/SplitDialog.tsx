@@ -1,9 +1,8 @@
 import { CircleAlert, CircleCheck, Plus, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import { useId, useRef, useState, type FormEvent } from 'react';
 import { api, editErrorMessage, UNCATEGORIZED, type ClaimType, type SplitPartInput, type TransactionOut } from '../api';
-import { useConfig, useCurrency, useNames } from '../config/ConfigContext';
+import { useCurrency } from '../config/ConfigContext';
 import { formatDate } from '../lib/dates';
-import { categoryLabel, categoryOptions, claimTypeLabel } from '../lib/format';
 import { formatMoney } from '../lib/money';
 import { formatPence, magnitude, parseAmountPence, toPence } from '../lib/splits';
 import {
@@ -18,8 +17,9 @@ import {
   eyebrow,
   inputBase,
   inputInvalid,
-  selectBase,
 } from '../lib/ui';
+import { CategoryPicker } from './CategoryPicker';
+import { ClaimTypeControl } from './ClaimTypeControl';
 import { ErrorMessage } from './ErrorMessage';
 import { Modal } from './Modal';
 import { MoneyText } from './MoneyText';
@@ -85,8 +85,6 @@ function initialRows(tx: TransactionOut, defaults: SplitDefaults | undefined): R
  * button only enables once the parts add up to the total exactly.
  */
 export function SplitDialog({ transaction: tx, defaults, onClose, onSaved }: Props) {
-  const config = useConfig();
-  const names = useNames();
   const symbol = useCurrency();
   const firstAmountRef = useRef<HTMLInputElement>(null);
   const idBase = useId();
@@ -256,32 +254,28 @@ export function SplitDialog({ transaction: tx, defaults, onClose, onSaved }: Pro
                       </button>
                     )}
                   </div>
-                  <select
-                    className={cx(selectBase, 'col-span-2 sm:col-span-1')}
-                    value={row.category}
-                    aria-label={`Category for part ${n}`}
-                    disabled={saving}
-                    onChange={(e) => updateRow(row.key, { category: e.target.value, subcategory: null })}
-                  >
-                    {categoryOptions(config.categories, row.category).map((c) => (
-                      <option key={c} value={c}>
-                        {categoryLabel(c)}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className={cx(selectBase, 'col-span-2 sm:col-span-1')}
-                    value={row.claim_type}
-                    aria-label={`Claim type for part ${n}`}
-                    disabled={saving}
-                    onChange={(e) => updateRow(row.key, { claim_type: e.target.value as ClaimType })}
-                  >
-                    {config.claim_types.map((ct) => (
-                      <option key={ct} value={ct}>
-                        {claimTypeLabel(ct, names)}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="col-span-2 min-w-0 sm:col-span-1">
+                    <CategoryPicker
+                      size="base"
+                      label={`Category for part ${n}`}
+                      merchant={merchant}
+                      className="w-full"
+                      value={row.category}
+                      disabled={saving}
+                      onChange={(next) => updateRow(row.key, { category: next, subcategory: null })}
+                    />
+                  </div>
+                  <div className="col-span-2 min-w-0 sm:col-span-1">
+                    <ClaimTypeControl
+                      size="base"
+                      labels="always"
+                      label={`Claim type for part ${n}`}
+                      className="w-full"
+                      value={row.claim_type}
+                      disabled={saving}
+                      onChange={(next) => updateRow(row.key, { claim_type: next })}
+                    />
+                  </div>
                 </li>
               );
             })}

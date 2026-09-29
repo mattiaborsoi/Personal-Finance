@@ -29,10 +29,11 @@ the login endpoint answers **429** (with `Retry-After`) for 1 minute, doubling o
   "split": { "strategy", "primary_ratio", "secondary_ratio", "rounding_decimals", "settlement_day_of_month" },
   "accounts": [ {"id","institution","label","account_type","owner","identifier_last4","default_claim_type","billed_to","is_active"} ],
   "categories": ["Bills:Water", "..."],
+  "category_emojis": { "Bills": "🧾", "Groceries": "🛒", "...": "..." },
   "claim_types": ["personal","shared_proportional","shared_equal","secondary_personal","primary_personal"]
 }
 ```
-`label` is the optional display name set under Settings → Accounts (`null` when unset; the UI then shows institution and account type). `billed_to` here is the resolved payer, never `null`: the account's own `billed_to`, else the primary user for a `credit_supplementary` card, else the owner (unlike `AccountOut.billed_to`, which is `null` when unset). Archived accounts are included with `is_active: false`.
+`label` is the optional display name set under Settings → Accounts (`null` when unset; the UI then shows institution and account type). `billed_to` here is the resolved payer, never `null`: the account's own `billed_to`, else the primary user for a `credit_supplementary` card, else the owner (unlike `AccountOut.billed_to`, which is `null` when unset). Archived accounts are included with `is_active: false`. `category_emojis` maps each category group (the part of a name before the first `:`; an ungrouped name is its own group) to its emoji: the effective map of Settings → Categories, only for groups in `categories`, and leaving out groups without one.
 
 ## Accounts (Settings → Accounts)
 
@@ -86,11 +87,28 @@ Primary login only. Each is one `app_settings` document; `config.yaml` (or the b
 ```
 `PUT /api/settings/household` body: any subset of the above without `id`s, ratios or `stored` (nested `users.primary` / `users.secondary` fields are merged) → the same body. The user `id`s come from `config.yaml` (or the built-in defaults) and never change. **422** for an empty or over-long (64) display name, a negative income, a `split_strategy` other than `salary_proportional` / `equal_50_50`, `salary_proportional` with no combined income, `rounding_decimals` outside 0–6, `settlement_day_of_month` outside 1–28, a `base_currency` that is not three letters or a `currency_symbol` that is not 1 to 3 characters.
 
-`GET /api/settings/categories` → `{ "categories": [ {name, in_use: {transactions, memory, rules}} ], "stored" }` in menu order; `in_use` counts matches ignoring case, split parts included.
+`GET /api/settings/categories` →
+```json
+{
+  "categories": [ {"name": "Bills:Water", "in_use": {"transactions": 0, "memory": 0, "rules": 1}} ],
+  "emojis": { "Bills": "🧾", "Coffee": "", "Pets": "🐾" },
+  "stored": false
+}
+```
+`categories` is in menu order; `in_use` counts matches ignoring case, split parts included. `emojis` is the effective group → emoji map (a group is the part of a name before the first `:`; `Groceries` is its own group): the saved value, else the built-in default, only for groups in the list. `""` marks a group whose default was removed; a group with neither a saved value nor a default is absent. The defaults: Bills 🧾, Housing 🏠, Insurance 🛡️, Groceries 🛒, Dining 🍽️, Coffee ☕, Entertainment 🎬, Subscriptions 🔁, Health 🩺, Transport 🚆, Travel ✈️, Shopping 🛍️, Personal 💆, Education 🎓, Income 💷, Fees 🏦, Cash 💵, Transfers 🔄, Uncategorized ❔ (`category_emojis` in `config.yaml` replaces them).
 
-`PUT /api/settings/categories` `{ "categories": ["Bills:Water", "..."] }` → the same body. Replaces the list (adding, removing, reordering). **422** for a blank, over-long (128) or repeated name; **409** `category 'X' is still used by N transactions, N remembered merchants and N rules` when a removed category is in use.
+`PUT /api/settings/categories` `{ "categories"?: ["Bills:Water", "..."], "emojis"?: {"Pets": "🐾", "Coffee": ""} }` → the same body. `categories` replaces the list (adding, removing, reordering); `emojis` replaces the saved map (`{}`: no custom emojis, the defaults apply; `""`: no emoji for that group, even over a default). A field left out keeps its saved value. Group keys are matched ignoring case against the groups of the submitted list (or the current one when `categories` is left out) and values are trimmed. Emojis of groups no longer in the list are dropped, on save and on read. **422** for a blank, over-long (128) or repeated name; **422** naming the group (`emoji for 'Pets': ...`) for a key that is not a group of the list, a key given twice, or a value that is not `""` or 1 to 8 characters that are not all letters or digits (an emoji or a short symbol; whitespace alone is refused); **409** `category 'X' is still used by N transactions, N remembered merchants and N rules` when a removed category is in use.
 
-`POST /api/settings/categories/rename` `{ "from": "Food:Takeaway", "to": "Food:Delivery" }` → the categories body. Renames it in the list, on every transaction, in merchant memory and in the rules, in one transaction. **404** when `from` is not in the list; **409** for `Uncategorized` or a `to` that already exists; **422** for blank or over-long names.
+`POST /api/settings/categories/rename` `{ "from": "Food:Takeaway", "to": "Food:Delivery" }` → the categories body. Renames it in the list, on every transaction, in merchant memory and in the rules, in one transaction. When the rename moves a group's only category into a group not listed before (`Education` → `Learning`), the group's emoji goes with it. **404** when `from` is not in the list; **409** for `Uncategorized` or a `to` that already exists; **422** for blank or over-long names.
+
+`GET /api/categories/suggestions?merchant=Corner%20Cafe&limit=3` (primary only) → what the category picker offers first:
+```json
+{
+  "merchant": [ {"category": "Dining", "count": 4} ],
+  "frequent": [ {"category": "Groceries", "count": 31} ]
+}
+```
+`merchant`: the categories this merchant was filed under before, from approved transactions (`auto_approved` or `manual_approved`) whose `cleaned_merchant` matches ignoring case and surrounding spaces; split parents are skipped and their parts counted. A merchant-memory entry whose `normalized_merchant` matches adds its category with a count of at least 1. Ranked by count, then by the most recent use (transaction date or memory update). `frequent`: the categories of approved transactions (split parts instead of parents) dated within the last 12 months, most used first. Both leave out `Uncategorized` and categories no longer in the taxonomy and hold at most `limit` (1–10, default 3) items. **422** when `merchant` is missing or blank or `limit` is out of range; **403** for the secondary user.
 
 `GET /api/settings/rules` → `{ "rules": [ {pattern, category, claim_type, merchant, subcategory, is_internal_transfer, transfer_to_account} ], "payment_patterns": ["..."], "match_window_days": 7, "amount_tolerance": "0.01", "stored" }`; rules are tried in list order, first match wins.
 

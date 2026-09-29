@@ -1,4 +1,5 @@
-import { render, type RenderResult } from '@testing-library/react';
+import { render, screen, type RenderResult } from '@testing-library/react';
+import type { UserEvent } from '@testing-library/user-event';
 import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { vi } from 'vitest';
@@ -100,14 +101,19 @@ export const secondarySession: Session = {
 interface Options {
   session?: Session | null;
   route?: string;
+  /** Replaces `fixtureConfig`, e.g. to give the category groups emojis. */
+  config?: AppConfig;
 }
 
-export function renderWithProviders(ui: ReactElement, { session = primarySession, route = '/' }: Options = {}): RenderResult {
+export function renderWithProviders(
+  ui: ReactElement,
+  { session = primarySession, route = '/', config = fixtureConfig }: Options = {},
+): RenderResult {
   writeSession(session);
   return render(
     <MemoryRouter initialEntries={[route]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <AuthProvider initialSession={session}>
-        <ConfigContext.Provider value={fixtureConfig}>{ui}</ConfigContext.Provider>
+        <ConfigContext.Provider value={config}>{ui}</ConfigContext.Provider>
       </AuthProvider>
     </MemoryRouter>,
   );
@@ -155,4 +161,37 @@ export function mockFetch(handler: RouteHandler): { calls: RecordedCall[]; fetch
   });
   vi.stubGlobal('fetch', fetchMock);
   return { calls, fetch: fetchMock };
+}
+
+/** A control by its accessible name, or the element itself. */
+function control(target: string | HTMLElement, role: string): HTMLElement {
+  return typeof target === 'string' ? screen.getByRole(role, { name: target }) : target;
+}
+
+/** Opens a category picker (by its name or element) and clicks the option for `category` (the stored name, e.g. "Bills:Water"). */
+export async function pickCategory(user: UserEvent, target: string | HTMLElement, category: string): Promise<void> {
+  await user.click(control(target, 'button'));
+  const listbox = await screen.findByRole('listbox', { name: 'Categories' });
+  const option = Array.from(listbox.querySelectorAll<HTMLElement>('[role="option"][data-kind="option"]')).find(
+    (o) => o.dataset.value === category,
+  );
+  if (!option) throw new Error(`No option for ${category}`);
+  await user.click(option);
+}
+
+/** The stored category a picker shows. */
+export function categoryValue(target: string | HTMLElement): string {
+  return (control(target, 'button') as HTMLButtonElement).value;
+}
+
+/** Clicks the segment for `claimType` in a claim-type radio group (by its name or element). */
+export async function pickClaimType(user: UserEvent, target: string | HTMLElement, claimType: string): Promise<void> {
+  const radio = control(target, 'radiogroup').querySelector<HTMLElement>(`[role="radio"][data-value="${claimType}"]`);
+  if (!radio) throw new Error(`No segment for ${claimType}`);
+  await user.click(radio);
+}
+
+/** The claim type a radio group has checked, or "" when none is. */
+export function claimTypeValue(target: string | HTMLElement): string {
+  return control(target, 'radiogroup').querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')?.dataset.value ?? '';
 }

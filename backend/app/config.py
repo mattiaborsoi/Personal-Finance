@@ -84,6 +84,31 @@ DEFAULT_CATEGORIES: list[str] = [
     "Uncategorized",
 ]
 
+# The emoji shown next to each category group (the part of a name before the first
+# ':'; an ungrouped name is its own group). Settings -> Categories overrides them;
+# a group missing here has none.
+DEFAULT_CATEGORY_EMOJIS: dict[str, str] = {
+    "Bills": "\U0001f9fe",  # receipt
+    "Housing": "\U0001f3e0",  # house
+    "Insurance": "\U0001f6e1\ufe0f",  # shield
+    "Groceries": "\U0001f6d2",  # shopping trolley
+    "Dining": "\U0001f37d\ufe0f",  # fork and knife with plate
+    "Coffee": "\u2615",  # hot beverage
+    "Entertainment": "\U0001f3ac",  # clapper board
+    "Subscriptions": "\U0001f501",  # repeat
+    "Health": "\U0001fa7a",  # stethoscope
+    "Transport": "\U0001f686",  # train
+    "Travel": "\u2708\ufe0f",  # aeroplane
+    "Shopping": "\U0001f6cd\ufe0f",  # shopping bags
+    "Personal": "\U0001f486",  # face massage
+    "Education": "\U0001f393",  # graduation cap
+    "Income": "\U0001f4b7",  # pound banknote
+    "Fees": "\U0001f3e6",  # bank
+    "Cash": "\U0001f4b5",  # dollar banknote
+    "Transfers": "\U0001f504",  # anticlockwise arrows
+    "Uncategorized": "\u2754",  # white question mark
+}
+
 UNCATEGORIZED = "Uncategorized"
 TRANSFER_CATEGORY_PREFIX = "Transfers:"
 
@@ -93,6 +118,12 @@ DEFAULT_PRIMARY_USER_ID = "user_primary"
 DEFAULT_SECONDARY_USER_ID = "user_secondary"
 
 log = logging.getLogger(__name__)
+
+
+def category_group(name: str) -> str:
+    """The group a category belongs to: the part before the first ``:`` (``"Bills:Water"``
+    gives ``"Bills"``); an ungrouped name (``"Groceries"``) is its own group."""
+    return name.split(":", 1)[0].strip()
 
 
 class ConfigError(ValueError):
@@ -259,6 +290,10 @@ class AppConfig(BaseModel):
     llm: LLMSection = Field(default_factory=LLMSection)
     auditor: AuditorSection = Field(default_factory=AuditorSection)
     categories: list[str] = Field(default_factory=lambda: list(DEFAULT_CATEGORIES))
+    # Group -> emoji; "" means "no emoji" for that group. The defaults the categories
+    # document (Settings -> Categories) is overlaid on; after the overlay, the effective
+    # map for the groups in ``categories`` (see app.services.site_settings).
+    category_emojis: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_CATEGORY_EMOJIS))
 
     # ----- validation -------------------------------------------------------
     @model_validator(mode="after")
@@ -392,6 +427,7 @@ class AppConfig(BaseModel):
     # ----- serialisation for the UI ----------------------------------------
     def public_dict(self) -> dict:
         """Configuration safe to expose to the browser (no salaries, no rules)."""
+        groups = {category_group(name) for name in self.categories}
         return {
             "base_currency": self.app.base_currency,
             "currency_symbol": self.app.currency_symbol,
@@ -424,6 +460,11 @@ class AppConfig(BaseModel):
                 for a in self.accounts
             ],
             "categories": list(self.categories),
+            "category_emojis": {
+                group: emoji
+                for group, emoji in self.category_emojis.items()
+                if emoji and group in groups
+            },
             "claim_types": list(CLAIM_TYPES),
         }
 

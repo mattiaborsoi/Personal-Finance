@@ -10,9 +10,20 @@ export function categoryOptions(configured: string[], current: string | null | u
   return current && !options.includes(current) ? [current, ...options] : options;
 }
 
-/** "Uncategorized" is the backend literal; the UI spells it the British way. */
+/** Between a category's group and its name on screen ("Bills › Water"). */
+export const CATEGORY_SEPARATOR = ' › ';
+
+/**
+ * How a category reads on screen: "Bills:Water" -> "Bills › Water", a bare
+ * name as it is, and "Uncategorized" (the backend literal) the British way.
+ */
 export function categoryLabel(category: string): string {
-  return category === UNCATEGORIZED ? 'Uncategorised' : category;
+  if (category === UNCATEGORIZED) return 'Uncategorised';
+  if (category.indexOf(':') <= 0) return category;
+  return category
+    .split(':')
+    .map((part) => part.trim())
+    .join(CATEGORY_SEPARATOR);
 }
 
 /**

@@ -85,6 +85,11 @@ export interface AppConfig {
   accounts: AccountConfig[];
   categories: string[];
   claim_types: ClaimType[];
+  /**
+   * Emoji per category group ("Bills" for "Bills:Water"; a bare name is its own
+   * group), only for groups that have one. Optional: an older server leaves it out.
+   */
+  category_emojis?: Record<string, string>;
 }
 
 export interface AccountOut {
@@ -725,7 +730,32 @@ export interface CategoryOut {
 /** The taxonomy in the order the category menus show it; `UNCATEGORIZED` is always present. */
 export interface CategoriesOut {
   categories: CategoryOut[];
+  /** The effective emoji per group; "" (or a missing key) means the group has none. */
+  emojis?: Record<string, string>;
+  /**
+   * What each group would show with nothing saved, when the server says so; the
+   * emoji fields use it as their placeholder. Optional: not every server sends it.
+   */
+  default_emojis?: Record<string, string>;
   stored: boolean;
+}
+
+/** PUT /api/settings/categories. In `emojis`, "" means "no emoji for this group", overriding a default. */
+export interface CategoriesUpdate {
+  categories: string[];
+  emojis?: Record<string, string>;
+}
+
+/** How often a category has been used, for the category picker's shortcuts. */
+export interface CategoryCount {
+  category: string;
+  count: number;
+}
+
+/** GET /api/categories/suggestions: the merchant's own history, then the household's most used. */
+export interface CategorySuggestions {
+  merchant: CategoryCount[];
+  frequent: CategoryCount[];
 }
 
 /** A deterministic rule: the first whose `pattern` matches the raw description classifies the line without the AI. */
@@ -1102,8 +1132,13 @@ export const api = {
   updateHousehold: (body: HouseholdUpdate) => request<HouseholdOut>('PUT', '/settings/household', { body }),
   getCategories: () => request<CategoriesOut>('GET', '/settings/categories'),
   /** The whole list: adds, removes and reorders. 422 for a blank, duplicate or long name; 409 when a removed one is in use. */
-  updateCategories: (categories: string[]) =>
-    request<CategoriesOut>('PUT', '/settings/categories', { body: { categories } }),
+  updateCategories: (categories: string[], emojis?: Record<string, string>) =>
+    request<CategoriesOut>('PUT', '/settings/categories', {
+      body: (emojis ? { categories, emojis } : { categories }) satisfies CategoriesUpdate,
+    }),
+  /** The categories a merchant was filed under before, and the most used overall (primary only). */
+  getCategorySuggestions: (merchant: string, limit = 3) =>
+    request<CategorySuggestions>('GET', '/categories/suggestions', { query: { merchant, limit } }),
   /** Renames it everywhere. 404 unknown; 409 when `to` exists or `from` is `UNCATEGORIZED`; 422 blank. */
   renameCategory: (from: string, to: string) =>
     request<CategoriesOut>('POST', '/settings/categories/rename', { body: { from, to } }),

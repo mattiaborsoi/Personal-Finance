@@ -4,9 +4,10 @@ import { describe, expect, it } from 'vitest';
 import { CONFIG_DEFAULTS_MESSAGE, type CategoriesOut } from '../api';
 import { ConfigProvider } from '../config/ConfigProvider';
 import { inUseTitle } from '../lib/categories';
+import { categoryLabel } from '../lib/format';
 import { categories } from '../test/fixtures';
 import { fixtureConfig, jsonResponse, mockFetch, renderWithProviders, type RecordedCall } from '../test/utils';
-import { ADD_HINT, CategoriesPanel, DUPLICATE_MESSAGE, RENAME_NOTE } from './CategoriesPanel';
+import { ADD_HINT, CategoriesPanel, DUPLICATE_MESSAGE, EMOJI_HINT, RENAME_NOTE } from './CategoriesPanel';
 
 const URL = '/api/settings/categories';
 const UNUSED = { transactions: 0, memory: 0, rules: 0 };
@@ -18,9 +19,11 @@ function mockCategories(initial: CategoriesOut) {
     if (method === 'GET' && url === '/api/config') return jsonResponse(fixtureConfig);
     if (method === 'GET' && url === URL) return jsonResponse(current);
     if (method === 'PUT' && url === URL) {
-      const names = (body as { categories: string[] }).categories;
+      const { categories: names, emojis } = body as { categories: string[]; emojis?: Record<string, string> };
       current = {
+        ...current,
         categories: names.map((name) => current.categories.find((c) => c.name === name) ?? { name, in_use: UNUSED }),
+        emojis: emojis ?? current.emojis,
         stored: true,
       };
       return jsonResponse(current);
@@ -54,7 +57,7 @@ async function renderPanel() {
 
 /** The list item holding a category, found by a control that names it. */
 function rowFor(name: string): HTMLElement {
-  const row = screen.getByRole('button', { name: `Move ${name} up` }).closest('li');
+  const row = screen.getByRole('button', { name: `Move ${categoryLabel(name)} up` }).closest('li');
   if (!row) throw new Error(`No row for ${name}`);
   return row;
 }
@@ -93,8 +96,8 @@ describe('<CategoriesPanel />', () => {
     expect(screen.getByRole('button', { name: 'Remove Dining' })).toBeEnabled();
 
     // The ends cannot move further.
-    expect(screen.getByRole('button', { name: 'Move Bills:Water up' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Move Bills:Water down' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Move Bills › Water up' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move Bills › Water down' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Move Uncategorised down' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Move Uncategorised up' })).toBeEnabled();
 
@@ -242,7 +245,7 @@ describe('<CategoriesPanel />', () => {
     expect(puts(calls)[0].body).toEqual({
       categories: ['Bills:Water', 'Bills:Energy', 'Groceries', 'Dining', 'Transport:Taxi', 'Uncategorized', 'Bills:Phone'],
     });
-    expect(await screen.findByRole('button', { name: 'Move Bills:Phone up' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Move Bills › Phone up' })).toBeInTheDocument();
     expect(within(rowFor('Bills:Phone')).getByText('Phone')).toBeInTheDocument();
     expect(within(rowFor('Bills:Phone')).getByText('unused')).toBeInTheDocument();
     expect(input).toHaveValue('');
@@ -267,6 +270,101 @@ describe('<CategoriesPanel />', () => {
     expect(puts(calls)).toHaveLength(1);
   });
 
+  it('shows an emoji field for every group, filled from the server with the default as its placeholder', async () => {
+    mockCategories(
+      categories({ emojis: { Bills: '💡', Groceries: '🛒' }, default_emojis: { Bills: '💡', Groceries: '🛒', Dining: '🍽️' } }),
+    );
+
+    await renderPanel();
+
+    // A group's field sits by its heading; a bare name is its own group, so its field is in its row.
+    const bills = screen.getByRole('textbox', { name: 'Emoji for Bills' });
+    expect(bills).toHaveValue('💡');
+    expect(bills).toHaveAttribute('maxLength', '8');
+    expect(bills).toHaveAttribute('title', EMOJI_HINT);
+    expect(bills.closest('section')).toContainElement(screen.getByRole('heading', { name: 'Bills' }));
+    expect(screen.getByRole('textbox', { name: 'Emoji for Transport' })).toHaveValue('');
+    expect(within(rowFor('Groceries')).getByRole('textbox', { name: 'Emoji for Groceries' })).toHaveValue('🛒');
+    const dining = within(rowFor('Dining')).getByRole('textbox', { name: 'Emoji for Dining' });
+    expect(dining).toHaveValue('');
+    expect(dining).toHaveAttribute('placeholder', '🍽️');
+    expect(within(rowFor('Uncategorized')).getByRole('textbox', { name: 'Emoji for Uncategorised' })).toBeInTheDocument();
+    // Clear only where there is something to clear.
+    expect(screen.getByRole('button', { name: 'Clear the emoji for Bills' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear the emoji for Dining' })).not.toBeInTheDocument();
+  });
+
+  it('saves a group’s emoji with the whole list and map on Enter or on leaving the field, and refreshes the config', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockCategories(categories({ emojis: { Bills: '💡', Groceries: '🛒' } }));
+
+    await renderPanel();
+    const bills = screen.getByRole('textbox', { name: 'Emoji for Bills' });
+    await user.clear(bills);
+    await user.type(bills, '🧾{Enter}');
+
+    await waitFor(() => expect(puts(calls)).toHaveLength(1));
+    expect(puts(calls)[0].body).toEqual({
+      categories: ['Bills:Water', 'Bills:Energy', 'Groceries', 'Dining', 'Transport:Taxi', 'Uncategorized'],
+      emojis: { Bills: '🧾', Groceries: '🛒' },
+    });
+    expect(await screen.findByRole('status')).toHaveTextContent('Saved 🧾 for Bills.');
+    await waitFor(() => expect(configFetches(calls)).toBe(2));
+    expect(bills).toHaveValue('🧾');
+
+    // Leaving the field saves too; leaving it unchanged sends nothing.
+    const dining = within(rowFor('Dining')).getByRole('textbox', { name: 'Emoji for Dining' });
+    await user.click(dining);
+    await user.tab();
+    expect(puts(calls)).toHaveLength(1);
+    await user.type(dining, '🍝');
+    await user.tab();
+    await waitFor(() => expect(puts(calls)).toHaveLength(2));
+    expect(puts(calls)[1].body).toEqual({
+      categories: ['Bills:Water', 'Bills:Energy', 'Groceries', 'Dining', 'Transport:Taxi', 'Uncategorized'],
+      emojis: { Bills: '🧾', Groceries: '🛒', Dining: '🍝' },
+    });
+  });
+
+  it('sends only the emojis that differ from the defaults, so untouched groups keep following them', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockCategories(
+      categories({ emojis: { Bills: '🧾', Groceries: '🛒' }, default_emojis: { Bills: '🧾', Groceries: '🛒' } }),
+    );
+
+    await renderPanel();
+    const dining = within(rowFor('Dining')).getByRole('textbox', { name: 'Emoji for Dining' });
+    await user.type(dining, '🍝{Enter}');
+
+    await waitFor(() => expect(puts(calls)).toHaveLength(1));
+    expect(puts(calls)[0].body).toEqual({
+      categories: ['Bills:Water', 'Bills:Energy', 'Groceries', 'Dining', 'Transport:Taxi', 'Uncategorized'],
+      emojis: { Dining: '🍝' },
+    });
+  });
+
+  it('clears a group’s emoji by saving "", and Escape puts back what was typed', async () => {
+    const user = userEvent.setup();
+    // Bills has a default, so clearing it must send "" to hide that default.
+    const { calls } = mockCategories(categories({ emojis: { Bills: '💡' }, default_emojis: { Bills: '🧾' } }));
+
+    await renderPanel();
+    const bills = screen.getByRole('textbox', { name: 'Emoji for Bills' });
+    await user.type(bills, 'x{Escape}');
+    expect(bills).toHaveValue('💡');
+    expect(puts(calls)).toHaveLength(0);
+
+    await user.click(screen.getByRole('button', { name: 'Clear the emoji for Bills' }));
+    await waitFor(() => expect(puts(calls)).toHaveLength(1));
+    expect(puts(calls)[0].body).toEqual({
+      categories: ['Bills:Water', 'Bills:Energy', 'Groceries', 'Dining', 'Transport:Taxi', 'Uncategorized'],
+      emojis: { Bills: '' },
+    });
+    expect(await screen.findByRole('status')).toHaveTextContent('Removed the emoji for Bills.');
+    expect(bills).toHaveValue('');
+    expect(screen.queryByRole('button', { name: 'Clear the emoji for Bills' })).not.toBeInTheDocument();
+  });
+
   it('shows the server’s 422 for a new category under the input', async () => {
     const user = userEvent.setup();
     const detail = 'category 7 is longer than 128 characters';
@@ -284,7 +382,7 @@ describe('<CategoriesPanel />', () => {
 
     await waitFor(() => expect(input).toHaveAccessibleDescription(detail));
     expect(input).toHaveValue('Bills:Phone');
-    expect(screen.queryByRole('button', { name: 'Move Bills:Phone up' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Move Bills › Phone up' })).not.toBeInTheDocument();
   });
 
   it('shows a load error with a retry that fetches again', async () => {

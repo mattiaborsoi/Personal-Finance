@@ -88,11 +88,27 @@ Rules:
   square before the title), `BrandMark`/`Wordmark`, `ThemeToggle`, `NavLinks` (Lucide icons).
 * Rows and lists: `MerchantAvatar` (32px circle, first letter, one of six soft
   washes chosen by a stable hash of the name), `InitialsChip` (a person), `chipSoft`
-  for account labels inside rows, `selectCompact` (32px row select; add
-  `selectCategory` for a category select, which sizes to its longest option and
-  carries the full name in a `title`), `TransferToggle` (the "mark as a transfer"
+  for account labels inside rows, `selectCompact` (32px row select), `TransferToggle` (the "mark as a transfer"
   checkbox, named after the merchant for screen readers), `tableFlush`
   so first/last cells line up with the header inside `<Card flush>`.
+* Categories: shown as "Group › Name" (`categoryLabel`), with the group's emoji
+  first where it has one (`categoryEmojiLabel`, from `config.category_emojis`).
+  Every category control is a `CategoryPicker`, never a native select: a button that
+  reads like `selectCompact` (or a full-size field with `size="base"`), named like the
+  select was ("Category for Ocado"), opening a popover (portalled, fixed, flips up when
+  there is no room below, 20rem at most) with a search box (WAI-ARIA combobox) over a
+  grouped listbox: "Suggested" (the merchant's past categories) and "Most used" first,
+  then each group under an emoji header, Uncategorised last. Typing filters ("hou mor"
+  finds Housing › Mortgage); the primary user can add a category from the search text
+  ("Add “Takeaway” under Dining"), unless the parent passes `allowAdd={false}`. Escape
+  closes it and only it, returning focus to the button. The one native category select
+  left, the Transactions filter, uses an `optgroup` per group labelled "emoji Group".
+* Claim types: `ClaimTypeControl`, a segmented radio group ("Claim type for Ocado";
+  one tab stop, arrow keys, Home and End move and choose). Each segment is an icon
+  (Wallet personal, Scale by income, Divide 50/50, User / UserRound per person) named
+  and titled with the full label; the chosen one adds its short word ("By income",
+  "50/50", a first name, or "Mine" for the viewer's own) on a phone and from `2xl`, so a
+  row still fits a 1280px laptop with icons only.
 * Row controls with a short visible label ("Approve", "Delete") name the row for
   screen readers via `aria-label` ("Approve Waitrose"), as the selects already do.
 * Renaming in place: a `btnIconSmall` pencil ("Rename Waitrose") swaps the name for an

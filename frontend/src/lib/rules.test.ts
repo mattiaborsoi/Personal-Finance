@@ -74,7 +74,7 @@ describe('rules form', () => {
   });
 
   it('describes a match the way the claim-type menu does, counting rules from 1', () => {
-    expect(matchText(2, rule(), { primary: 'Alex', secondary: 'Sam' })).toBe('Matches rule 3 → Bills:Water, Split by income');
+    expect(matchText(2, rule(), { primary: 'Alex', secondary: 'Sam' })).toBe('Matches rule 3 → Bills › Water, Split by income');
     expect(matchText(0, rule({ category: 'Uncategorized', claim_type: 'secondary_personal' }), { primary: 'Alex', secondary: 'Sam' })).toBe(
       "Matches rule 1 → Uncategorised, Sam's personal item",
     );

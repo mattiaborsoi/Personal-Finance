@@ -4,7 +4,7 @@ import { api, CONFIG_DEFAULTS_MESSAGE, errorMessage, isApiError, type ClaimType,
 import { useConfig, useNames, useReloadConfig } from '../config/ConfigContext';
 import { useFocusFirstProblem } from '../hooks/useFocusFirstProblem';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
-import { accountName, categoryLabel, categoryOptions, claimTypeLabel, plural } from '../lib/format';
+import { accountName, claimTypeLabel, plural } from '../lib/format';
 import {
   blankPattern,
   blankRule,
@@ -44,6 +44,7 @@ import {
   thBase,
 } from '../lib/ui';
 import { Card } from './Card';
+import { CategoryPicker } from './CategoryPicker';
 import { EmptyState } from './EmptyState';
 import { ErrorMessage } from './ErrorMessage';
 import { Field } from './Field';
@@ -387,22 +388,16 @@ export function RulesPanel() {
                           </td>
                           <td className={cx(tdBase, 'min-w-[9rem] 2xl:min-w-[11rem]', stackCell)}>
                             <StackLabel>Category</StackLabel>
-                            <select
-                              className={cx(selectBase, flag('category').invalid && inputInvalid)}
+                            <CategoryPicker
+                              size="base"
+                              label={`Category for rule ${n}`}
+                              className="w-full"
                               value={row.category}
-                              title={categoryLabel(row.category)}
                               disabled={busy}
-                              aria-label={`Category for rule ${n}`}
-                              aria-invalid={flag('category').invalid}
-                              aria-describedby={flag('category').describedBy}
-                              onChange={(e) => setRule(index, { category: e.target.value })}
-                            >
-                              {categoryOptions(config.categories, row.category).map((c) => (
-                                <option key={c} value={c}>
-                                  {categoryLabel(c)}
-                                </option>
-                              ))}
-                            </select>
+                              invalid={flag('category').invalid}
+                              describedBy={flag('category').describedBy}
+                              onChange={(next) => setRule(index, { category: next })}
+                            />
                           </td>
                           <td className={cx(tdBase, 'min-w-[9rem] 2xl:min-w-[11rem]', stackCell)}>
                             <StackLabel>Claim type</StackLabel>

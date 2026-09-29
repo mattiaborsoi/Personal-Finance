@@ -1,4 +1,6 @@
 import type { AuditCategoryComparison } from '../api';
+import { useConfig } from '../config/ConfigContext';
+import { categoryEmojiLabel } from '../lib/categories';
 import { formatSignedPercent } from '../lib/format';
 import { cx, tableBase, tdBase, thBase, trHover } from '../lib/ui';
 import { Badge, type BadgeTone } from './Badge';
@@ -21,6 +23,7 @@ function isNewCategory(row: AuditCategoryComparison): boolean {
 }
 
 export function AuditComparisonTable({ rows }: Props) {
+  const emojis = useConfig().category_emojis;
   if (rows.length === 0) return <EmptyState title="No category comparison available" />;
   return (
     <div className="overflow-x-auto">
@@ -47,7 +50,7 @@ export function AuditComparisonTable({ rows }: Props) {
             const pct = isNew ? Number.NaN : Number(row.change_pct);
             return (
               <tr key={row.category} className={trHover}>
-                <td className={cx(tdBase, 'font-medium')}>{row.category}</td>
+                <td className={cx(tdBase, 'font-medium')}>{categoryEmojiLabel(row.category, emojis)}</td>
                 <td className={cx(tdBase, 'text-right')}>
                   <MoneyText value={row.current} />
                 </td>

@@ -127,7 +127,13 @@ reference is in section 11; working through `config.example.yaml` from the top:
   current-account and card statements, so the two legs are matched to each other and
   never counted as spending. Also under Settings → Rules ("Card payments").
 * **`categories`**: the taxonomy offered to the classifier and the UI; Settings →
-  Categories adds, reorders, renames (everywhere at once) and removes unused ones.
+  Categories adds, reorders, renames (everywhere at once) and removes unused ones. It
+  also sets the emoji shown next to each category group (the part of a name before
+  the first `:`), over built-in defaults for the usual groups (`category_emojis` in
+  `config.yaml` replaces those); an empty value hides a group's default. The
+  category picker opens with suggestions from `GET /api/categories/suggestions`:
+  what the merchant was filed under before (approved transactions and merchant
+  memory) and the most used categories of the last 12 months.
 * **`llm`, `auditor`**: the models, the similarity threshold and few-shot count and
   the Auditor's thresholds; Settings → AI. The defaults are fine to start with.
 
@@ -937,7 +943,7 @@ stub or inject build-time settings for local verification.
 │   │   ├── schema.sql          # canonical DDL, idempotent, run at start
 │   │   ├── models.py           # SQLAlchemy mapping of schema.sql
 │   │   ├── schemas.py          # Pydantic request/response models (API.md)
-│   │   ├── routers/            # accounts, ai, audit, auth, claims, memory, metrics, periods, reference,
+│   │   ├── routers/            # accounts, ai, audit, auth, categories, claims, memory, metrics, periods, reference,
 │   │   │                       # settlement, site_settings, statements, system, transactions, transfers
 │   │   └── services/
 │   │       ├── parsers/        # Agent 1: tabular, pdf_table, pdf_text, llm_extractor, registry
@@ -958,6 +964,7 @@ stub or inject build-time settings for local verification.
 │   │       ├── accounts.py     # accounts table: seeding, create / edit / archive
 │   │       ├── statement_uploads.py # removing an upload and every line it brought in
 │   │       ├── site_settings.py # Settings -> Household, Categories, Rules documents
+│   │       ├── category_suggestions.py # the category picker's suggestions
 │   │       ├── ai_settings.py  # Settings -> AI: proxy, models, thresholds, connection test
 │   │       ├── updates.py      # Settings -> System: GitHub check, updater client
 │   │       ├── reset.py        # Settings -> System -> Danger zone: delete transactions / everything

@@ -1,11 +1,11 @@
 import { screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import userEvent, { type UserEvent } from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { CONFIG_DEFAULTS_MESSAGE, type Rule, type RuleTestBody, type RuleTestResult, type RulesOut, type RulesUpdate } from '../api';
 import { ConfigProvider } from '../config/ConfigProvider';
 import { BLANK_PATTERN_MESSAGE, MISSING_ACCOUNT_MESSAGE, WINDOW_MESSAGE } from '../lib/rules';
 import { rule, rules } from '../test/fixtures';
-import { fixtureConfig, jsonResponse, mockFetch, renderWithProviders, type RecordedCall } from '../test/utils';
+import { categoryValue, fixtureConfig, jsonResponse, mockFetch, pickCategory, renderWithProviders, type RecordedCall } from '../test/utils';
 import {
   CARD_PAYMENT_MESSAGE,
   NO_MATCH_MESSAGE,
@@ -52,6 +52,16 @@ async function renderPanel() {
   return screen.findByLabelText('Pattern for rule 1');
 }
 
+/** Opens a category picker, reads the categories it offers in order, and closes it again. */
+async function pickerValues(user: UserEvent, picker: HTMLElement): Promise<string[]> {
+  await user.click(picker);
+  const values = within(screen.getByRole('listbox', { name: 'Categories' }))
+    .getAllByRole('option')
+    .map((o) => o.dataset.value ?? '');
+  await user.keyboard('{Escape}');
+  return values;
+}
+
 function optionLabels(select: HTMLElement): string[] {
   return within(select)
     .getAllByRole('option')
@@ -82,6 +92,7 @@ describe('<RulesPanel />', () => {
   });
 
   it('shows the rules in order with their fields, the payment patterns and the matching numbers', async () => {
+    const user = userEvent.setup();
     const { calls } = mockRules(rules());
 
     const pattern1 = await renderPanel();
@@ -90,8 +101,9 @@ describe('<RulesPanel />', () => {
     expect(screen.getByRole('region', { name: 'Rules' })).toHaveTextContent('the first match wins');
     expect(pattern1).toHaveValue('(?i)AQUANORTH\\s*WATER');
     const category1 = screen.getByLabelText('Category for rule 1');
-    expect(category1).toHaveValue('Bills:Water');
-    expect(optionLabels(category1)).toEqual(['Groceries', 'Dining', 'Bills:Water', 'Transport:Taxi', 'Uncategorised']);
+    expect(categoryValue(category1)).toBe('Bills:Water');
+    expect(category1).toHaveTextContent('Bills › Water');
+    expect(await pickerValues(user, category1)).toEqual(['Groceries', 'Dining', 'Bills:Water', 'Transport:Taxi', 'Uncategorized']);
     expect(screen.getByLabelText('Claim type for rule 1')).toHaveValue('shared_proportional');
     expect(screen.getByLabelText('Merchant for rule 1')).toHaveValue('');
     expect(screen.getByLabelText('Internal transfer for rule 1')).not.toBeChecked();
@@ -100,8 +112,8 @@ describe('<RulesPanel />', () => {
     expect(screen.getByLabelText('Pattern for rule 2')).toHaveValue('(?i)ROBINHOOD');
     // A category the config no longer lists stays in the select rather than being silently changed.
     const category2 = screen.getByLabelText('Category for rule 2');
-    expect(category2).toHaveValue('Transfers:Investment');
-    expect(optionLabels(category2)[0]).toBe('Transfers:Investment');
+    expect(categoryValue(category2)).toBe('Transfers:Investment');
+    expect((await pickerValues(user, category2))[0]).toBe('Transfers:Investment');
     expect(screen.getByLabelText('Claim type for rule 2')).toHaveValue('personal');
     expect(screen.getByLabelText('Merchant for rule 2')).toHaveValue('Robinhood');
     expect(screen.getByLabelText('Internal transfer for rule 2')).toBeChecked();
@@ -134,7 +146,7 @@ describe('<RulesPanel />', () => {
     expect(screen.getByText(CONFIG_DEFAULTS_MESSAGE)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Add rule' }));
     expect(screen.getByLabelText('Pattern for rule 1')).toHaveValue('');
-    expect(screen.getByLabelText('Category for rule 1')).toHaveValue('Groceries');
+    expect(categoryValue('Category for rule 1')).toBe('Groceries');
   });
 
   it('sends only the list or number that changed', async () => {
@@ -142,14 +154,14 @@ describe('<RulesPanel />', () => {
     const { calls } = mockRules(rules());
 
     await renderPanel();
-    await user.selectOptions(screen.getByLabelText('Category for rule 1'), 'Groceries');
+    await pickCategory(user, 'Category for rule 1', 'Groceries');
     expect(discardButton()).toBeEnabled();
     await user.click(saveButton());
 
     await waitFor(() => expect(puts(calls)).toHaveLength(1));
     expect(puts(calls)[0].body).toEqual({ rules: [{ ...WATER, category: 'Groceries' }, ROBINHOOD] });
     expect(await screen.findByRole('status')).toHaveTextContent(RULES_SAVED_MESSAGE);
-    expect(screen.getByLabelText('Category for rule 1')).toHaveValue('Groceries');
+    expect(categoryValue('Category for rule 1')).toBe('Groceries');
     expect(saveButton()).toBeDisabled();
 
     const window = screen.getByLabelText('Match window');
@@ -196,7 +208,7 @@ describe('<RulesPanel />', () => {
     expect(pattern3).toHaveFocus();
     expect(puts(calls)).toHaveLength(0);
     await user.type(pattern3, '(?i)OCADO');
-    await user.selectOptions(screen.getByLabelText('Category for rule 3'), 'Dining');
+    await pickCategory(user, 'Category for rule 3', 'Dining');
     await user.selectOptions(screen.getByLabelText('Claim type for rule 3'), 'shared_equal');
     await user.type(screen.getByLabelText('Merchant for rule 3'), 'Ocado');
     expect(screen.queryByText(BLANK_PATTERN_MESSAGE)).not.toBeInTheDocument();
@@ -276,7 +288,7 @@ describe('<RulesPanel />', () => {
     });
 
     await renderPanel();
-    await user.selectOptions(screen.getByLabelText('Category for rule 1'), 'Groceries');
+    await pickCategory(user, 'Category for rule 1', 'Groceries');
     const input = screen.getByLabelText('Statement description');
     expect(testButton()).toBeDisabled();
     await user.type(input, 'AQUANORTH WATER 0123');
@@ -305,7 +317,7 @@ describe('<RulesPanel />', () => {
     expect(puts(calls)).toHaveLength(0);
 
     // The result described the rules as they were.
-    await user.selectOptions(screen.getByLabelText('Category for rule 1'), 'Dining');
+    await pickCategory(user, 'Category for rule 1', 'Dining');
     expect(screen.queryByRole('status', { name: 'Test result' })).not.toBeInTheDocument();
 
     // A form that cannot be sent cannot be tried either, and says why.
@@ -361,7 +373,8 @@ describe('<RulesPanel />', () => {
 
     const category2 = screen.getByLabelText('Category for rule 2');
     await waitFor(() => expect(category2).toHaveAttribute('aria-invalid', 'true'));
-    expect(category2).toHaveAccessibleDescription(refusals[0]);
+    // The description is the value the button shows, then the refusal.
+    expect(category2).toHaveAccessibleDescription(expect.stringContaining(refusals[0]));
     expect(screen.getByLabelText('Pattern for rule 2')).not.toHaveAttribute('aria-invalid');
 
     await user.type(merchant2, '!');

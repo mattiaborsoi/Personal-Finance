@@ -1,9 +1,9 @@
 import { Check, CircleAlert, Scissors } from 'lucide-react';
 import { useState } from 'react';
 import { UNCATEGORIZED, type ClaimType, type TransactionOut, type TransactionPatch } from '../api';
-import { useConfig, useNames } from '../config/ConfigContext';
+import { useConfig } from '../config/ConfigContext';
 import { formatDate } from '../lib/dates';
-import { accountLabel, categoryLabel, categoryOptions, claimTypeLabel } from '../lib/format';
+import { accountLabel } from '../lib/format';
 import {
   btnIcon,
   btnPrimary,
@@ -12,9 +12,10 @@ import {
   chipSoft,
   cx,
   focusRing,
-  selectCompact,
   trHover,
 } from '../lib/ui';
+import { CategoryPicker } from './CategoryPicker';
+import { ClaimTypeControl } from './ClaimTypeControl';
 import { MerchantAvatar } from './MerchantAvatar';
 import { MoneyText } from './MoneyText';
 import { SourceBadge } from './SourceBadge';
@@ -60,13 +61,11 @@ export function ApprovalRow({
   onTransferChange,
 }: Props) {
   const config = useConfig();
-  const names = useNames();
   const [showRaw, setShowRaw] = useState(false);
 
   const originalCategory = tx.category || UNCATEGORIZED;
   const category = draft.category ?? originalCategory;
   const claimType: ClaimType | '' = draft.claim_type ?? tx.claim_type ?? '';
-  const categories = categoryOptions(config.categories, category);
 
   function approve() {
     const corrections: TransactionPatch = {};
@@ -75,7 +74,6 @@ export function ApprovalRow({
     onApprove(corrections);
   }
 
-  const id = tx.id;
   const merchant = tx.cleaned_merchant || tx.raw_description;
   const hasRawLine = Boolean(tx.raw_description) && tx.raw_description !== merchant;
   const locked = busy || disabled;
@@ -130,40 +128,21 @@ export function ApprovalRow({
         {/* Category and claim type share a cell: stacked below 2xl, side by side on a wide screen, so the row fits. */}
         <td className="px-2 py-3 align-middle">
           <div className="flex flex-col gap-1.5 2xl:flex-row 2xl:items-center 2xl:gap-2">
-            <label htmlFor={`category-${id}`} className="sr-only">
-              Category for {merchant}
-            </label>
-            <select
-              id={`category-${id}`}
-              className={cx(selectCompact, 'w-44 2xl:w-auto 2xl:min-w-[11rem] 2xl:max-w-[16rem]')}
+            <CategoryPicker
+              label={`Category for ${merchant}`}
+              merchant={merchant}
+              className="w-44 2xl:w-auto 2xl:min-w-[11rem] 2xl:max-w-[16rem]"
               value={category}
-              title={categoryLabel(category)}
-              onChange={(e) => onDraftChange({ ...draft, category: e.target.value })}
+              onChange={(next) => onDraftChange({ ...draft, category: next })}
               disabled={locked}
-            >
-              {categories.map((c) => (
-                <option key={c} value={c}>
-                  {categoryLabel(c)}
-                </option>
-              ))}
-            </select>
-            <label htmlFor={`claim-${id}`} className="sr-only">
-              Claim type for {merchant}
-            </label>
-            <select
-              id={`claim-${id}`}
-              className={cx(selectCompact, 'w-44')}
+            />
+            <ClaimTypeControl
+              label={`Claim type for ${merchant}`}
+              className="w-44 2xl:w-auto"
               value={claimType}
-              title={claimTypeLabel(claimType, names)}
-              onChange={(e) => onDraftChange({ ...draft, claim_type: e.target.value as ClaimType })}
+              onChange={(next) => onDraftChange({ ...draft, claim_type: next })}
               disabled={locked}
-            >
-              {config.claim_types.map((ct) => (
-                <option key={ct} value={ct}>
-                  {claimTypeLabel(ct, names)}
-                </option>
-              ))}
-            </select>
+            />
           </div>
         </td>
         <td className="px-2 py-3 text-center align-middle">

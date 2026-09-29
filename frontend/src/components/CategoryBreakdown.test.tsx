@@ -2,7 +2,7 @@ import { screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { selectViewFigures } from '../lib/views';
 import { metrics } from '../test/fixtures';
-import { mockFetch, renderWithProviders } from '../test/utils';
+import { fixtureConfig, mockFetch, renderWithProviders } from '../test/utils';
 import { CategoryBreakdown } from './CategoryBreakdown';
 
 describe('<CategoryBreakdown />', () => {
@@ -13,6 +13,26 @@ describe('<CategoryBreakdown />', () => {
     const items = screen.getAllByRole('listitem').map((li) => li.textContent);
     expect(items).toEqual(['Groceries£650.00', 'Partner claims£300.00', 'Dining£250.00']);
     expect(screen.queryByTestId('refunds-note')).not.toBeInTheDocument();
+  });
+
+  it('puts the group’s emoji before a category and reads a grouped name as "Group › Name"', () => {
+    mockFetch(() => undefined);
+    const withGroups = metrics({
+      macro: {
+        ...metrics().macro,
+        by_category: [
+          { category: 'Groceries', amount: '650.00' },
+          { category: 'Bills:Water', amount: '40.00' },
+          { category: 'Uncategorized', amount: '10.00' },
+        ],
+      },
+    });
+    renderWithProviders(<CategoryBreakdown breakdown={selectViewFigures(withGroups, 'macro').breakdown} />, {
+      config: { ...fixtureConfig, category_emojis: { Groceries: '🛒', Bills: '💡' } },
+    });
+
+    const items = screen.getAllByRole('listitem').map((li) => li.textContent);
+    expect(items).toEqual(['🛒Groceries£650.00', '💡Bills › Water£40.00', 'Uncategorised£10.00']);
   });
 
   it('notes refunds under the household breakdown without deducting them from the headline', () => {

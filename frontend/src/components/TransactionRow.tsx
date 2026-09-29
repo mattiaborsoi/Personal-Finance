@@ -1,9 +1,9 @@
 import { CircleAlert, CornerDownRight, Pencil, Scissors, Trash2, Ungroup } from 'lucide-react';
 import { useRef, useState, type KeyboardEvent } from 'react';
-import { UNCATEGORIZED, type ClaimType, type TransactionOut, type TransactionPart, type TransactionPatch } from '../api';
-import { useConfig, useNames } from '../config/ConfigContext';
+import { UNCATEGORIZED, type TransactionOut, type TransactionPart, type TransactionPatch } from '../api';
+import { useConfig } from '../config/ConfigContext';
 import { formatDate } from '../lib/dates';
-import { accountLabel, categoryLabel, categoryOptions, claimTypeLabel, plural, reviewStatusLabel } from '../lib/format';
+import { accountLabel, plural, reviewStatusLabel } from '../lib/format';
 import {
   btnIcon,
   btnIconSmall,
@@ -11,10 +11,11 @@ import {
   cx,
   focusRing,
   inputCompact,
-  selectCompact,
   trHover,
 } from '../lib/ui';
 import { Badge, type BadgeTone } from './Badge';
+import { CategoryPicker } from './CategoryPicker';
+import { ClaimTypeControl } from './ClaimTypeControl';
 import { ConfirmButton } from './ConfirmButton';
 import { MerchantAvatar } from './MerchantAvatar';
 import { MoneyText } from './MoneyText';
@@ -60,9 +61,10 @@ const cell = `${cellBase} sm:py-3`;
 const partCell = `${cellBase} sm:py-2`;
 /** A cell that only exists to keep the table's columns; nothing to show on a phone. */
 const spacerCell = 'hidden sm:table-cell sm:px-2 sm:py-2';
-/** Full width on a phone; fixed on a laptop so the row fits; from `2xl` as wide as the longest category, capped (pair with a `title`). */
+/** Full width on a phone; fixed on a laptop so the row fits; from `2xl` as wide as the category's label, capped (the button's `title` has it all). */
 const categoryWidth = 'w-full sm:w-40 2xl:w-auto 2xl:min-w-[11rem] 2xl:max-w-[18rem]';
-const claimWidth = 'w-full sm:w-36 2xl:w-56';
+/** Full width on a phone; icons only on a laptop; from `2xl` the chosen segment also shows its word. */
+const claimWidth = 'w-full sm:w-36 2xl:w-auto';
 
 function ErrorRow({ message }: { message: string }) {
   return (
@@ -90,7 +92,6 @@ export function TransactionRow({
   readOnly = false,
 }: Props) {
   const config = useConfig();
-  const names = useNames();
   const [saving, setSaving] = useState(false);
   const [savingPart, setSavingPart] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
@@ -119,7 +120,6 @@ export function TransactionRow({
     }
   }
 
-  const id = tx.id;
   const merchant = tx.cleaned_merchant || tx.raw_description;
   // A split part never names itself: its parent carries the merchant (the server refuses the rename with 409).
   const canRename = !tx.split_parent_id;
@@ -147,7 +147,6 @@ export function TransactionRow({
   }
 
   const hasRawLine = Boolean(tx.raw_description) && tx.raw_description !== merchant;
-  const categories = categoryOptions(config.categories, tx.category);
   const locked = saving || readOnly;
   const parts = tx.is_split ? [...tx.parts].sort((a, b) => a.split_index - b.split_index) : [];
   // On a phone the actions line sits under the selects, or under the split badge that replaces them.
@@ -257,42 +256,23 @@ export function TransactionRow({
         ) : (
           <>
             <td className={cx(cell, 'col-span-2 row-start-3')}>
-              <label htmlFor={`t-category-${id}`} className="sr-only">
-                Category for {merchant}
-              </label>
-              <select
-                id={`t-category-${id}`}
-                className={cx(selectCompact, categoryWidth)}
+              <CategoryPicker
+                label={`Category for ${merchant}`}
+                merchant={merchant}
+                className={categoryWidth}
                 value={tx.category || UNCATEGORIZED}
-                title={categoryLabel(tx.category || UNCATEGORIZED)}
                 disabled={locked}
-                onChange={(e) => patch({ category: e.target.value })}
-              >
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {categoryLabel(c)}
-                  </option>
-                ))}
-              </select>
+                onChange={(next) => void patch({ category: next })}
+              />
             </td>
             <td className={cx(cell, 'col-span-2 row-start-4')}>
-              <label htmlFor={`t-claim-${id}`} className="sr-only">
-                Claim type for {merchant}
-              </label>
-              <select
-                id={`t-claim-${id}`}
-                className={cx(selectCompact, claimWidth)}
-                value={tx.claim_type ?? ''}
-                title={tx.claim_type ? claimTypeLabel(tx.claim_type, names) : undefined}
+              <ClaimTypeControl
+                label={`Claim type for ${merchant}`}
+                className={claimWidth}
+                value={tx.claim_type}
                 disabled={locked}
-                onChange={(e) => patch({ claim_type: e.target.value as ClaimType })}
-              >
-                {config.claim_types.map((ct) => (
-                  <option key={ct} value={ct}>
-                    {claimTypeLabel(ct, names)}
-                  </option>
-                ))}
-              </select>
+                onChange={(next) => void patch({ claim_type: next })}
+              />
             </td>
           </>
         )}
@@ -396,8 +376,6 @@ interface PartRowsProps {
 
 /** One indented sub-row per part of a split transaction, editable in place. */
 function PartRows({ part, n, merchant, locked, saving, error, onPatch }: PartRowsProps) {
-  const config = useConfig();
-  const names = useNames();
   return (
     <>
       <tr className={cx(rowLayout, 'bg-surface-2/40 py-3', saving && 'opacity-60')}>
@@ -412,35 +390,23 @@ function PartRows({ part, n, merchant, locked, saving, error, onPatch }: PartRow
           <MoneyText value={part.amount} tone />
         </td>
         <td className={cx(partCell, 'col-span-2 row-start-2')}>
-          <select
-            className={cx(selectCompact, categoryWidth)}
+          <CategoryPicker
+            label={`Category for ${merchant} part ${n}`}
+            merchant={merchant}
+            className={categoryWidth}
             value={part.category || UNCATEGORIZED}
-            title={categoryLabel(part.category || UNCATEGORIZED)}
             disabled={locked}
-            aria-label={`Category for ${merchant} part ${n}`}
-            onChange={(e) => onPatch({ category: e.target.value })}
-          >
-            {categoryOptions(config.categories, part.category).map((c) => (
-              <option key={c} value={c}>
-                {categoryLabel(c)}
-              </option>
-            ))}
-          </select>
+            onChange={(next) => onPatch({ category: next })}
+          />
         </td>
         <td className={cx(partCell, 'col-span-2 row-start-3')}>
-          <select
-            className={cx(selectCompact, claimWidth)}
+          <ClaimTypeControl
+            label={`Claim type for ${merchant} part ${n}`}
+            className={claimWidth}
             value={part.claim_type}
             disabled={locked}
-            aria-label={`Claim type for ${merchant} part ${n}`}
-            onChange={(e) => onPatch({ claim_type: e.target.value as ClaimType })}
-          >
-            {config.claim_types.map((ct) => (
-              <option key={ct} value={ct}>
-                {claimTypeLabel(ct, names)}
-              </option>
-            ))}
-          </select>
+            onChange={(next) => onPatch({ claim_type: next })}
+          />
         </td>
         <td className={spacerCell} />
         <td className={spacerCell} />

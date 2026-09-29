@@ -1,10 +1,11 @@
 import { ArrowDown, ArrowUp, Check, Pencil, Plus, Tags, Trash2, X } from 'lucide-react';
-import { useEffect, useId, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { api, CONFIG_DEFAULTS_MESSAGE, errorMessage, type CategoriesOut, type CategoryOut } from '../api';
 import { useReloadConfig } from '../config/ConfigContext';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import {
   categoryLeaf,
+  groupLabel,
   groupRuns,
   inUseTitle,
   isInUse,
@@ -13,7 +14,7 @@ import {
   usageText,
 } from '../lib/categories';
 import { categoryLabel } from '../lib/format';
-import { btnIcon, btnPrimary, btnSecondary, btnSmall, cx, eyebrow, fieldNoteId, inputBase, inputInvalid } from '../lib/ui';
+import { btnGhost, btnIcon, btnPrimary, btnSecondary, btnSmall, cx, eyebrow, fieldNoteId, inputBase, inputCompact, inputInvalid } from '../lib/ui';
 import { Badge } from './Badge';
 import { Card } from './Card';
 import { ConfirmButton } from './ConfirmButton';
@@ -27,6 +28,7 @@ export const ADD_HINT = 'Group:Name, e.g. Bills:Phone. The part before the colon
 export const DUPLICATE_MESSAGE = 'That category is already in the list.';
 export const RENAME_NOTE = 'Renames it everywhere: transactions, remembered merchants and rules.';
 export const ALWAYS_KEPT_TITLE = 'Always kept: lines nothing classifies land here.';
+export const EMOJI_HINT = 'Shown before the group in the category menus; leave it empty for none.';
 export const CONFIG_STALE_MESSAGE = 'Saved, but the category menus elsewhere could not be refreshed';
 
 // ---------------------------------------------------------------------------
@@ -96,6 +98,73 @@ function RenameForm({ name, busy, error, onSave, onCancel }: RenameFormProps) {
   );
 }
 
+interface EmojiFieldProps {
+  group: string;
+  /** The emoji the group has now; "" for none. */
+  saved: string;
+  /** What the group would show with nothing saved, as the field's placeholder. */
+  placeholder: string;
+  busy: boolean;
+  onSave: (emoji: string) => void;
+}
+
+/** A group's emoji: saved on Enter or when the field is left, Escape puts it back; Clear saves "no emoji". */
+function EmojiField({ group, saved, placeholder, busy, onSave }: EmojiFieldProps) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const name = groupLabel(group);
+
+  function commit() {
+    if (draft === null) return;
+    const next = draft.trim();
+    setDraft(null);
+    if (next !== saved) onSave(next);
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      commit();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      setDraft(null);
+    }
+  }
+
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1">
+      <input
+        type="text"
+        className={cx(inputCompact, 'w-12 px-1 text-center text-base')}
+        aria-label={`Emoji for ${name}`}
+        title={EMOJI_HINT}
+        value={draft ?? saved}
+        placeholder={placeholder}
+        maxLength={8}
+        autoComplete="off"
+        spellCheck={false}
+        disabled={busy}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={onKeyDown}
+      />
+      {saved && (
+        <button
+          type="button"
+          className={cx(btnGhost, btnSmall, 'h-8 px-2')}
+          aria-label={`Clear the emoji for ${name}`}
+          disabled={busy}
+          onClick={() => {
+            setDraft(null);
+            onSave('');
+          }}
+        >
+          Clear
+        </button>
+      )}
+    </span>
+  );
+}
+
 interface RowProps {
   category: CategoryOut;
   index: number;
@@ -108,9 +177,11 @@ interface RowProps {
   onRenamed: (to: string) => void;
   onCancelRename: () => void;
   onRemove: () => Promise<void>;
+  /** A bare name is its own group, so its emoji field sits in the row. */
+  emojiField?: ReactNode;
 }
 
-function CategoryRow({ category, index, count, busy, editing, error, onMove, onRename, onRenamed, onCancelRename, onRemove }: RowProps) {
+function CategoryRow({ category, index, count, busy, editing, error, onMove, onRename, onRenamed, onCancelRename, onRemove, emojiField }: RowProps) {
   const { name } = category;
   /** What the controls call the row: the full name, spelt the British way for Uncategorised. */
   const label = categoryLabel(name);
@@ -122,6 +193,7 @@ function CategoryRow({ category, index, count, busy, editing, error, onMove, onR
         <RenameForm name={name} busy={busy} error={error} onSave={onRenamed} onCancel={onCancelRename} />
       ) : (
         <>
+          {emojiField}
           <div className="min-w-0 flex-1 basis-40">
             <p className="truncate text-sm font-semibold text-ink" title={label}>
               {protectedRow ? label : categoryLeaf(name)}
@@ -298,6 +370,28 @@ export function CategoriesPanel() {
     }
   }
 
+  async function saveEmoji(group: string, emoji: string) {
+    // The whole map of overrides goes back (a PUT replaces it): only groups that differ
+    // from their default, so a default left alone keeps following the defaults.
+    const defaults = data?.default_emojis ?? {};
+    const wanted = { ...(data?.emojis ?? {}), [group]: emoji };
+    const emojis = Object.fromEntries(Object.entries(wanted).filter(([g, e]) => e !== (defaults[g] ?? '')));
+    const ok = await apply(() => api.updateCategories(names, emojis), setError);
+    if (ok) setNotice(emoji ? `Saved ${emoji} for ${groupLabel(group)}.` : `Removed the emoji for ${groupLabel(group)}.`);
+  }
+
+  function emojiFor(group: string) {
+    return (
+      <EmojiField
+        group={group}
+        saved={data?.emojis?.[group] ?? ''}
+        placeholder={data?.default_emojis?.[group] ?? ''}
+        busy={busy}
+        onSave={(emoji) => void saveEmoji(group, emoji)}
+      />
+    );
+  }
+
   async function add(event: FormEvent) {
     event.preventDefault();
     if (!canAdd) return;
@@ -344,7 +438,12 @@ export function CategoriesPanel() {
         <div className="divide-y divide-hairline">
           {runs.map((run) => (
             <section key={`${run.group}-${run.items[0].index}`} className="px-5 py-3 sm:px-6" aria-label={run.grouped ? run.group : undefined}>
-              {run.grouped && <h3 className={eyebrow}>{run.group}</h3>}
+              {run.grouped && (
+                <div className="flex items-center gap-3">
+                  <h3 className={eyebrow}>{run.group}</h3>
+                  {emojiFor(run.group)}
+                </div>
+              )}
               <ul className={cx(run.grouped && 'mt-1')}>
                 {run.items.map(({ category, index }) => (
                   <CategoryRow
@@ -366,6 +465,7 @@ export function CategoriesPanel() {
                       setEditing(null);
                     }}
                     onRemove={() => remove(category.name)}
+                    emojiField={run.grouped ? undefined : emojiFor(category.name)}
                   />
                 ))}
               </ul>

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PeriodOut } from '../api';
 import { TransactionRow } from '../components/TransactionRow';
 import { ID_OCADO, ID_PART_A, ID_PART_B, ID_UBER, part, transaction } from '../test/fixtures';
-import { jsonResponse, mockFetch, renderWithProviders, type RecordedCall } from '../test/utils';
+import { categoryValue, claimTypeValue, jsonResponse, mockFetch, pickCategory, pickClaimType, type RecordedCall, renderWithProviders } from '../test/utils';
 import { TransactionsPage } from './TransactionsPage';
 
 const rows = [
@@ -102,9 +102,13 @@ describe('<TransactionsPage />', () => {
     await screen.findByRole('button', { name: 'Ocado' });
 
     expect(screen.getByLabelText('Search')).toHaveValue('ocado');
-    const category = screen.getByLabelText('Category for Ocado') as HTMLSelectElement;
-    expect(Array.from(category.options).map((o) => o.value)).not.toContain('');
-    expect(category.value).toBe('Uncategorized');
+    const category = screen.getByLabelText('Category for Ocado');
+    expect(categoryValue(category)).toBe('Uncategorized');
+    await userEvent.setup().click(category);
+    const values = within(screen.getByRole('listbox', { name: 'Categories' }))
+      .getAllByRole('option')
+      .map((o) => o.dataset.value);
+    expect(values).not.toContain('');
   });
 
   it('makes rows in a closed period read-only and says so', async () => {
@@ -139,10 +143,10 @@ describe('<TransactionsPage />', () => {
     // The parent's own category and claim type are no longer editable; each part's are.
     expect(screen.queryByLabelText('Category for Ocado')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Claim type for Ocado')).not.toBeInTheDocument();
-    expect((screen.getByLabelText('Category for Ocado part 1') as HTMLSelectElement).value).toBe('Groceries');
-    expect((screen.getByLabelText('Claim type for Ocado part 1') as HTMLSelectElement).value).toBe('shared_proportional');
-    expect((screen.getByLabelText('Category for Ocado part 2') as HTMLSelectElement).value).toBe('Dining');
-    expect((screen.getByLabelText('Claim type for Ocado part 2') as HTMLSelectElement).value).toBe('personal');
+    expect(categoryValue(screen.getByLabelText('Category for Ocado part 1'))).toBe('Groceries');
+    expect(claimTypeValue(screen.getByLabelText('Claim type for Ocado part 1'))).toBe('shared_proportional');
+    expect(categoryValue(screen.getByLabelText('Category for Ocado part 2'))).toBe('Dining');
+    expect(claimTypeValue(screen.getByLabelText('Claim type for Ocado part 2'))).toBe('personal');
     expect(screen.getByText('-£30.00')).toBeInTheDocument();
     expect(screen.getByText('-£15.90')).toBeInTheDocument();
     expect(screen.getByLabelText('Mark Ocado as a transfer')).toBeDisabled();
@@ -176,18 +180,18 @@ describe('<TransactionsPage />', () => {
 
     renderWithProviders(<TransactionsPage />, { route: '/transactions' });
     await screen.findByRole('button', { name: 'Ocado' });
-    await user.selectOptions(screen.getByLabelText('Category for Ocado part 1'), 'Bills:Water');
+    await pickCategory(user, screen.getByLabelText('Category for Ocado part 1'), 'Bills:Water');
 
     await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
     const patch = calls.find((c) => c.method === 'PATCH');
     expect(patch?.url).toBe(`/api/transactions/${ID_PART_A}`);
     expect(patch?.body).toEqual({ category: 'Bills:Water' });
     await waitFor(() =>
-      expect((screen.getByLabelText('Category for Ocado part 1') as HTMLSelectElement).value).toBe('Bills:Water'),
+      expect(categoryValue(screen.getByLabelText('Category for Ocado part 1'))).toBe('Bills:Water'),
     );
     // The parent is still one split row, and part 2 is untouched.
     expect(screen.getByText('Split into 2 parts')).toBeInTheDocument();
-    expect((screen.getByLabelText('Category for Ocado part 2') as HTMLSelectElement).value).toBe('Dining');
+    expect(categoryValue(screen.getByLabelText('Category for Ocado part 2'))).toBe('Dining');
   });
 
   it('shows a part’s error under that part when its PATCH is refused', async () => {
@@ -201,11 +205,11 @@ describe('<TransactionsPage />', () => {
 
     renderWithProviders(<TransactionsPage />, { route: '/transactions' });
     await screen.findByRole('button', { name: 'Ocado' });
-    await user.selectOptions(screen.getByLabelText('Claim type for Ocado part 2'), 'shared_equal');
+    await pickClaimType(user, screen.getByLabelText('Claim type for Ocado part 2'), 'shared_equal');
 
     expect(await screen.findByRole('alert')).toHaveTextContent('This period is closed. It needs reopening from the dashboard before it can change.');
     // Nothing was applied locally.
-    expect((screen.getByLabelText('Claim type for Ocado part 2') as HTMLSelectElement).value).toBe('personal');
+    expect(claimTypeValue(screen.getByLabelText('Claim type for Ocado part 2'))).toBe('personal');
   });
 
   it('unsplits after confirmation and brings the inline selects back', async () => {
@@ -229,7 +233,7 @@ describe('<TransactionsPage />', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE')).toBe(true));
     expect(calls.find((c) => c.method === 'DELETE')?.url).toBe(`/api/transactions/${ID_OCADO}/split`);
     expect(await screen.findByLabelText('Category for Ocado')).toBeEnabled();
-    expect((screen.getByLabelText('Category for Ocado') as HTMLSelectElement).value).toBe('Groceries');
+    expect(categoryValue(screen.getByLabelText('Category for Ocado'))).toBe('Groceries');
     expect(screen.queryByText('Split into 2 parts')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Category for Ocado part 1')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Mark Ocado as a transfer')).toBeEnabled();
@@ -254,8 +258,8 @@ describe('<TransactionsPage />', () => {
     await user.clear(within(dialog).getByLabelText('Amount for part 1'));
     await user.type(within(dialog).getByLabelText('Amount for part 1'), '30');
     await user.type(within(dialog).getByLabelText('Amount for part 2'), '15.90');
-    await user.selectOptions(within(dialog).getByLabelText('Category for part 1'), 'Groceries');
-    await user.selectOptions(within(dialog).getByLabelText('Category for part 2'), 'Dining');
+    await pickCategory(user, within(dialog).getByLabelText('Category for part 1'), 'Groceries');
+    await pickCategory(user, within(dialog).getByLabelText('Category for part 2'), 'Dining');
     await user.click(within(dialog).getByRole('button', { name: 'Save split' }));
 
     await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
@@ -267,7 +271,7 @@ describe('<TransactionsPage />', () => {
     });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(screen.getByText('Split into 2 parts')).toBeInTheDocument();
-    expect((screen.getByLabelText('Category for Ocado part 2') as HTMLSelectElement).value).toBe('Dining');
+    expect(categoryValue(screen.getByLabelText('Category for Ocado part 2'))).toBe('Dining');
     expect(screen.getByText('2 transactions match')).toBeInTheDocument();
   });
 
@@ -297,7 +301,7 @@ describe('<TransactionsPage />', () => {
 
     renderWithProviders(<TransactionsPage />, { route: '/transactions' });
     await screen.findByRole('button', { name: 'Ocado' });
-    await user.selectOptions(screen.getByLabelText('Category for Ocado'), 'Groceries');
+    await pickCategory(user, screen.getByLabelText('Category for Ocado'), 'Groceries');
 
     expect(await screen.findByRole('alert')).toHaveTextContent('This period is closed. It needs reopening from the dashboard before it can change.');
   });
@@ -342,7 +346,7 @@ describe('the transactions list layout', () => {
     const row = select.closest('tr')!;
     expect(row).toHaveClass('grid', 'sm:table-row');
     expect(select).toHaveClass('w-full');
-    expect(screen.getByLabelText('Claim type for Ocado')).toHaveClass('w-full', 'sm:w-36', '2xl:w-56');
+    expect(screen.getByLabelText('Claim type for Ocado')).toHaveClass('w-full', 'sm:w-36', '2xl:w-auto');
     // The column headings are for the table only.
     expect(screen.getByRole('columnheader', { name: 'Amount' }).closest('thead')).toHaveClass('hidden', 'sm:table-header-group');
   });

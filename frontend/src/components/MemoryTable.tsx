@@ -1,6 +1,7 @@
 import { Brain, Trash2 } from 'lucide-react';
 import type { MemoryOut } from '../api';
-import { useNames } from '../config/ConfigContext';
+import { useConfig, useNames } from '../config/ConfigContext';
+import { categoryEmojiLabel } from '../lib/categories';
 import { formatDateTime } from '../lib/dates';
 import { claimTypeLabel } from '../lib/format';
 import { cx, tableBase, tableFlush, tdBase, thBase, trHover } from '../lib/ui';
@@ -18,6 +19,7 @@ interface Props {
 /** Learnt merchant classifications; designed to sit inside `<Card flush>`. */
 export function MemoryTable({ entries, errors, onDelete }: Props) {
   const names = useNames();
+  const emojis = useConfig().category_emojis;
   if (entries.length === 0) {
     return (
       <EmptyState
@@ -72,7 +74,7 @@ export function MemoryTable({ entries, errors, onDelete }: Props) {
                   </div>
                 </td>
                 <td className={tdBase}>
-                  <Badge tone="neutral">{entry.category}</Badge>
+                  <Badge tone="neutral">{categoryEmojiLabel(entry.category, emojis)}</Badge>
                 </td>
                 <td className={cx(tdBase, 'whitespace-nowrap text-ink-2')}>
                   {claimTypeLabel(entry.default_claim_type, names)}

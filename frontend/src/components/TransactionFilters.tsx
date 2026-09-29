@@ -2,6 +2,7 @@ import { Search } from 'lucide-react';
 import type { FormEvent } from 'react';
 import type { PeriodOut, ReviewStatus } from '../api';
 import { useConfig } from '../config/ConfigContext';
+import { categoryMenuGroups } from '../lib/categories';
 import { periodLabel } from '../lib/dates';
 import { accountLabel, reviewStatusLabel } from '../lib/format';
 import { btnSecondary, checkboxBase, cx, inputBase, labelBase, selectBase } from '../lib/ui';
@@ -103,11 +104,23 @@ export function TransactionFilters({ periods, values, onChange }: Props) {
           onChange={(e) => set('category', e.target.value)}
         >
           <option value="">All categories</option>
-          {config.categories.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
+          {categoryMenuGroups(config.categories, config.category_emojis).map((group, i) =>
+            group.heading ? (
+              <optgroup key={`${group.heading}-${i}`} label={group.heading}>
+                {group.options.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.text}
+                  </option>
+                ))}
+              </optgroup>
+            ) : (
+              group.options.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.text}
+                </option>
+              ))
+            ),
+          )}
         </select>
       </div>
       <div className="sm:col-span-2 lg:col-span-3">
