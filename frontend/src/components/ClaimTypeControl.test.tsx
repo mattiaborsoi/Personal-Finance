@@ -29,6 +29,20 @@ const group = () => screen.getByRole('radiogroup', { name: 'Claim type for Ocado
 const radio = (name: string) => within(group()).getByRole('radio', { name });
 
 describe('<ClaimTypeControl />', () => {
+  it("says exactly what each choice does on this line's card", () => {
+    // A line on Sam's card, paid by Sam.
+    renderWithProviders(
+      <ClaimTypeControl label="Claim type for Ocado" value="personal" onChange={vi.fn()} context={{ payer: 'secondary', holder: 'secondary' }} />,
+    );
+    const g = screen.getByRole('radiogroup', { name: 'Claim type for Ocado' });
+    expect(within(g).getByRole('radio', { name: "Mine (Alex's personal item)" })).toHaveAccessibleDescription(
+      "Only Alex's, but Sam paid. Alex pays Sam back in full.",
+    );
+    expect(within(g).getByRole('radio', { name: 'Personal (not shared)' })).toHaveAccessibleDescription(
+      "Sam's own spending on Sam's card. Nothing to settle.",
+    );
+  });
+
   it('is a radio group named like the select it replaces, one radio per configured claim type', () => {
     renderWithProviders(<Harness initial="shared_equal" onChange={vi.fn()} />);
 
@@ -41,7 +55,14 @@ describe('<ClaimTypeControl />', () => {
       "Mine (Alex's personal item)",
     ]);
     // Each segment's full label is its tooltip too.
-    expect(radio('Split by income')).toHaveAttribute('title', 'Split by income');
+    expect(radio('Split by income')).toHaveAttribute(
+      'title',
+      'Split by income. Shared by both of you, split in proportion to income.',
+    );
+    // What each choice does is also its accessible description.
+    expect(radio("Sam's personal item")).toHaveAccessibleDescription(
+      "Only Sam's, whoever paid. If Alex paid, Sam pays Alex back in full.",
+    );
     expect(radio('50/50')).toHaveAttribute('aria-checked', 'true');
     expect(radio('Split by income')).toHaveAttribute('aria-checked', 'false');
     expect(claimTypeValue(group())).toBe('shared_equal');

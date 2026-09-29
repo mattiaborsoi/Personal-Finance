@@ -142,6 +142,61 @@ export function claimTypeLabel(
   }
 }
 
+type Person = 'primary' | 'secondary';
+
+/** Who paid a line and whose card it was on, when known (a row knows; the explainer does not). */
+export interface ClaimContext {
+  /** Whoever pays the card's bill (its `billed_to`, else its holder). */
+  payer?: Person;
+  /** The card holder, who "Personal" belongs to. */
+  holder?: Person;
+}
+
+/** Which of the two users an account is held by and billed to, for {@link claimTypeEffect}. */
+export function claimContextForAccount(
+  account: Pick<AccountConfig, 'owner' | 'billed_to'> | undefined,
+  users: { primary: { id: string } },
+): ClaimContext {
+  if (!account) return {};
+  const who = (id: string): Person => (id === users.primary.id ? 'primary' : 'secondary');
+  return { holder: who(account.owner), payer: who(account.billed_to || account.owner) };
+}
+
+/**
+ * What a claim type does to the settlement, in one or two short sentences. With a
+ * context it is exact for that line; without one it states the general rule.
+ */
+export function claimTypeEffect(
+  claimType: ClaimType | string | null | undefined,
+  names: { primary: string; secondary: string },
+  context: ClaimContext = {},
+): string {
+  const other = (who: Person): Person => (who === 'primary' ? 'secondary' : 'primary');
+  const { payer, holder } = context;
+  switch (claimType) {
+    case 'shared_proportional':
+      return 'Shared by both of you, split in proportion to income.';
+    case 'shared_equal':
+      return 'Shared by both of you, half each.';
+    case 'personal':
+      if (!holder) return "The card holder's own spending. Nothing to settle, unless someone else pays that card's bill.";
+      if (payer && payer !== holder) {
+        return `${names[holder]}'s own spending. ${names[payer]} pays this card's bill, so ${names[holder]} pays ${names[payer]} back in full.`;
+      }
+      return `${names[holder]}'s own spending on ${names[holder]}'s card. Nothing to settle.`;
+    case 'primary_personal':
+    case 'secondary_personal': {
+      const who: Person = claimType === 'primary_personal' ? 'primary' : 'secondary';
+      const them = other(who);
+      if (!payer) return `Only ${names[who]}'s, whoever paid. If ${names[them]} paid, ${names[who]} pays ${names[them]} back in full.`;
+      if (payer === who) return `Only ${names[who]}'s, and ${names[who]} paid. Nothing to settle.`;
+      return `Only ${names[who]}'s, but ${names[them]} paid. ${names[who]} pays ${names[them]} back in full.`;
+    }
+    default:
+      return '';
+  }
+}
+
 export function reviewStatusLabel(status: string): string {
   switch (status) {
     case 'pending_review':

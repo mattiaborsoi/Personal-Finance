@@ -1,7 +1,8 @@
 import { CircleAlert, CircleCheck, Plus, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import { useId, useRef, useState, type FormEvent } from 'react';
 import { api, editErrorMessage, UNCATEGORIZED, type ClaimType, type SplitPartInput, type TransactionOut } from '../api';
-import { useCurrency } from '../config/ConfigContext';
+import { useConfig, useCurrency } from '../config/ConfigContext';
+import { claimContextForAccount } from '../lib/format';
 import { formatDate } from '../lib/dates';
 import { formatMoney } from '../lib/money';
 import { formatPence, magnitude, parseAmountPence, toPence } from '../lib/splits';
@@ -85,6 +86,8 @@ function initialRows(tx: TransactionOut, defaults: SplitDefaults | undefined): R
  * button only enables once the parts add up to the total exactly.
  */
 export function SplitDialog({ transaction: tx, defaults, onClose, onSaved }: Props) {
+  const config = useConfig();
+  const claimContext = claimContextForAccount(config.accounts.find((a) => a.id === tx.account_id), config.users);
   const symbol = useCurrency();
   const firstAmountRef = useRef<HTMLInputElement>(null);
   const idBase = useId();
@@ -270,6 +273,7 @@ export function SplitDialog({ transaction: tx, defaults, onClose, onSaved }: Pro
                       size="base"
                       labels="always"
                       label={`Claim type for part ${n}`}
+                      context={claimContext}
                       className="w-full"
                       value={row.claim_type}
                       disabled={saving}

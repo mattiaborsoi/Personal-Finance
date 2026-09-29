@@ -5,6 +5,7 @@ import { useAuth } from '../auth/AuthContext';
 import { useConfig, useCurrency, useNames } from '../config/ConfigContext';
 import { claimDateProblem, earliestClaimDate, isDateProblem, isLargeClaim } from '../lib/claims';
 import { todayIso } from '../lib/dates';
+import { claimTypeEffect } from '../lib/format';
 import { splitPreviewText } from '../lib/household';
 import { formatMoney, normaliseAmountInput } from '../lib/money';
 import { btnPrimary, cardInset, cx, inputBase, inputInvalid, inputTall, labelBase, radioBase, selectBase } from '../lib/ui';
@@ -23,7 +24,8 @@ type Names = { primary: string; secondary: string };
 interface SplitOption {
   value: ClaimType;
   label: (names: Names) => string;
-  hint: (names: Names, split: AppConfig['split']) => string;
+  /** The line under the option; `payer` is who paid this claim, so a personal item says what it settles. */
+  hint: (names: Names, split: AppConfig['split'], payer: 'primary' | 'secondary') => string;
   icon: LucideIcon;
 }
 
@@ -48,8 +50,18 @@ function defaultClaimType(split: AppConfig['split']): ClaimType {
 const SPLIT_OPTIONS: SplitOption[] = [
   { value: 'shared_proportional', label: () => 'Split by income', hint: incomeSplitHint, icon: Scale },
   { value: 'shared_equal', label: () => '50/50', hint: () => 'Shared cost, split equally', icon: Divide },
-  { value: 'primary_personal', label: (n) => `${n.primary}'s personal item`, hint: () => 'Not shared', icon: User },
-  { value: 'secondary_personal', label: (n) => `${n.secondary}'s personal item`, hint: () => 'Not shared', icon: User },
+  {
+    value: 'primary_personal',
+    label: (n) => `${n.primary}'s personal item`,
+    hint: (n, _split, payer) => claimTypeEffect('primary_personal', n, { payer }),
+    icon: User,
+  },
+  {
+    value: 'secondary_personal',
+    label: (n) => `${n.secondary}'s personal item`,
+    hint: (n, _split, payer) => claimTypeEffect('secondary_personal', n, { payer }),
+    icon: User,
+  },
 ];
 
 /** Mobile-first claim form; large touch targets and native inputs. */
@@ -286,7 +298,7 @@ export function ClaimForm({ onCreated, onDateChange }: Props) {
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-semibold text-ink">{opt.label(names)}</span>
-                  <span className="block text-xs text-ink-3">{opt.hint(names, config.split)}</span>
+                  <span className="block text-xs text-ink-3">{opt.hint(names, config.split, paidBy === config.users.primary.id ? 'primary' : 'secondary')}</span>
                 </span>
                 <input
                   type="radio"

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { UNCATEGORIZED, type ClaimType, type TransactionOut, type TransactionPatch } from '../api';
 import { useConfig } from '../config/ConfigContext';
 import { formatDate } from '../lib/dates';
-import { accountLabel } from '../lib/format';
+import { accountLabel, claimContextForAccount } from '../lib/format';
 import { useInlineEdit } from '../hooks/useInlineEdit';
 import { btnIcon, btnPrimary, btnSmall, checkboxBase, chipSoft, cx, trHover } from '../lib/ui';
 import { CategoryPicker } from './CategoryPicker';
@@ -142,6 +142,7 @@ export function ApprovalRow({
             />
             <ClaimTypeControl
               label={`Claim type for ${merchant}`}
+              context={claimContextForAccount(config.accounts.find((a) => a.id === tx.account_id), config.users)}
               className="w-44 2xl:w-auto"
               value={claimType}
               onChange={(next) => onDraftChange({ ...draft, claim_type: next })}

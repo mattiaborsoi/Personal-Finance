@@ -4,7 +4,7 @@ import { UNCATEGORIZED, type TransactionOut, type TransactionPart, type Transact
 import { useConfig } from '../config/ConfigContext';
 import { useInlineEdit } from '../hooks/useInlineEdit';
 import { formatDate } from '../lib/dates';
-import { accountLabel, plural, reviewStatusLabel } from '../lib/format';
+import { accountLabel, claimContextForAccount, plural, reviewStatusLabel, type ClaimContext } from '../lib/format';
 import { btnIcon, chipSoft, cx, trHover } from '../lib/ui';
 import { Badge, type BadgeTone } from './Badge';
 import { CategoryPicker } from './CategoryPicker';
@@ -87,6 +87,7 @@ export function TransactionRow({
   readOnly = false,
 }: Props) {
   const config = useConfig();
+  const claimContext = claimContextForAccount(config.accounts.find((a) => a.id === tx.account_id), config.users);
   const [saving, setSaving] = useState(false);
   const [savingPart, setSavingPart] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
@@ -199,6 +200,7 @@ export function TransactionRow({
             <td className={cx(cell, 'col-span-2 row-start-4')}>
               <ClaimTypeControl
                 label={`Claim type for ${merchant}`}
+                context={claimContext}
                 className={claimWidth}
                 value={tx.claim_type}
                 disabled={locked}
@@ -289,6 +291,7 @@ export function TransactionRow({
             saving={savingPart === part.id}
             error={partError}
             onPatch={(change) => patchPart(part, change)}
+            claimContext={claimContext}
           />
         );
       })}
@@ -305,10 +308,12 @@ interface PartRowsProps {
   saving: boolean;
   error?: string;
   onPatch: (patch: TransactionPatch) => void;
+  /** The parent's card: who paid and whose card it is, for the claim-type tooltips. */
+  claimContext: ClaimContext;
 }
 
 /** One indented sub-row per part of a split transaction, editable in place. */
-function PartRows({ part, n, merchant, locked, readOnly, saving, error, onPatch }: PartRowsProps) {
+function PartRows({ part, n, merchant, locked, readOnly, saving, error, onPatch, claimContext }: PartRowsProps) {
   const subject = `${merchant} part ${n}`;
   const noteEdit = useInlineEdit({ value: part.note ?? '', onSave: (note) => onPatch({ note }), blocked: saving });
   return (
@@ -346,6 +351,7 @@ function PartRows({ part, n, merchant, locked, readOnly, saving, error, onPatch 
         <td className={cx(partCell, 'col-span-2 row-start-3')}>
           <ClaimTypeControl
             label={`Claim type for ${merchant} part ${n}`}
+            context={claimContext}
             className={claimWidth}
             value={part.claim_type}
             disabled={locked}

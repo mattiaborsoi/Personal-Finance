@@ -18,6 +18,7 @@ import { Pagination } from '../components/Pagination';
 import { SplitDialog } from '../components/SplitDialog';
 import { TransactionFilters, type TransactionFilterValues } from '../components/TransactionFilters';
 import { TransactionTable } from '../components/TransactionTable';
+import { ClaimTypeHelp } from '../components/ClaimTypeHelp';
 import { useAsync } from '../hooks/useAsync';
 import { periodLabel } from '../lib/dates';
 import { plural } from '../lib/format';
@@ -174,6 +175,7 @@ export function TransactionsPage() {
         )}
         {list.data && (
           <>
+            {list.data.items.length > 0 && <ClaimTypeHelp className="px-5 pt-3 sm:px-6" />}
             <TransactionTable
               items={list.data.items}
               errors={rowErrors}

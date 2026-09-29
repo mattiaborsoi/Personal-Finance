@@ -50,6 +50,12 @@ function recentDate(): string {
 }
 
 describe('<ClaimForm />', () => {
+  it("says what each person's item settles, given that the partner paid the claim", () => {
+    renderWithProviders(<ClaimForm onCreated={() => {}} />, { session: secondarySession });
+    expect(screen.getByText("Only Alex's, but Sam paid. Alex pays Sam back in full.")).toBeInTheDocument();
+    expect(screen.getByText("Only Sam's, and Sam paid. Nothing to settle.")).toBeInTheDocument();
+  });
+
   it('shows the split options using display names from config, never hard-coded names', () => {
     mockFetch(() => undefined);
     renderWithProviders(<ClaimForm onCreated={() => {}} />, { session: secondarySession });

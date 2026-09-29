@@ -6,6 +6,7 @@ import { useAsync } from '../hooks/useAsync';
 import { accountLabel, plural } from '../lib/format';
 import { btnPrimary, btnSecondary, btnSmall, cardBase, checkboxBase, cx, selectCompact, tableBase, tableFlush } from '../lib/ui';
 import { ApprovalRow, type ApprovalDraft } from './ApprovalRow';
+import { ClaimTypeHelp } from './ClaimTypeHelp';
 import { EmptyState } from './EmptyState';
 import { ErrorMessage } from './ErrorMessage';
 import { LoadingState } from './LoadingState';
@@ -303,6 +304,7 @@ export function ApprovalQueue({ period, closed = false, onChanged, account = '',
         </div>
       </header>
 
+      {items.length > 0 && <ClaimTypeHelp tipKey="claim-types" className="px-5 pt-3 sm:px-6" />}
       {hasNotices && (
         <div className="space-y-3 px-5 pt-4 sm:px-6">
           {queue.error && <ErrorMessage message={queue.error.message} onRetry={queue.reload} />}

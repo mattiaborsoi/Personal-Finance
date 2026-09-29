@@ -1,9 +1,9 @@
 import { Divide, Scale, User, UserRound, Wallet, type LucideIcon } from 'lucide-react';
-import { useContext, useRef, type KeyboardEvent } from 'react';
+import { useContext, useId, useRef, type KeyboardEvent } from 'react';
 import type { ClaimType } from '../api';
 import { AuthContext } from '../auth/AuthContext';
-import { useConfig } from '../config/ConfigContext';
-import { claimTypeLabel } from '../lib/format';
+import { useConfig, useNames } from '../config/ConfigContext';
+import { claimTypeEffect, claimTypeLabel, type ClaimContext } from '../lib/format';
 import { cx, focusRing } from '../lib/ui';
 
 interface Choice {
@@ -70,6 +70,8 @@ interface Props {
    * and from `2xl`, so a row fits a laptop. `always`: the chosen word always shows.
    */
   labels?: 'wide' | 'always';
+  /** Who paid this line and whose card it is on, so each segment's tooltip says exactly what it does. */
+  context?: ClaimContext;
   /** `compact` is 32px tall like the row controls; `base` matches a full-size field. */
   size?: 'compact' | 'base';
   className?: string;
@@ -81,8 +83,19 @@ interface Props {
  * native radio group. Every segment has an icon and a tooltip; the full
  * label is each segment's accessible name.
  */
-export function ClaimTypeControl({ value, onChange, label, disabled = false, labels = 'wide', size = 'compact', className }: Props) {
+export function ClaimTypeControl({
+  value,
+  onChange,
+  label,
+  disabled = false,
+  labels = 'wide',
+  size = 'compact',
+  className,
+  context,
+}: Props) {
   const choices = useClaimChoices();
+  const names = useNames();
+  const idBase = useId();
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
   const checkedIndex = choices.findIndex((c) => c.value === value);
   const tabStop = checkedIndex >= 0 ? checkedIndex : 0;
@@ -132,7 +145,8 @@ export function ClaimTypeControl({ value, onChange, label, disabled = false, lab
             role="radio"
             aria-checked={checked}
             aria-label={choice.name}
-            title={choice.name}
+            aria-describedby={`${idBase}-${index}`}
+            title={`${choice.name}. ${claimTypeEffect(choice.value, names, context)}`}
             data-value={choice.value}
             tabIndex={index === tabStop ? 0 : -1}
             disabled={disabled}
@@ -159,6 +173,12 @@ export function ClaimTypeControl({ value, onChange, label, disabled = false, lab
           </button>
         );
       })}
+      {/* What each choice does, as the segments' descriptions; hidden text still counts for aria-describedby. */}
+      {choices.map((choice, index) => (
+        <span key={choice.value} id={`${idBase}-${index}`} hidden>
+          {claimTypeEffect(choice.value, names, context)}
+        </span>
+      ))}
     </div>
   );
 }

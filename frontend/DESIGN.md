@@ -109,6 +109,14 @@ Rules:
   and titled with the full label; the chosen one adds its short word ("By income",
   "50/50", a first name, or "Mine" for the viewer's own) on a phone and from `2xl`, so a
   row still fits a 1280px laptop with icons only.
+  The person segments show that person's initial rather than an icon. Each segment's
+  tooltip and accessible description say what it does on that line's card
+  (`claimTypeEffect` with `claimContextForAccount`), e.g. "Only Alex's, but Sam paid.
+  Alex pays Sam back in full."
+* Explaining a choice: `ClaimTypeHelp` is a quiet "What do … mean?" toggle that opens
+  an inline panel, never a modal. With a `tipKey` it opens by itself once per browser
+  as a first-use tip with a "Got it" (stored under `settl.tip.<key>`, and tolerant of
+  storage being unavailable).
 * Row controls with a short visible label ("Approve", "Delete") name the row for
   screen readers via `aria-label` ("Approve Waitrose"), as the selects already do.
 * Renaming in place: a `btnIconSmall` pencil ("Rename Waitrose") swaps the name for an

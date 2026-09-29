@@ -5,6 +5,8 @@ import { resetCategorySuggestions } from '../lib/categorySuggestions';
 
 beforeEach(() => {
   localStorage.clear();
+  // First-use tips stay out of the way unless a test asks for them (by removing this key).
+  localStorage.setItem('settl.tip.claim-types', 'seen');
 });
 
 afterEach(() => {
