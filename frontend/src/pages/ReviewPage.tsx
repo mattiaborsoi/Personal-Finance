@@ -74,8 +74,15 @@ export function ReviewPage() {
   // Nothing waits in this month but lines wait in others: point at them instead of an "all caught up" queue.
   const elsewhere = (periodInfo?.pending_review_count ?? 0) === 0 ? pendingElsewhere(periods.data, period) : [];
 
+  const account = searchParams.get('account') ?? '';
+
+  // The account filter carries over to another month; the month is kept when the account changes.
   function changePeriod(next: string) {
-    setSearchParams(next ? { period: next } : {});
+    setSearchParams({ ...(next ? { period: next } : {}), ...(account ? { account } : {}) });
+  }
+
+  function changeAccount(next: string) {
+    setSearchParams({ ...(requested ? { period: requested } : {}), ...(next ? { account: next } : {}) }, { replace: true });
   }
 
   return (
@@ -122,7 +129,14 @@ export function ReviewPage() {
       {period && elsewhere.length > 0 && <PendingElsewhere period={period} months={elsewhere} />}
       {/* Waits for the periods (unless they fail), so an empty queue never shows while other months have lines. */}
       {period && (periods.data || periods.error) && elsewhere.length === 0 && (
-        <ApprovalQueue key={period} period={period} closed={closed} onChanged={periods.reload} />
+        <ApprovalQueue
+          key={period}
+          period={period}
+          closed={closed}
+          onChanged={periods.reload}
+          account={account}
+          onAccountChange={changeAccount}
+        />
       )}
     </div>
   );

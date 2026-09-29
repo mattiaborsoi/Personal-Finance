@@ -1,9 +1,10 @@
 import { ListChecks, Lock } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, editErrorMessage, type TransactionOut, type TransactionPatch } from '../api';
+import { useConfig } from '../config/ConfigContext';
 import { useAsync } from '../hooks/useAsync';
-import { plural } from '../lib/format';
-import { btnPrimary, btnSmall, cardBase, checkboxBase, cx, tableBase, tableFlush } from '../lib/ui';
+import { accountLabel, plural } from '../lib/format';
+import { btnPrimary, btnSecondary, btnSmall, cardBase, checkboxBase, cx, selectCompact, tableBase, tableFlush } from '../lib/ui';
 import { ApprovalRow, type ApprovalDraft } from './ApprovalRow';
 import { EmptyState } from './EmptyState';
 import { ErrorMessage } from './ErrorMessage';
@@ -17,11 +18,16 @@ interface Props {
   closed?: boolean;
   /** Called after any approval succeeds so the page can count the periods again. */
   onChanged?: () => void;
+  /** Show only this account's lines ('' or undefined: every account). */
+  account?: string;
+  /** Called when the user picks another account in the queue's filter. */
+  onAccountChange?: (accountId: string) => void;
 }
 
 const NO_DRAFT: ApprovalDraft = {};
 
-export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
+export function ApprovalQueue({ period, closed = false, onChanged, account = '', onAccountChange }: Props) {
+  const config = useConfig();
   const queue = useAsync(
     () => api.listTransactions({ period, status: 'pending_review', limit: 200, offset: 0 }),
     `approval-queue:${period}`,
@@ -45,8 +51,21 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
     headingRef.current?.focus();
   }, [splitting]);
 
-  const items = queue.data?.items ?? [];
-  const total = queue.data?.total ?? items.length;
+  const allItems = useMemo(() => queue.data?.items ?? [], [queue.data]);
+  // The filter works on the month's lines already loaded, so each account can show its count.
+  const items = useMemo(() => (account ? allItems.filter((t) => t.account_id === account) : allItems), [allItems, account]);
+  const total = account ? items.length : (queue.data?.total ?? items.length);
+  const accountCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    allItems.forEach((t) => counts.set(t.account_id, (counts.get(t.account_id) ?? 0) + 1));
+    // A chosen account stays in the list at 0 once its last line is approved.
+    if (account && !counts.has(account)) counts.set(account, 0);
+    return [...counts.entries()]
+      .map(([id, count]) => ({ id, count, label: accountLabel(config.accounts, id) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [allItems, account, config.accounts]);
+  const showFilter = Boolean(onAccountChange) && (accountCounts.length > 1 || Boolean(account));
+  const accountName = account ? accountLabel(config.accounts, account) : '';
 
   function removeOptimistically(ids: string[]) {
     const remove = new Set(ids);
@@ -218,11 +237,37 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
               <h2 ref={headingRef} tabIndex={-1} className="text-base font-semibold tracking-tight text-ink focus:outline-none">
                 Approval queue
               </h2>
-              {queue.data && <p className="mt-0.5 text-xs text-ink-3">{`${plural(total, 'transaction')} pending review`}</p>}
+              {queue.data && (
+                <p className="mt-0.5 text-xs text-ink-3">
+                  {account
+                    ? `${plural(total, 'transaction')} pending review on ${accountName}, of ${allItems.length} this month`
+                    : `${plural(total, 'transaction')} pending review`}
+                </p>
+              )}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {queue.loading && <LoadingState inline />}
+            {showFilter && (
+              <>
+                <label htmlFor={`review-account-${period}`} className="sr-only">
+                  Show lines from
+                </label>
+                <select
+                  id={`review-account-${period}`}
+                  className={cx(selectCompact, 'w-auto max-w-[16rem]')}
+                  value={account}
+                  onChange={(e) => onAccountChange?.(e.target.value)}
+                >
+                  <option value="">All accounts ({allItems.length})</option>
+                  {accountCounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.label} ({a.count})
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
             {items.length > 0 && (
               <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-2">
                 <input
@@ -266,7 +311,19 @@ export function ApprovalQueue({ period, closed = false, onChanged }: Props) {
           <LoadingState label="Loading queue" rows={4} />
         </div>
       )}
-      {queue.data && items.length === 0 && (
+      {queue.data && items.length === 0 && account && allItems.length > 0 && (
+        <EmptyState
+          icon={ListChecks}
+          title={`Nothing waiting on ${accountName}.`}
+          hint={`${plural(allItems.length, 'line')} from other accounts still ${allItems.length === 1 ? 'waits' : 'wait'} this month.`}
+          action={
+            <button type="button" className={btnSecondary} onClick={() => onAccountChange?.('')}>
+              Show all accounts
+            </button>
+          }
+        />
+      )}
+      {queue.data && items.length === 0 && !(account && allItems.length > 0) && (
         <EmptyState icon={ListChecks} title="Nothing to review. All caught up." hint="New statement lines land here for a quick check." />
       )}
       {items.length > 0 && (

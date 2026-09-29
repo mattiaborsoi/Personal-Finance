@@ -51,6 +51,32 @@ describe('<ReviewPage />', () => {
     expect(screen.getByRole('option', { name: 'July 2026 · 2 to review' })).toBeInTheDocument();
   });
 
+  it('filters the queue by the account in the URL and keeps the month when the account changes', async () => {
+    const user = userEvent.setup();
+    const mixed = [july[0], { ...july[1], account_id: 'acc_checking_hsbc' }];
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse(periods);
+      if (method === 'GET' && url.startsWith('/api/transactions?period=2026-07&')) return jsonResponse({ items: mixed, total: 2 });
+      return undefined;
+    });
+
+    renderWithProviders(
+      <>
+        <ReviewPage />
+        <LocationProbe />
+      </>,
+      { route: '/review?period=2026-07&account=acc_checking_hsbc' },
+    );
+
+    const queue = await screen.findByRole('region', { name: 'Approval queue' });
+    expect(await within(queue).findByRole('button', { name: 'Uber' })).toBeInTheDocument();
+    expect(within(queue).queryByRole('button', { name: 'Ocado' })).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('Show lines from'), '');
+    expect(await within(queue).findByRole('button', { name: 'Ocado' })).toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/review\?period=2026-07$/);
+  });
+
   it('opens on the oldest month with lines waiting and follows the period selector', async () => {
     const user = userEvent.setup();
     const { calls } = mockFetch(({ method, url }) => {

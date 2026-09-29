@@ -355,3 +355,73 @@ describe('<ApprovalQueue />', () => {
     expect(screen.getByText('2 transactions pending review')).toBeInTheDocument();
   });
 });
+
+describe('<ApprovalQueue /> account filter', () => {
+  const onHsbc = transaction({ ...uber, account_id: 'acc_checking_hsbc' });
+  const mixed = [transaction({ id: ID_OCADO, cleaned_merchant: 'Ocado' }), onHsbc];
+
+  function mockQueue() {
+    return mockFetch(({ method, url }) => {
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: mixed, total: 2 });
+      if (method === 'POST' && url === '/api/transactions/approve-batch') return jsonResponse({ approved: 1, remembered: 0 });
+      return undefined;
+    });
+  }
+
+  it('offers each account with its count and shows only the chosen one', async () => {
+    mockQueue();
+    const onAccountChange = vi.fn();
+    renderWithProviders(<ApprovalQueue period="2026-03" account="acc_checking_hsbc" onAccountChange={onAccountChange} />);
+
+    expect(await screen.findByRole('button', { name: 'Uber' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Ocado' })).not.toBeInTheDocument();
+    expect(screen.getByText('1 transaction pending review on HSBC Premier ··4471, of 2 this month')).toBeInTheDocument();
+    const filter = screen.getByLabelText('Show lines from');
+    expect(within(filter).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'All accounts (2)',
+      'Amex Platinum ··7715 (1)',
+      'HSBC Premier ··4471 (1)',
+    ]);
+    await userEvent.setup().selectOptions(filter, '');
+    expect(onAccountChange).toHaveBeenCalledWith('');
+  });
+
+  it('selects and approves only the lines on show', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockQueue();
+    renderWithProviders(<ApprovalQueue period="2026-03" account="acc_checking_hsbc" onAccountChange={vi.fn()} />);
+    await screen.findByRole('button', { name: 'Uber' });
+
+    await user.click(screen.getByRole('checkbox', { name: 'Select all pending transactions' }));
+    await user.click(screen.getByRole('button', { name: 'Approve selected (1)' }));
+
+    await waitFor(() => expect(calls.some((c) => c.url === '/api/transactions/approve-batch')).toBe(true));
+    const batch = calls.find((c) => c.url === '/api/transactions/approve-batch');
+    expect(batch?.body).toEqual({ ids: [ID_UBER], remember: true });
+  });
+
+  it('says when the chosen account has nothing left and offers every account again', async () => {
+    const user = userEvent.setup();
+    mockFetch(({ method, url }) =>
+      method === 'GET' && url.startsWith('/api/transactions?')
+        ? jsonResponse({ items: [transaction({ id: ID_OCADO, cleaned_merchant: 'Ocado' })], total: 1 })
+        : undefined,
+    );
+    const onAccountChange = vi.fn();
+    renderWithProviders(<ApprovalQueue period="2026-03" account="acc_checking_hsbc" onAccountChange={onAccountChange} />);
+
+    expect(await screen.findByText('Nothing waiting on HSBC Premier ··4471.')).toBeInTheDocument();
+    expect(screen.getByText('1 line from other accounts still waits this month.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Show all accounts' }));
+    expect(onAccountChange).toHaveBeenCalledWith('');
+  });
+
+  it('hides the filter when every line is on one account', async () => {
+    mockFetch(({ method, url }) =>
+      method === 'GET' && url.startsWith('/api/transactions?') ? jsonResponse({ items: rows, total: 2 }) : undefined,
+    );
+    renderWithProviders(<ApprovalQueue period="2026-03" onAccountChange={vi.fn()} />);
+    await screen.findByRole('button', { name: 'Ocado' });
+    expect(screen.queryByLabelText('Show lines from')).not.toBeInTheDocument();
+  });
+});
