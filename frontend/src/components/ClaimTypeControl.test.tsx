@@ -64,6 +64,9 @@ describe('<ClaimTypeControl />', () => {
       "Only Sam's, whoever paid. If Alex paid, Sam pays Alex back in full.",
     );
     expect(radio('50/50')).toHaveAttribute('aria-checked', 'true');
+    // The chosen segment wears its claim type's colour; the others stay neutral.
+    expect(radio('50/50')).toHaveClass('bg-claim-equal-soft', 'text-claim-equal');
+    expect(radio('Split by income')).not.toHaveClass('bg-claim-income-soft');
     expect(radio('Split by income')).toHaveAttribute('aria-checked', 'false');
     expect(claimTypeValue(group())).toBe('shared_equal');
     // Only the chosen segment shows its word; the others are icons with names.

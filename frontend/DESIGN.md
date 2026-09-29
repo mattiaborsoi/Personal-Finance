@@ -113,6 +113,11 @@ Rules:
   tooltip and accessible description say what it does on that line's card
   (`claimTypeEffect` with `claimContextForAccount`), e.g. "Only Alex's, but Sam paid.
   Alex pays Sam back in full."
+* Claim-type colours (`claim-*` tokens, `lib/claimTones.ts`): grey personal, blue by
+  income, teal 50/50, violet for the primary's items, amber for the secondary's. Only
+  the chosen segment wears its colour (soft fill, text in the colour, inset ring), so
+  it reads at a glance; the explainer's legend uses the same colours. Text is 5.5:1 or
+  better on each fill in both themes.
 * Explaining a choice: `ClaimTypeHelp` is a quiet "What do … mean?" toggle that opens
   an inline panel, never a modal. With a `tipKey` it opens by itself once per browser
   as a first-use tip with a "Got it" (stored under `settl.tip.<key>`, and tolerant of

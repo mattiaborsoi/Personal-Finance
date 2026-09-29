@@ -3,6 +3,7 @@ import { useContext, useId, useRef, type KeyboardEvent } from 'react';
 import type { ClaimType } from '../api';
 import { AuthContext } from '../auth/AuthContext';
 import { useConfig, useNames } from '../config/ConfigContext';
+import { claimTone } from '../lib/claimTones';
 import { claimTypeEffect, claimTypeLabel, type ClaimContext } from '../lib/format';
 import { cx, focusRing } from '../lib/ui';
 
@@ -153,7 +154,8 @@ export function ClaimTypeControl({
             className={cx(
               'inline-flex min-w-0 items-center justify-center gap-1 rounded-md px-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
               // The chosen segment may carry its word: it sizes to it, the icon-only ones share what is left.
-              checked ? 'flex-none bg-brand text-on-brand shadow-sm' : 'flex-1 text-ink-2 hover:bg-surface-2 hover:text-ink',
+              // The chosen segment wears its claim type's colour, ringed so it stands out from the card in both themes.
+              checked ? cx('flex-none ring-1 ring-inset ring-current', claimTone(choice.value)) : 'flex-1 text-ink-2 hover:bg-surface-2 hover:text-ink',
               focusRing,
             )}
             onClick={() => choose(index)}

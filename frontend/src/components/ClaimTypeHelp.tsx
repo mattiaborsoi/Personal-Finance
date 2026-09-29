@@ -1,6 +1,7 @@
 import { Divide, Info, Scale, Wallet, X, type LucideIcon } from 'lucide-react';
 import { useId, useState, type ReactNode } from 'react';
 import { useConfig, useCurrency, useNames } from '../config/ConfigContext';
+import { claimTone } from '../lib/claimTones';
 import { claimTypeEffect, claimTypeLabel } from '../lib/format';
 import { btnGhost, btnSecondary, btnSmall, cx } from '../lib/ui';
 
@@ -31,9 +32,9 @@ function markTipSeen(key: string) {
   }
 }
 
-function Glyph({ icon: Icon, initial }: { icon?: LucideIcon; initial?: string }) {
+function Glyph({ icon: Icon, initial, tone }: { icon?: LucideIcon; initial?: string; tone: string }) {
   return (
-    <span aria-hidden="true" className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center text-ink-2">
+    <span aria-hidden="true" className={cx('mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md', tone)}>
       {Icon ? (
         <Icon className="h-4 w-4" />
       ) : (
@@ -72,15 +73,15 @@ export function ClaimTypeHelp({ tipKey, className }: Props) {
   const rows: Array<{ key: string; glyph: ReactNode; label: string; effect: string }> = config.claim_types.map((ct) => {
     const glyph =
       ct === 'shared_proportional' ? (
-        <Glyph icon={Scale} />
+        <Glyph icon={Scale} tone={claimTone(ct)} />
       ) : ct === 'shared_equal' ? (
-        <Glyph icon={Divide} />
+        <Glyph icon={Divide} tone={claimTone(ct)} />
       ) : ct === 'primary_personal' ? (
-        <Glyph initial={initial(names.primary)} />
+        <Glyph initial={initial(names.primary)} tone={claimTone(ct)} />
       ) : ct === 'secondary_personal' ? (
-        <Glyph initial={initial(names.secondary)} />
+        <Glyph initial={initial(names.secondary)} tone={claimTone(ct)} />
       ) : (
-        <Glyph icon={Wallet} />
+        <Glyph icon={Wallet} tone={claimTone(ct)} />
       );
     return { key: ct, glyph, label: claimTypeLabel(ct, names), effect: claimTypeEffect(ct, names) };
   });

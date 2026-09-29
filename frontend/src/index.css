@@ -36,6 +36,17 @@
   --color-warning-ink: 122 75 0;
   --color-critical: 208 59 59;
   --color-critical-ink: 161 39 39;
+  /* Claim types: a soft fill and a text colour each (text 5.5:1 or better on its fill). */
+  --color-claim-personal: 60 59 56;
+  --color-claim-personal-soft: 236 236 231;
+  --color-claim-income: 28 92 171;
+  --color-claim-income-soft: 225 237 252;
+  --color-claim-equal: 12 106 90;
+  --color-claim-equal-soft: 218 242 236;
+  --color-claim-primary: 98 60 178;
+  --color-claim-primary-soft: 236 230 252;
+  --color-claim-secondary: 146 68 8;
+  --color-claim-secondary-soft: 253 235 218;
   --shadow-card: 0 1px 2px rgb(11 11 11 / 0.04), 0 1px 3px rgb(11 11 11 / 0.06);
   --shadow-pop: 0 8px 24px rgb(11 11 11 / 0.12), 0 2px 6px rgb(11 11 11 / 0.06);
 }
@@ -67,6 +78,16 @@
     --color-warning-ink: 250 178 25;
     --color-critical: 230 103 103;
     --color-critical-ink: 240 130 130;
+    --color-claim-personal: 236 235 228;
+    --color-claim-personal-soft: 58 58 55;
+    --color-claim-income: 128 176 242;
+    --color-claim-income-soft: 25 46 76;
+    --color-claim-equal: 92 206 180;
+    --color-claim-equal-soft: 16 54 48;
+    --color-claim-primary: 184 160 246;
+    --color-claim-primary-soft: 44 34 74;
+    --color-claim-secondary: 246 172 104;
+    --color-claim-secondary-soft: 64 40 18;
     --shadow-card: 0 0 0 1px rgb(255 255 255 / 0.04);
     --shadow-pop: 0 8px 24px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(255 255 255 / 0.06);
   }
@@ -96,6 +117,16 @@
   --color-warning-ink: 250 178 25;
   --color-critical: 230 103 103;
   --color-critical-ink: 240 130 130;
+  --color-claim-personal: 236 235 228;
+  --color-claim-personal-soft: 58 58 55;
+  --color-claim-income: 128 176 242;
+  --color-claim-income-soft: 25 46 76;
+  --color-claim-equal: 92 206 180;
+  --color-claim-equal-soft: 16 54 48;
+  --color-claim-primary: 184 160 246;
+  --color-claim-primary-soft: 44 34 74;
+  --color-claim-secondary: 246 172 104;
+  --color-claim-secondary-soft: 64 40 18;
   --shadow-card: 0 0 0 1px rgb(255 255 255 / 0.04);
   --shadow-pop: 0 8px 24px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(255 255 255 / 0.06);
 }

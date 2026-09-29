@@ -30,6 +30,19 @@ export default {
         good: { DEFAULT: token('good'), ink: token('good-ink') },
         warning: { DEFAULT: token('warning'), ink: token('warning-ink') },
         critical: { DEFAULT: token('critical'), ink: token('critical-ink') },
+        // One colour per claim type, so the chosen one reads at a glance (text on `-soft` is 5.5:1 or better).
+        claim: {
+          personal: token('claim-personal'),
+          'personal-soft': token('claim-personal-soft'),
+          income: token('claim-income'),
+          'income-soft': token('claim-income-soft'),
+          equal: token('claim-equal'),
+          'equal-soft': token('claim-equal-soft'),
+          primary: token('claim-primary'),
+          'primary-soft': token('claim-primary-soft'),
+          secondary: token('claim-secondary'),
+          'secondary-soft': token('claim-secondary-soft'),
+        },
       },
       borderRadius: {
         xl: '0.875rem',
