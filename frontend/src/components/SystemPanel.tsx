@@ -13,7 +13,7 @@ import {
 import { formatDate, formatDateTime, timeAgo } from '../lib/dates';
 import { saveBlob } from '../lib/download';
 import { formatBytes, plural } from '../lib/format';
-import { btnIcon, btnPrimary, btnSecondary, cx, eyebrow, focusRing } from '../lib/ui';
+import { btnIcon, btnPrimary, btnSecondary, cx, eyebrow, focusRing, linkBase } from '../lib/ui';
 import { Badge, type BadgeTone } from './Badge';
 import { Card } from './Card';
 import { ConfirmButton } from './ConfirmButton';
@@ -60,6 +60,10 @@ function UpdateLog({ log }: { log: string | null }) {
       {log || 'Waiting for output…'}
     </pre>
   );
+}
+
+function commitUrl(repository: string, commit: string): string {
+  return `https://github.com/${repository}/commit/${commit}`;
 }
 
 /** The System tab of Settings: the running version, the latest on GitHub, self-update, and the danger zone. */
@@ -233,7 +237,22 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
       <Card
         icon={Cog}
         title="Version"
-        description={`${info.app.name} ${info.app.version} · ${info.repository} (${info.branch})`}
+        description={
+          <>
+            {info.app.name}
+            {info.app.version ? ` ${info.app.version}` : ''} ·{' '}
+            <a
+              href={`https://github.com/${info.repository}/tree/${encodeURIComponent(info.branch)}`}
+              target="_blank"
+              rel="noreferrer"
+              translate="no"
+              className={linkBase}
+              title="Opens on GitHub in a new tab"
+            >
+              {info.repository} ({info.branch})
+            </a>
+          </>
+        }
         actions={
           <Badge tone={status.tone} dot>
             {status.label}
@@ -242,9 +261,20 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
       >
         <dl className="grid gap-3 sm:grid-cols-2">
           <StatTile as="dl-item" label="Running" value={
-              <span translate="no" className="font-mono">
-                {info.running.short ?? 'unknown'}
-              </span>
+              info.running.commit ? (
+                <a
+                  href={commitUrl(info.repository, info.running.commit)}
+                  target="_blank"
+                  rel="noreferrer"
+                  translate="no"
+                  className={cx(linkBase, 'font-mono')}
+                  title="Opens this commit on GitHub in a new tab"
+                >
+                  {info.running.short}
+                </a>
+              ) : (
+                <span className="font-mono">unknown</span>
+              )
             } />
           <StatTile
             as="dl-item"
@@ -259,9 +289,16 @@ function VersionAndUpdate({ pollIntervalMs }: Required<Props>) {
             <ol aria-label="Changes" className="mt-2 divide-y divide-hairline overflow-hidden rounded-xl border border-hairline">
               {changes.map((change) => (
                 <li key={change.commit} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2 text-sm sm:flex-nowrap">
-                  <span translate="no" className="font-mono text-xs text-ink-3">
+                  <a
+                    href={commitUrl(info.repository, change.commit)}
+                    target="_blank"
+                    rel="noreferrer"
+                    translate="no"
+                    className={cx(linkBase, 'font-mono text-xs')}
+                    title="Opens this commit on GitHub in a new tab"
+                  >
                     {change.short}
-                  </span>{' '}
+                  </a>{' '}
                   <span className="min-w-0 basis-full break-words text-ink sm:flex-1 sm:basis-auto">{change.message}</span>{' '}
                   <span className="shrink-0 text-xs text-ink-3">{formatDate(change.date)}</span>
                 </li>

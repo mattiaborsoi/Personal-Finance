@@ -222,11 +222,18 @@ def system_info(settings: Settings, github: GitHubClient, updater: UpdaterClient
     else:
         update_available = None
     changes, truncated = changes_since(commits, running)
+    running_date = next((c.date for c in (commits or []) if running and c.commit == running), None)
     return {
-        "app": {"name": APP_NAME, "version": APP_VERSION},
+        # The version is the running commit's date (calendar versioning); unknown when
+        # that commit is not among the ones fetched from GitHub.
+        "app": {"name": APP_NAME, "version": running_date.strftime("%Y.%m.%d") if running_date else None},
         "repository": settings.update_repo,
         "branch": settings.update_branch,
-        "running": {"commit": running, "short": running[:7] if running else None},
+        "running": {
+            "commit": running,
+            "short": running[:7] if running else None,
+            "date": running_date.isoformat() if running_date else None,
+        },
         "latest": latest.to_dict() if latest else None,
         "changes": [c.to_dict() for c in changes],
         "changes_truncated": truncated,

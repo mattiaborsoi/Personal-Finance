@@ -4,7 +4,7 @@ import { cardBase, cx } from '../lib/ui';
 
 interface Props {
   title?: string;
-  description?: string;
+  description?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
   className?: string;

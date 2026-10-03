@@ -623,12 +623,13 @@ export interface CommitInfo {
 }
 
 export interface SystemInfo {
-  app: { name: string; version: string };
+  /** `version` is the running commit's date as YYYY.MM.DD; null when it is not known. */
+  app: { name: string; version: string | null };
   /** "owner/repo" on GitHub. */
   repository: string;
   branch: string;
   /** The commit the server was built from; null when unknown. */
-  running: { commit: string | null; short: string | null };
+  running: { commit: string | null; short: string | null; date?: string | null };
   /** The newest commit on GitHub; null until checked, or when checks are disabled. */
   latest: CommitInfo | null;
   /**

@@ -254,7 +254,7 @@ export function backupsSummary(overrides: Partial<BackupsSummary> = {}): Backups
 
 export function systemInfo(overrides: Partial<SystemInfo> = {}): SystemInfo {
   return {
-    app: { name: 'Settl', version: '0.1.0' },
+    app: { name: 'Settl', version: '2026.09.25' },
     repository: 'example/personal-finance',
     branch: 'main',
     running: { commit: COMMIT_RUNNING, short: 'a1b2c3d' },

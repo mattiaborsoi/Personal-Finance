@@ -98,7 +98,10 @@ def test_system_info_reports_an_available_update():
     fake = FakeUpdater(settings)
     github = GitHubClient(settings, transport=_github_transport())
     info = system_info(settings, github, UpdaterClient(settings, transport=fake.transport))
-    assert info["running"] == {"commit": RUNNING, "short": RUNNING[:7]}
+    assert info["running"]["commit"] == RUNNING and info["running"]["short"] == RUNNING[:7]
+    assert info["running"]["date"].startswith("2026-09-24T18:00:00")
+    # The version is the running commit's date.
+    assert info["app"]["version"] == "2026.09.24"
     assert info["latest"]["short"] == LATEST[:7]
     assert info["latest"]["message"] == "Split transactions into parts"
     assert info["latest"]["date"].startswith("2026-09-26T15:13:00")
@@ -118,6 +121,8 @@ def test_changes_are_everything_fetched_when_the_running_commit_is_older_still()
     github = GitHubClient(settings, transport=_github_transport())
     info = system_info(settings, github, UpdaterClient(settings, transport=fake.transport))
     assert info["update_available"] is True
+    # A commit GitHub did not list has no known date, so no version.
+    assert info["app"]["version"] is None and info["running"]["date"] is None
     assert [c["short"] for c in info["changes"]] == [LATEST[:7], MIDDLE[:7], RUNNING[:7], OLDER[:7]]
     assert info["changes_truncated"] is True
 
@@ -166,7 +171,7 @@ def test_offline_or_disabled_degrades_to_unknown():
     assert info["updater"] == {
         "available": False, "state": "idle", "started_at": None, "finished_at": None, "log": None, "error": None
     }
-    assert info["running"] == {"commit": None, "short": None} and info["update_available"] is None
+    assert info["running"] == {"commit": None, "short": None, "date": None} and info["update_available"] is None
     # Nothing to compare against, so the whole fetched list is offered as "recent changes".
     assert len(info["changes"]) == len(COMMITS) and info["changes_truncated"] is False
 

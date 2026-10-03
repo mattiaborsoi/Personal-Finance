@@ -77,7 +77,17 @@ describe('<SystemPanel />', () => {
     expect(screen.getAllByText('f9e8d7c').length).toBeGreaterThan(0);
     expect(screen.getByText(/· Add the Settings page$/)).toBeInTheDocument();
     expect(screen.getByText('Update available')).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Version' })).toHaveTextContent('Settl 0.1.0 · example/personal-finance (main)');
+    const version = screen.getByRole('region', { name: 'Version' });
+    expect(version).toHaveTextContent('Settl 2026.09.25 · example/personal-finance (main)');
+    // The repository and every commit hash open on GitHub.
+    expect(within(version).getByRole('link', { name: 'example/personal-finance (main)' })).toHaveAttribute(
+      'href',
+      'https://github.com/example/personal-finance/tree/main',
+    );
+    expect(within(version).getByRole('link', { name: 'f9e8d7c' })).toHaveAttribute(
+      'href',
+      expect.stringMatching(/^https:\/\/github\.com\/example\/personal-finance\/commit\/f9e8d7c/),
+    );
     // Every commit skipped is listed, newest first, so a missed update is not lost behind the latest one.
     expect(screen.getByText('2 commits behind')).toBeInTheDocument();
     const rows = within(screen.getByRole('list', { name: 'Changes' })).getAllByRole('listitem');

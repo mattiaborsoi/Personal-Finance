@@ -118,12 +118,12 @@ Primary login only. Each is one `app_settings` document; `config.yaml` (or the b
 
 ## System (Settings → System)
 
-`GET /api/system` →
+`GET /api/system` → (`app.version` is the running commit's date as `YYYY.MM.DD`, null when that commit is not among those fetched from GitHub)
 ```json
 {
-  "app": {"name": "Settl", "version": "0.1.0"},
+  "app": {"name": "Settl", "version": "2026.10.03|null"},
   "repository": "owner/repo", "branch": "main",
-  "running": {"commit": "<sha>|null", "short": "<7 chars>|null"},
+  "running": {"commit": "<sha>|null", "short": "<7 chars>|null", "date": "<iso>|null"},
   "latest":  {"commit", "short", "date", "message"} | null,
   "changes": [ {"commit", "short", "date", "message"}, ... ],
   "changes_truncated": false,
