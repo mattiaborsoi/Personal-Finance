@@ -8,17 +8,27 @@ Order of precedence for classifying a raw description:
 3. Exact merchant-key memory hit (``memory.lookup_by_key``: the same shop under
    another store number) -> source ``memory``, confidence 1.0.
 4. Vector memory hit with similarity at or above ``llm.similarity_threshold`` ->
-   source ``memory`` (no LLM call); the best hit's merchant, category and claim
-   type are used and the similarity becomes the confidence. A hit on the same
-   brand's other service (``memory.merchant_keys_conflict``) is not used directly.
+   source ``memory`` (no LLM call); the best hit's merchant and category are used
+   and the similarity becomes the confidence. A hit on the same brand's other
+   service (``memory.merchant_keys_conflict``) is not used directly.
 5. LLM call through LiteLLM with a minimal payload: the merchant string, the
    optional signed amount, the account context, the allowed category and claim
-   type lists and the top-k nearest memories as few-shot examples -> source
-   ``llm``. The response is validated field by field (see :func:`classify`).
+   type lists and the top-k nearest memories as few-shot examples (merchant and
+   category only) -> source ``llm``. The response is validated field by field (see
+   :func:`classify`).
 6. If the LLM is unavailable or fails -> ``Uncategorized`` with the account's
    default claim type, source ``none``.
 
 Everything but (1) and (2) is inserted as ``pending_review``.
+
+The claim type of a memory hit is decided per card, not taken from memory: the same
+merchant can be personal on one card (Pret on the owner's own card) and shared on
+another (Pret bought for both on a supplementary card), while a memory row holds
+whatever split was last approved on any card. :func:`_claim_type_for` looks at the
+approved lines of that merchant on the same account (``manual_approved`` or
+``auto_approved``; no split parents, internal transfers or ``Uncategorized``): when
+the most recent :data:`CARD_HISTORY_LINES` all share one claim type it is used,
+otherwise (no history, or a mixed one) the account's ``default_claim_type``.
 
 Within one upload the caller passes an :class:`UploadState`: answers are memoised
 per (normalised description, account) so duplicate lines cost one lookup or LLM
@@ -40,9 +50,11 @@ import logging
 from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import CLAIM_TYPES, UNCATEGORIZED, AccountConfig, AppConfig
+from app.models import Transaction
 from app.services import memory, rules
 from app.services.embeddings import EmbeddingClient
 from app.services.llm import LLMClient, LLMError, LLMStatusError, LLMUnreachable
@@ -54,6 +66,8 @@ LLM_MAX_TOKENS = 300
 MAX_MERCHANT_LENGTH = 255  # transactions.cleaned_merchant is VARCHAR(255)
 MAX_PROMPT_TEXT_CHARS = 200  # statement text is quoted (JSON string) and clipped in prompts
 EXAMPLE_MIN_SIMILARITY = 0.5  # few-shot examples below this are noise (and an injection surface)
+CARD_HISTORY_LINES = 5  # a memory hit takes the claim type these recent same-card lines agree on
+APPROVED_STATUSES = ("manual_approved", "auto_approved")
 
 # One-line meaning of each claim type, as shown to the model.
 CLAIM_TYPE_MEANINGS: dict[str, str] = {
@@ -85,6 +99,8 @@ MemoKey = tuple[str, str]  # (memory.memory_key(raw_description), account id)
 class UploadState:
     """Scratch state shared by every :func:`classify` call of one upload.
 
+    * ``card_claim_types`` caches :func:`_claim_type_for` per (merchant, account), so
+      one upload asks the database once per distinct merchant and card.
     * ``memo`` caches the answer per (normalised description, account) so identical
       lines come back with the same classification and confidence at the cost of one
       lookup / LLM call. Nothing the answer depends on changes mid-upload.
@@ -98,6 +114,7 @@ class UploadState:
     """
 
     memo: dict[MemoKey, Classification] = field(default_factory=dict)
+    card_claim_types: dict[tuple[str, str], str] = field(default_factory=dict)
     llm_outage: str | None = None
     outage_lines: int = 0
     bad_answers: int = 0
@@ -227,11 +244,12 @@ def _classify(
     ):
         best = hits[0]
     if best is not None:
+        state = memo[0] if memo is not None else None
         return keep(
             Classification(
                 cleaned_merchant=best.normalized_merchant,
                 category=best.category,
-                claim_type=best.default_claim_type,
+                claim_type=_claim_type_for(db, best.normalized_merchant, account, state),
                 source="memory",
                 confidence=best.similarity,
                 review_status="pending_review",
@@ -266,6 +284,40 @@ def _classify(
     return keep(_unclassified(raw, account))
 
 
+def _claim_type_for(db: Session, merchant: str, account: AccountConfig, state: UploadState | None) -> str:
+    """The claim type for a memory hit on ``account``: decided per card.
+
+    The most recent :data:`CARD_HISTORY_LINES` approved lines of ``merchant`` (matched
+    ignoring case and surrounding spaces) on the same account, leaving out split
+    parents, internal transfers and ``Uncategorized`` lines: if there are any and they
+    all share one claim type, that one; otherwise the account's default claim type.
+    Cached in ``state`` per (merchant, account), so one query per pair per upload.
+    """
+    key = ((merchant or "").strip().upper(), account.id)
+    if state is not None and key in state.card_claim_types:
+        return state.card_claim_types[key]
+    claim_type = account.default_claim_type
+    if key[0]:
+        recent = db.scalars(
+            select(Transaction.claim_type)
+            .where(
+                func.upper(func.trim(Transaction.cleaned_merchant)) == key[0],
+                Transaction.account_id == account.id,
+                Transaction.review_status.in_(APPROVED_STATUSES),
+                Transaction.is_split.is_(False),
+                Transaction.is_internal_transfer.is_(False),
+                Transaction.category != UNCATEGORIZED,
+            )
+            .order_by(Transaction.transaction_date.desc(), Transaction.created_at.desc(), Transaction.id)
+            .limit(CARD_HISTORY_LINES)
+        ).all()
+        if recent and len(set(recent)) == 1:
+            claim_type = recent[0]
+    if state is not None:
+        state.card_claim_types[key] = claim_type
+    return claim_type
+
+
 def build_prompt(
     raw_description: str,
     account: AccountConfig,
@@ -279,9 +331,10 @@ def build_prompt(
     the account context and the strict JSON output contract. The user prompt
     carries only the raw description, the optional signed amount and the
     few-shot ``examples`` (:class:`~app.services.memory.MemoryHit` or anything
-    with ``raw_pattern``, ``normalized_merchant``, ``category`` and
-    ``default_claim_type``) as compact ``raw -> merchant | category | claim_type``
-    lines.
+    with ``raw_pattern``, ``normalized_merchant`` and ``category``) as compact
+    ``raw -> merchant | category`` lines. The examples carry no claim type: memory
+    holds the split last approved on whichever card, which says nothing about this
+    one, so the account's default claim type is the model's guide.
     """
     owner_role = "primary" if config.is_primary(account.owner) else "secondary"
     claim_type_lines = "\n".join(f"- {ct}: {CLAIM_TYPE_MEANINGS.get(ct, '')}" for ct in CLAIM_TYPES)
@@ -313,7 +366,8 @@ def build_prompt(
             " (use it unless the merchant clearly suggests otherwise)",
             "",
             "The user message may list previously confirmed classifications of similar merchants",
-            "as 'raw -> merchant | category | claim_type' lines. Treat them as hints, not rules.",
+            "as 'raw -> merchant | category' lines. Treat them as hints, not rules.",
+            "They carry no claim type: whether a line is shared depends on the card it is on.",
         ]
     )
 
@@ -323,7 +377,7 @@ def build_prompt(
         user_lines.append(f"Amount: {formatted_amount} {config.app.base_currency}")
     example_lines = [
         f"{json.dumps(_clip(ex.raw_pattern), ensure_ascii=False)} -> {_clip(ex.normalized_merchant, 80)} | "
-        f"{ex.category} | {ex.default_claim_type}"
+        f"{ex.category}"
         for ex in (examples or [])
     ]
     if example_lines:

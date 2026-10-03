@@ -19,6 +19,8 @@ interface PromptProps {
   small?: boolean;
   /** Icon-button layout: no visible question, an X for Cancel. */
   iconOnly?: boolean;
+  /** With `iconOnly`, still show the question (on its own line above the buttons). */
+  showQuestion?: boolean;
   className?: string;
 }
 
@@ -34,6 +36,7 @@ export function ConfirmPrompt({
   tone = 'primary',
   small = false,
   iconOnly = false,
+  showQuestion = false,
   className = '',
 }: PromptProps) {
   const size = small || iconOnly ? btnSmall : '';
@@ -54,6 +57,7 @@ export function ConfirmPrompt({
       aria-label={label}
     >
       {!iconOnly && <span className="text-xs text-ink-2">{label}</span>}
+      {iconOnly && showQuestion && <span className="basis-full text-xs text-ink-2">{label}</span>}
       <button
         ref={confirmRef}
         type="button"
@@ -105,6 +109,8 @@ interface Props {
   title?: string;
   /** Accessible name for the initial button when the visible label is too short on its own ("Delete Waitrose"). */
   ariaLabel?: string;
+  /** With `iconOnly`, show the question above the confirm and cancel buttons too. */
+  showQuestion?: boolean;
 }
 
 /**
@@ -123,6 +129,7 @@ export function ConfirmButton({
   iconOnly = false,
   title,
   ariaLabel,
+  showQuestion = false,
 }: Props) {
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -197,6 +204,7 @@ export function ConfirmButton({
       tone={tone}
       small={small}
       iconOnly={iconOnly}
+      showQuestion={showQuestion}
       className={className}
     />
   );

@@ -356,6 +356,10 @@ AuditReportOut:
 
 ## Merchant memory
 
-`GET /api/memory?limit=200` → `[ {id, raw_pattern, normalized_merchant, category, default_claim_type, review_count, last_updated} ]`
+`GET /api/memory?limit=200` → `[ {id, raw_pattern, normalized_merchant, category, default_claim_type, review_count, last_updated, transaction_count, total_spent} ]`, most recently updated first.
+
+- `default_claim_type` is the split last approved for this merchant, on whichever card. It is kept for reference only: the classifier no longer pre-fills the claim type from it but decides it per card (see TECHNICAL.md, Agent 2).
+- `transaction_count`: the transactions whose `cleaned_merchant` equals `normalized_merchant` ignoring case and surrounding spaces, in any review status and on any account, leaving out split parents (their parts count instead) and internal transfers.
+- `total_spent`: the net spend on those transactions as a money string, minus the sum of their amounts, so spending is positive and a refund reduces it (`"0.00"` when there are none). Computed with one grouped query for every listed entry.
 
 `DELETE /api/memory/{id}` → 204

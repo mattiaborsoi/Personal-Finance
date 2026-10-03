@@ -14,6 +14,7 @@ from app.services.llm import FakeLLMClient, NullLLMClient
 from app.services.memory import MemoryHit, remember
 
 from .conftest import requires_db
+from .factories import make_transaction
 
 VALID_RESPONSE = {
     "merchant": "Ocado",
@@ -125,7 +126,8 @@ def test_memory_uses_best_hit(db, config, embedder, fake_llm, amex) -> None:
     remember(db, embedder, "WAITROSE LONDON", normalized_merchant="Waitrose", category="Groceries",
              claim_type="shared_proportional")  # fmt: skip
     cls = classify(db, config, embedder, fake_llm, "WAITROSE 77 LONDON GB", amex)
-    assert (cls.source, cls.cleaned_merchant, cls.claim_type) == ("memory", "Waitrose", "shared_proportional")
+    # No Waitrose history on this card: the split is the account default, not memory's.
+    assert (cls.source, cls.cleaned_merchant, cls.claim_type) == ("memory", "Waitrose", "personal")
 
 
 @requires_db
@@ -136,7 +138,7 @@ def test_weak_memory_match_goes_to_llm_as_example(db, config, embedder, fake_llm
     cls = classify(db, config, embedder, fake_llm, "ZOOM OCADO 12", amex)
     assert cls.source == "llm"
     assert len(fake_llm.calls) == 1
-    assert '"OCADO RETAIL" -> Ocado | Groceries | shared_proportional' in fake_llm.calls[0]["user"]
+    assert '"OCADO RETAIL" -> Ocado | Groceries' in fake_llm.calls[0]["user"].splitlines()
 
 
 # --------------------------------------------------------------------------- #
@@ -179,7 +181,8 @@ def test_llm_prompt_and_valid_response(db, config, embedder, fake_llm, amex_supp
     # user: only the raw string (quoted: it is data), the signed amount and compact few-shot lines
     assert user.splitlines()[0] == 'Transaction: "ZOOM OCADO 12"'
     assert "Amount: -37.89 GBP" in user
-    assert '"OCADO RETAIL" -> Ocado | Groceries | shared_proportional' in user
+    assert '"OCADO RETAIL" -> Ocado | Groceries' in user.splitlines()
+    assert "shared_proportional" not in user  # memory's split is not presented as the merchant's
     # An unrelated memory (similarity below the example floor) is not offered as a hint.
     assert "NETFLIX" not in user
     assert "Bills:Water" not in user
@@ -332,8 +335,8 @@ def test_build_prompt_examples_are_compact_lines(config, amex) -> None:
     assert user.splitlines() == [
         'Transaction: "ZOOM OCADO 12"',
         "Similar confirmed transactions:",
-        '"OCADO RETAIL" -> Ocado | Groceries | shared_proportional',
-        '"NETFLIX COM" -> Netflix | Subscriptions:Entertainment | shared_equal',
+        '"OCADO RETAIL" -> Ocado | Groceries',
+        '"NETFLIX COM" -> Netflix | Subscriptions:Entertainment',
     ]
 
 
@@ -534,7 +537,7 @@ def test_same_shop_under_another_store_number_is_a_memory_hit(db, config, embedd
     assert cls == Classification(
         cleaned_merchant="The Shop",
         category="Groceries",
-        claim_type="shared_equal",
+        claim_type="personal",  # the card's default: memory's split is not carried over
         source="memory",
         confidence=1.0,
         review_status="pending_review",
@@ -552,7 +555,7 @@ def test_uber_trip_does_not_prefill_uber_eats(db, config, embedder, fake_llm, am
     cls = classify(db, config, embedder, fake_llm, "UBER *TRIP HELP.UBER.COM", amex, state=UploadState())
     assert (cls.source, cls.cleaned_merchant, cls.category) == ("llm", "Uber", "Transport:Taxi")
     assert len(fake_llm.calls) == 1
-    assert '"UBER EATS HELP UBER COM" -> Uber Eats | Dining | personal' in fake_llm.calls[0]["user"]
+    assert '"UBER EATS HELP UBER COM" -> Uber Eats | Dining' in fake_llm.calls[0]["user"].splitlines()
 
 
 @requires_db
@@ -562,3 +565,98 @@ def test_key_match_ranks_below_rules_and_payment_patterns(db, config, embedder, 
     remember(db, embedder, "AMEX PAYMENT 99", normalized_merchant="Amex", category="Dining", claim_type="personal")
     assert classify(db, config, embedder, fake_llm, "AQUANORTH WATER 34", amex).source == "rule"
     assert classify(db, config, embedder, fake_llm, "AMEX PAYMENT 77", amex).source == "transfer"
+
+
+# --------------------------------------------------------------------------- #
+# 9. a memory hit's claim type is decided per card
+# --------------------------------------------------------------------------- #
+
+
+def _pret_history(db, config, account_id: str, claim_types: list[str], **extra) -> None:
+    """Approved Pret lines on one card, oldest first (one per day from 1 August)."""
+    from datetime import date
+
+    for day, claim_type in enumerate(claim_types, start=1):
+        make_transaction(
+            db, config, account_id=account_id, transaction_date=date(2026, 8, day), amount="-6.20",
+            raw_description="PRET A MANGER 0012", cleaned_merchant=" pret ", category="Dining",
+            claim_type=claim_type, **extra,
+        )  # fmt: skip
+
+
+@requires_db
+def test_memory_hit_takes_the_claim_type_of_this_cards_history(
+    seeded_db, config, embedder, fake_llm, amex, amex_supp
+) -> None:
+    # Memory last saw Pret approved as shared on the supplementary card...
+    remember(seeded_db, embedder, "PRET A MANGER 0012", normalized_merchant="Pret", category="Dining",
+             claim_type="shared_equal")  # fmt: skip
+    # ...but on the owner's own card Pret has always been personal.
+    _pret_history(seeded_db, config, "acc_cc_amex", ["personal"] * 3)
+    _pret_history(seeded_db, config, "acc_cc_amex_supp", ["shared_equal"] * 2)
+    own = classify(seeded_db, config, embedder, fake_llm, "PRET A MANGER 0099", amex, state=UploadState())
+    supp = classify(seeded_db, config, embedder, fake_llm, "PRET A MANGER 0099", amex_supp, state=UploadState())
+    assert (own.source, own.cleaned_merchant, own.category, own.claim_type) == ("memory", "Pret", "Dining", "personal")
+    assert (supp.source, supp.claim_type) == ("memory", "shared_equal")
+    assert fake_llm.calls == []
+
+
+@requires_db
+def test_memory_hit_on_a_card_without_history_uses_the_account_default(
+    seeded_db, config, embedder, fake_llm, amex, amex_supp
+) -> None:
+    remember(seeded_db, embedder, "PRET A MANGER 0012", normalized_merchant="Pret", category="Dining",
+             claim_type="personal")  # fmt: skip
+    _pret_history(seeded_db, config, "acc_cc_amex", ["personal"] * 4)
+    # Pending, split-parent, transfer and Uncategorized lines on the supplementary card are no history.
+    _pret_history(seeded_db, config, "acc_cc_amex_supp", ["personal"], review_status="pending_review")
+    _pret_history(seeded_db, config, "acc_cc_amex_supp", ["personal"], is_split=True)
+    _pret_history(seeded_db, config, "acc_cc_amex_supp", ["personal"], is_internal_transfer=True)
+    make_transaction(seeded_db, config, account_id="acc_cc_amex_supp", cleaned_merchant="Pret",
+                     category="Uncategorized", claim_type="personal")  # fmt: skip
+    cls = classify(seeded_db, config, embedder, fake_llm, "PRET A MANGER 0099", amex_supp)
+    assert (cls.source, cls.claim_type) == ("memory", amex_supp.default_claim_type)
+    assert amex_supp.default_claim_type == "shared_proportional"
+
+
+@requires_db
+def test_memory_hit_with_mixed_recent_history_uses_the_account_default(
+    seeded_db, config, embedder, fake_llm, amex_supp
+) -> None:
+    remember(seeded_db, embedder, "PRET A MANGER 0012", normalized_merchant="Pret", category="Dining",
+             claim_type="shared_equal")  # fmt: skip
+    # Old lines were shared equally; of the five most recent, one is personal.
+    _pret_history(seeded_db, config, "acc_cc_amex_supp", ["shared_equal"] * 5 + ["personal"] + ["shared_equal"] * 4)
+    cls = classify(seeded_db, config, embedder, fake_llm, "PRET A MANGER 0099", amex_supp)
+    assert (cls.source, cls.claim_type) == ("memory", "shared_proportional")
+
+    # Once the five most recent agree again, the older personal line no longer matters.
+    from datetime import date
+
+    make_transaction(seeded_db, config, account_id="acc_cc_amex_supp", transaction_date=date(2026, 8, 20),
+                     cleaned_merchant="Pret", category="Dining", claim_type="shared_equal")  # fmt: skip
+    cls = classify(seeded_db, config, embedder, fake_llm, "PRET A MANGER 0099", amex_supp)
+    assert cls.claim_type == "shared_equal"
+
+
+@requires_db
+def test_card_claim_type_is_one_query_per_merchant_and_card_per_upload(
+    seeded_db, config, embedder, fake_llm, amex, monkeypatch
+) -> None:
+    remember(seeded_db, embedder, "PRET A MANGER 0012", normalized_merchant="Pret", category="Dining",
+             claim_type="personal")  # fmt: skip
+    remember(seeded_db, embedder, "PRET A MANGER LTD", normalized_merchant="Pret", category="Dining",
+             claim_type="personal")  # fmt: skip
+    calls: list[str] = []
+    real = guesser._claim_type_for
+
+    def counting(db, merchant, account, state):
+        if state is None or (merchant.strip().upper(), account.id) not in state.card_claim_types:
+            calls.append(merchant)
+        return real(db, merchant, account, state)
+
+    monkeypatch.setattr(guesser, "_claim_type_for", counting)
+    state = UploadState()
+    for raw in ("PRET A MANGER 0012", "PRET A MANGER LTD", "PRET A MANGER 0099 VICTORIA"):
+        assert classify(seeded_db, config, embedder, fake_llm, raw, amex, state=state).claim_type == "personal"
+    assert calls == ["Pret"]

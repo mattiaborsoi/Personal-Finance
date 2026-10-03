@@ -576,9 +576,14 @@ class MemoryOut(BaseModel):
     raw_pattern: str
     normalized_merchant: str
     category: str
+    # The split last approved for this merchant on any card. Kept for reference only:
+    # the classifier decides the split per card from that card's approved history.
     default_claim_type: str
     review_count: int
     last_updated: datetime | None
+    # Every non-split-parent, non-transfer line of this merchant (any review status).
+    transaction_count: int = 0
+    total_spent: Decimal = Decimal("0.00")  # net spend: refunds reduce it
 
 
 # --------------------------------------------------------------------------- #

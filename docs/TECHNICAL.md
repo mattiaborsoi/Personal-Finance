@@ -553,20 +553,23 @@ Precedence for each raw description:
    key followed by a space, is used directly → `source=memory`, confidence 1.0,
    `pending_review`, most reviewed row first. This is how the same shop is recognised under another store number: the
    offline hash embedder scores such pairs at 0.56–0.79, under the threshold. Rows that
-   disagree on category or claim type (a shared bank prefix such as `CARD PAYMENT`)
-   are not trusted and the vector search runs instead.
+   disagree on category (a shared bank prefix such as `CARD PAYMENT`) are not trusted
+   and the vector search runs instead; rows that differ only in claim type still match,
+   since the split is decided per card (below).
 4. **Merchant memory** (`app/services/memory.py`, pgvector): the description is
    normalised (upper-case, digits and punctuation stripped), embedded, and the top-k
    (`llm.top_k`, default 3) nearest rows are fetched by cosine distance using the HNSW
    index. If the best hit's similarity is **at or above `llm.similarity_threshold`
-   (0.82)** its merchant, category and claim type are used → `source=memory`,
+   (0.82)** its merchant and category are used → `source=memory`,
    confidence = similarity, `pending_review`. A hit on the same brand's other service
    (`UBER TRIP` against `UBER EATS`, which embed at 0.85) is demoted to a few-shot
    example rather than pre-filled.
 5. **One LLM call** with a minimal payload: the quoted description, the signed amount,
    the account context (institution, type, owner role, default claim type), the allowed
    categories and claim types, and the memory hits with **similarity ≥ 0.5** as
-   few-shot examples (weaker hits are noise and an injection surface). The JSON answer
+   few-shot examples (weaker hits are noise and an injection surface), written as
+   `"raw" -> merchant | category` lines with no claim type (a memory row's split was
+   approved on whichever card and says nothing about this one). The JSON answer
    is validated field by field: an unknown category becomes `Uncategorized` and halves
    the confidence, an unknown claim type falls back to the account default, a blank
    merchant falls back to the heuristic cleaner → `source=llm`, `pending_review`.
@@ -576,10 +579,26 @@ Precedence for each raw description:
 6. **No answer** (no LLM, the call failed, or the breaker is open) → `Uncategorized`,
    the account's default claim type, `source=none`, `pending_review`.
 
+**The claim type of a memory hit is decided per card** (`guesser._claim_type_for`).
+The same merchant can be personal on one card and shared on another: Pret on the
+owner's own card is their dining, Pret bought for both on a supplementary card is
+shared. A memory row holds whatever split was last approved on any card, so memory
+supplies only the merchant name and category. The claim type comes from the approved
+lines (`manual_approved` or `auto_approved`) of that merchant on the **same account**,
+matched as `upper(trim(cleaned_merchant)) = upper(trim(normalized_merchant))`, leaving
+out split parents, internal transfers and `Uncategorized` lines: when there are any and
+the **5 most recent** (by transaction date) all share one claim type, that one is used;
+otherwise (no history on this card, or a mixed one) the account's
+`default_claim_type`. That is one small query per distinct (merchant, account) per
+upload, cached on the `UploadState`. `merchant_memory.default_claim_type` is still
+written on approval (the schema is unchanged and the API lists it) but no longer
+pre-fills a line. Approving known merchants (below) keeps its own per-account history.
+
 **Learning loop.** Approving a transaction (`POST /approve`, `approve-batch`, with
 `remember=true`, the default) and correcting an already-approved one (`PATCH`) upsert
 the confirmed classification into `merchant_memory`, keyed on the normalised
-description, with a fresh embedding and an incremented `review_count`. Internal
+description, with a fresh embedding and an incremented `review_count` (merchant,
+category and the approved claim type, which is kept for reference only). Internal
 transfers and `Uncategorized` answers are never remembered: a transfer is not a
 merchant, and remembering "unknown" would silence the model for that merchant forever.
 
@@ -1043,6 +1062,12 @@ The file is re-run on every start; new columns are added with
   on corrections to already-approved transactions, transfers and `Uncategorized`
   answers are never remembered, and few-shot examples below 0.5 similarity are not
   sent to the model.
+* **Memory remembers the merchant, not the split:** a memory hit takes its claim type
+  from the same card's approved history (the 5 most recent lines, when they agree) or
+  the account default, and few-shot examples carry no claim type. The Merchant memory
+  page shows each entry's lines and net spend (`transaction_count`, `total_spent`), links
+  the review count to the Transactions page searching for the merchant
+  (`/transactions?q=<merchant>`, every period) and no longer shows a claim type.
 * **Auditor:** the flag uses the rolling median as specified; the standard deviation of
   the prior periods is reported alongside (`baseline_stddev`) rather than used as a
   second trigger. Recurring means seen in at least two of the prior three periods.

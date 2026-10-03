@@ -157,6 +157,19 @@ def test_lookup_by_key_misses_other_services_and_ambiguous_keys(
     assert lookup_by_key(db, "CARD PAYMENT TO TESCO").normalized_merchant == "Ocado"
 
 
+@requires_db
+def test_lookup_by_key_ignores_rows_that_differ_only_in_claim_type(
+    db: Session, embedder: HashingEmbeddingClient
+) -> None:
+    # Pret filed personal from one store and shared from another: the split is decided
+    # per card by the guesser, so the key still names the merchant and its category.
+    _remember(db, embedder, "PRET A MANGER 0012", normalized_merchant="Pret", category="Dining", claim_type="personal")
+    _remember(db, embedder, "PRET A MANGER VICTORIA", normalized_merchant="Pret", category="Dining",
+              claim_type="shared_equal")  # fmt: skip
+    hit = lookup_by_key(db, "PRET A MANGER 0099")
+    assert hit is not None and (hit.normalized_merchant, hit.category) == ("Pret", "Dining")
+
+
 # --------------------------------------------------------------------------- #
 # remember + lookup
 # --------------------------------------------------------------------------- #

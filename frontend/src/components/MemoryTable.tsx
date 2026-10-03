@@ -1,14 +1,26 @@
 import { Brain, Trash2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import type { MemoryOut } from '../api';
-import { useConfig, useNames } from '../config/ConfigContext';
+import { useConfig } from '../config/ConfigContext';
 import { categoryEmojiLabel } from '../lib/categories';
 import { formatDateTime } from '../lib/dates';
-import { claimTypeLabel } from '../lib/format';
-import { cx, tableBase, tableFlush, tdBase, thBase, trHover } from '../lib/ui';
+import { plural } from '../lib/format';
+import { cx, linkBase, tableBase, tableFlush, tdBase, thBase, trHover } from '../lib/ui';
 import { Badge } from './Badge';
 import { ConfirmButton } from './ConfirmButton';
 import { EmptyState } from './EmptyState';
 import { MerchantAvatar } from './MerchantAvatar';
+import { MoneyText } from './MoneyText';
+
+/** The Transactions page searching for this merchant, over every period. */
+function merchantTransactionsHref(merchant: string): string {
+  return `/transactions?q=${encodeURIComponent(merchant)}`;
+}
+
+/** The delete question: what is forgotten and what stays. */
+function forgetQuestion(merchant: string): string {
+  return `Forget ${merchant}? Its transactions stay as they are; the next ${merchant} line gets a fresh suggestion.`;
+}
 
 interface Props {
   entries: MemoryOut[];
@@ -18,7 +30,6 @@ interface Props {
 
 /** Learnt merchant classifications; designed to sit inside `<Card flush>`. */
 export function MemoryTable({ entries, errors, onDelete }: Props) {
-  const names = useNames();
   const emojis = useConfig().category_emojis;
   if (entries.length === 0) {
     return (
@@ -40,13 +51,13 @@ export function MemoryTable({ entries, errors, onDelete }: Props) {
             <th scope="col" className={thBase}>
               Category
             </th>
-            <th scope="col" className={thBase}>
-              Claim type
+            <th scope="col" className={cx(thBase, 'text-right')}>
+              Total spent
             </th>
             <th scope="col" className={cx(thBase, 'text-right')}>
               Reviews
             </th>
-            <th scope="col" className={thBase}>
+            <th scope="col" className={cx(thBase, 'hidden md:table-cell')}>
               Updated
             </th>
             <th scope="col" className={thBase}>
@@ -57,6 +68,8 @@ export function MemoryTable({ entries, errors, onDelete }: Props) {
         <tbody className="divide-y divide-hairline">
           {entries.map((entry) => {
             const key = String(entry.id);
+            const merchant = entry.normalized_merchant;
+            const lines = entry.transaction_count ?? 0;
             return (
               <tr key={key} className={trHover}>
                 <td className={tdBase}>
@@ -76,19 +89,33 @@ export function MemoryTable({ entries, errors, onDelete }: Props) {
                 <td className={tdBase}>
                   <Badge tone="neutral">{categoryEmojiLabel(entry.category, emojis)}</Badge>
                 </td>
-                <td className={cx(tdBase, 'whitespace-nowrap text-ink-2')}>
-                  {claimTypeLabel(entry.default_claim_type, names)}
+                <td className={cx(tdBase, 'whitespace-nowrap text-right')}>
+                  <MoneyText value={entry.total_spent ?? '0.00'} />
+                  <p className="mt-0.5 text-xs text-ink-3">{plural(lines, 'line')}</p>
                 </td>
-                <td className={cx(tdBase, 'text-right tabular')}>{entry.review_count}</td>
-                <td className={cx(tdBase, 'whitespace-nowrap text-ink-3')}>{formatDateTime(entry.last_updated)}</td>
+                <td className={cx(tdBase, 'text-right tabular')}>
+                  <Link
+                    to={merchantTransactionsHref(merchant)}
+                    className={linkBase}
+                    aria-label={`${plural(entry.review_count, 'review')}: show ${merchant}'s transactions`}
+                    title={`Show ${merchant}'s transactions`}
+                  >
+                    {entry.review_count}
+                  </Link>
+                </td>
+                <td className={cx(tdBase, 'hidden whitespace-nowrap text-ink-3 md:table-cell')}>
+                  {formatDateTime(entry.last_updated)}
+                </td>
                 <td className={cx(tdBase, 'text-right')}>
                   <ConfirmButton
-                    confirmLabel="Forget this merchant?"
+                    confirmLabel={forgetQuestion(merchant)}
                     onConfirm={() => onDelete(entry)}
                     tone="danger"
                     icon={Trash2}
                     iconOnly
-                    ariaLabel={`Delete ${entry.normalized_merchant}`}
+                    showQuestion
+                    className="max-w-[13rem] justify-end text-left"
+                    ariaLabel={`Delete ${merchant}`}
                   >
                     Delete
                   </ConfirmButton>

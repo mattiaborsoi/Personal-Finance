@@ -914,3 +914,29 @@ def test_memory_endpoints(client, primary_headers, seeded_db, embedder):
     assert client.delete(f"/api/memory/{items[0]['id']}", headers=primary_headers).status_code == 204
     assert client.delete(f"/api/memory/{items[0]['id']}", headers=primary_headers).status_code == 404
     assert client.get("/api/memory", headers=primary_headers).json() == []
+
+
+@requires_db
+def test_memory_lists_each_merchants_lines_and_net_spend(client, primary_headers, seeded_db, config, embedder):
+    from app.services import memory
+
+    for raw, merchant in (("PRET A MANGER 0012", "Pret"), ("OCADO RETAIL LTD", "Ocado")):
+        memory.remember(seeded_db, embedder, raw, normalized_merchant=merchant, category="Dining",
+                        claim_type="personal")  # fmt: skip
+    # Counted, any review status and any card, matched ignoring case and spaces:
+    make_transaction(seeded_db, config, cleaned_merchant="Pret", amount="-6.20")
+    make_transaction(seeded_db, config, cleaned_merchant=" PRET ", amount="-4.10", review_status="pending_review")
+    make_transaction(seeded_db, config, account_id="acc_cc_amex_supp", cleaned_merchant="pret", amount="-12.00")
+    make_transaction(seeded_db, config, cleaned_merchant="Pret", amount="2.30")  # a refund reduces the spend
+    # A split parent (its parts carry the money) and an internal transfer are left out.
+    parent = make_transaction(seeded_db, config, cleaned_merchant="Pret", amount="-20.00", is_split=True)
+    for index, part in enumerate(("-15.00", "-5.00")):
+        make_transaction(seeded_db, config, cleaned_merchant="Pret", amount=part,
+                         split_parent_id=parent.id, split_index=index)  # fmt: skip
+    make_transaction(seeded_db, config, cleaned_merchant="Pret", amount="-99.00", is_internal_transfer=True)
+    make_transaction(seeded_db, config, cleaned_merchant="Pret Express", amount="-1.00")  # another merchant
+
+    items = {m["normalized_merchant"]: m for m in client.get("/api/memory", headers=primary_headers).json()}
+    assert items["Pret"]["transaction_count"] == 6
+    assert items["Pret"]["total_spent"] == "40.00"  # 6.20 + 4.10 + 12.00 - 2.30 + 15.00 + 5.00
+    assert (items["Ocado"]["transaction_count"], items["Ocado"]["total_spent"]) == (0, "0.00")

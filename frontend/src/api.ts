@@ -608,9 +608,14 @@ export interface MemoryOut {
   raw_pattern: string;
   normalized_merchant: string;
   category: string;
+  /** The split last approved for this merchant on any card; not used to pre-fill (decided per card). */
   default_claim_type: ClaimType | null;
   review_count: number;
   last_updated: string;
+  /** Lines of this merchant (any review status; no split parents or transfers). */
+  transaction_count?: number;
+  /** Net spend on those lines: money out is positive, refunds reduce it. */
+  total_spent?: Money;
 }
 
 export type UpdaterState = 'idle' | 'running' | 'succeeded' | 'failed';

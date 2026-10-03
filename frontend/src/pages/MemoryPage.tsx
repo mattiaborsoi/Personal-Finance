@@ -31,7 +31,7 @@ export function MemoryPage() {
     <div className="space-y-6">
       <PageHeader
         title="Merchant memory"
-        description="Classifications learnt from your approvals. Delete an entry to make the classifier ask again."
+        description="Classifications learnt from your approvals. Settl remembers each merchant's name and category; whether a line is shared is decided per card, from how you have filed that merchant on the same card. Delete an entry to make the classifier ask again."
       />
       <Card
         flush

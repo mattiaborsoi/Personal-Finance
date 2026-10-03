@@ -18,6 +18,12 @@ that finds nothing does the vector :func:`lookup` run. It uses cosine distance::
 transaction the confirmed classification is upserted (keyed on the normalised raw
 pattern) with a fresh embedding and an incremented ``review_count``.
 
+A row keeps the merchant name and category, and also ``default_claim_type`` (the
+split last approved for it, on whichever card). The claim type is no longer used to
+pre-fill a line: the same merchant can be personal on one card and shared on another,
+so the guesser decides the split per card from that card's approved history (see
+``guesser._claim_type_for``). The column stays for the schema and the API.
+
 Every function takes an open :class:`~sqlalchemy.orm.Session`, flushes its own
 writes and never commits; the caller owns the transaction.
 """
@@ -27,12 +33,13 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import CLAIM_TYPES
-from app.models import MerchantMemory
+from app.models import MerchantMemory, Transaction
 from app.services.embeddings import EmbeddingClient, normalise_merchant_text
 
 MAX_MERCHANT_LENGTH = 255  # merchant_memory.normalized_merchant is VARCHAR(255)
@@ -111,9 +118,10 @@ def lookup_by_key(db: Session, raw_description: str) -> MemoryHit | None:
     key followed by a space (``raw_pattern`` is the normalised description, so
     ``'TESCO STORES LONDON'`` matches the key ``'TESCO STORES'``), as a
     :class:`MemoryHit` with similarity 1.0. When the matching rows disagree on the
-    category or claim type the key is too coarse to trust (``'CARD PAYMENT'`` in a
-    bank narrative would otherwise pre-fill every card purchase alike) and ``None``
-    is returned so the caller falls through to the vector search.
+    category the key is too coarse to trust (``'CARD PAYMENT'`` in a bank narrative
+    would otherwise pre-fill every card purchase alike) and ``None`` is returned so
+    the caller falls through to the vector search. Rows that differ only in claim
+    type still match: the split is decided per card, not by memory.
     """
     key = merchant_key(raw_description)
     if not key:
@@ -128,7 +136,7 @@ def lookup_by_key(db: Session, raw_description: str) -> MemoryHit | None:
         .order_by(MerchantMemory.review_count.desc(), MerchantMemory.last_updated.desc(), MerchantMemory.raw_pattern)
     )
     rows = list(db.scalars(stmt))
-    if not rows or len({(r.category, r.default_claim_type) for r in rows}) > 1:
+    if not rows or len({r.category for r in rows}) > 1:
         return None
     best = rows[0]
     return MemoryHit(
@@ -294,3 +302,29 @@ def list_memories(db: Session, limit: int = 200) -> list[MerchantMemory]:
         .limit(limit)
     )
     return list(db.scalars(stmt))
+
+
+def spending(db: Session, merchants) -> dict[str, tuple[int, Decimal]]:
+    """``{merchant key: (transaction count, net spend)}`` for ``merchants``, in one query.
+
+    The key is the merchant name upper-cased and trimmed; a transaction counts when its
+    ``cleaned_merchant`` matches the same way, whatever its review status. Split
+    parents (their parts carry the money) and internal transfers are left out. The net
+    spend is minus the sum of the amounts (ledger sign: negative = money out), so
+    spending is positive and a refund reduces it. Merchants with no lines are absent.
+    """
+    keys = {(m or "").strip().upper() for m in merchants} - {""}
+    if not keys:
+        return {}
+    key_expr = func.upper(func.trim(Transaction.cleaned_merchant))
+    rows = db.execute(
+        select(key_expr, func.count(Transaction.id), func.coalesce(func.sum(Transaction.amount), 0))
+        .where(
+            key_expr.in_(keys),
+            Transaction.is_split.is_(False),
+            Transaction.is_internal_transfer.is_(False),
+        )
+        .group_by(key_expr)
+    ).all()
+    cent = Decimal("0.01")
+    return {key: (int(count), (Decimal("0.00") - Decimal(total or 0)).quantize(cent)) for key, count, total in rows}
