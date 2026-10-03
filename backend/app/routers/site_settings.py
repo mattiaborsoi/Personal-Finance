@@ -6,6 +6,7 @@ configuration is rebuilt per request, so a change takes effect on the next call.
 
 from __future__ import annotations
 
+import uuid
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -16,7 +17,7 @@ from app.auth import require_primary
 from app.config import AppConfig
 from app.database import get_db
 from app.deps import get_config, get_effective_config
-from app.services import rule_suggestions, site_settings
+from app.services import rule_apply, rule_suggestions, site_settings
 from app.services.site_settings import (
     CategoriesOut,
     CategoriesUpdate,
@@ -158,6 +159,75 @@ def test_rules(
         return site_settings.try_rules(db, base, effective, body)
     except site_settings.SiteSettingsError as exc:
         raise _http(exc) from exc
+
+
+class ApplyRulesRequest(BaseModel):
+    """Re-run the rules on waiting lines of one month (``YYYY-MM``) or, with ``null``, every open month."""
+
+    dry_run: bool = False
+    period: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+class FiledAs(BaseModel):
+    category: str
+    claim_type: str
+
+
+class ApplyRulesItem(BaseModel):
+    id: uuid.UUID
+    cleaned_merchant: str
+    amount: Decimal
+    before: FiledAs
+    after: FiledAs
+    changed: bool
+    rule_index: int
+
+
+class ApplyRulesOut(BaseModel):
+    matched: int
+    changed: int
+    approved: int
+    unchanged: int
+    items: list[ApplyRulesItem]
+
+
+@router.post("/rules/apply", response_model=ApplyRulesOut)
+def apply_rules(
+    body: ApplyRulesRequest,
+    db: Session = Depends(get_db),
+    effective: AppConfig = Depends(get_effective_config),
+) -> ApplyRulesOut:
+    """File waiting lines as the saved rules say and approve them (see ``app.services.rule_apply``).
+
+    ``dry_run`` decides without writing anything. Approved lines, split lines and
+    closed months are never touched. ``items`` lists at most 200 lines, those that
+    change first.
+    """
+    outcome = rule_apply.plan(db, effective, rule_apply.waiting_lines(db, body.period))
+    shown = outcome.plans[: rule_apply.MAX_ITEMS]
+    before = {item.txn.id: FiledAs(category=item.txn.category, claim_type=item.txn.claim_type) for item in shown}
+    if not body.dry_run:
+        for item in outcome.plans:
+            rule_apply.apply(db, effective, item)
+        db.commit()
+    return ApplyRulesOut(
+        matched=outcome.matched,
+        changed=outcome.changed,
+        approved=outcome.approved,
+        unchanged=outcome.unchanged,
+        items=[
+            ApplyRulesItem(
+                id=item.txn.id,
+                cleaned_merchant=item.txn.cleaned_merchant,
+                amount=item.txn.amount,
+                before=before[item.txn.id],
+                after=FiledAs(category=item.category, claim_type=item.claim_type),
+                changed=item.changed,
+                rule_index=item.rule_index,
+            )
+            for item in shown
+        ],
+    )
 
 
 # ----- rule suggestions (no AI) ------------------------------------------- #

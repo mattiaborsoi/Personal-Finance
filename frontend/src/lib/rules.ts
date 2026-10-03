@@ -1,5 +1,5 @@
-import { isApiError, type ClaimType, type Rule, type RulesOut, type RulesUpdate } from '../api';
-import { categoryLabel, claimTypeLabel } from './format';
+import { isApiError, type ApplyRulesResponse, type ClaimType, type Rule, type RulesOut, type RulesUpdate } from '../api';
+import { categoryLabel, claimTypeLabel, plural } from './format';
 import { parseWhole } from './household';
 
 /**
@@ -354,4 +354,31 @@ export function problemsForError(err: unknown, message: string): RulesProblems |
   else if (item.kind === 'pattern') problems.patterns[item.index] = message;
   else problems[item.kind] = message;
   return problems;
+}
+
+// ---------------------------------------------------------------------------
+// Apply to waiting lines
+// ---------------------------------------------------------------------------
+
+export const NOTHING_TO_APPLY_MESSAGE = 'No waiting line matches your rules, so nothing would change.';
+
+/** What a dry run of "Apply to waiting lines" found, in one sentence. */
+export function applyPreviewSentence(result: ApplyRulesResponse): string {
+  if (result.matched === 0) return NOTHING_TO_APPLY_MESSAGE;
+  const verb = result.matched === 1 ? 'matches' : 'match';
+  const change = result.changed === 0 ? 'none would change' : `${result.changed} would change`;
+  return `${plural(result.matched, 'waiting line')} ${verb} your rules; ${change} (${result.approved} approved).`;
+}
+
+/** What a run of "Apply to waiting lines" did, announced on the Rules tab. */
+export function appliedSentence(result: ApplyRulesResponse): string {
+  if (result.approved === 0) return NOTHING_TO_APPLY_MESSAGE;
+  const refiled = result.changed === 0 ? 'none refiled' : `${result.changed} refiled`;
+  return `Rules applied: ${plural(result.approved, 'waiting line')} approved, ${refiled}.`;
+}
+
+/** After a save, when the saved rules match lines already waiting for review. */
+export function waitingMatchMessage(count: number): string {
+  const rest = count === 1 ? 'matches them but keeps its earlier guess' : 'match them but keep their earlier guess';
+  return `${plural(count, 'line')} already waiting for review ${rest} until you apply the rules.`;
 }

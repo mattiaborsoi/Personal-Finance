@@ -1,20 +1,23 @@
-import { ArrowDown, ArrowUp, CircleAlert, CircleCheck, CreditCard, FlaskConical, ListChecks, LoaderCircle, Minus, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, CircleAlert, CircleCheck, CreditCard, FlaskConical, ListChecks, ListRestart, LoaderCircle, Minus, Plus, Trash2 } from 'lucide-react';
 import { Fragment, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import {
   api,
   CONFIG_DEFAULTS_MESSAGE,
   errorMessage,
   isApiError,
+  type ApplyRulesResponse,
   type ClaimType,
   type RuleSuggestion,
   type RuleTestResult,
   type RulesOut,
 } from '../api';
 import { useConfig, useNames, useReloadConfig } from '../config/ConfigContext';
+import { useRefreshReviewBadge } from '../hooks/reviewBadge';
 import { useFocusFirstProblem } from '../hooks/useFocusFirstProblem';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
 import { accountName, claimTypeLabel, plural } from '../lib/format';
 import {
+  appliedSentence,
   blankPattern,
   blankRule,
   ruleRowFrom,
@@ -29,6 +32,7 @@ import {
   rulesOf,
   TRY_AMOUNT_MESSAGE,
   validateRulesForm,
+  waitingMatchMessage,
   WINDOW_MAX,
   WINDOW_MIN,
   type RuleField,
@@ -55,6 +59,7 @@ import {
   tdBase,
   thBase,
 } from '../lib/ui';
+import { ApplyRulesDialog } from './ApplyRulesDialog';
 import { Card } from './Card';
 import { CategoryPicker } from './CategoryPicker';
 import { EmptyState } from './EmptyState';
@@ -64,7 +69,8 @@ import { LoadingState } from './LoadingState';
 import { Notice } from './Notice';
 import { RuleSuggestions } from './RuleSuggestions';
 
-export const RULES_SAVED_MESSAGE = 'Saved. The rules apply to the next upload; lines already imported keep their classification.';
+export const RULES_SAVED_MESSAGE = 'Saved. The rules apply to the next upload.';
+export const APPLY_BUTTON = 'Apply to waiting lines';
 export const RULES_DESCRIPTION =
   'Tried in order against the raw statement description; the first match wins, skips the AI and is approved straight away. An amount range narrows a rule to lines of that size, whichever way the money went.';
 export const CARD_PAYMENTS_DESCRIPTION =
@@ -162,6 +168,11 @@ export function RulesPanel() {
   const [result, setResult] = useState<RuleTestResult | null>(null);
   /** Bumped after every save, so the suggestions are worked out against the rules as saved. */
   const [suggestionsKey, setSuggestionsKey] = useState(0);
+  /** Waiting lines the rules just saved would match (a dry run after the save); 0 when none or unknown. */
+  const [waitingMatches, setWaitingMatches] = useState(0);
+  const [applyOpen, setApplyOpen] = useState(false);
+  const [appliedMessage, setAppliedMessage] = useState<string | null>(null);
+  const refreshReviewBadge = useRefreshReviewBadge();
 
   const formRef = useRef<HTMLFormElement>(null);
   const focusFirstProblem = useFocusFirstProblem(formRef, saving || testing);
@@ -189,6 +200,7 @@ export function RulesPanel() {
   function edit(patch: (prev: RulesForm) => RulesForm) {
     setForm((prev) => (prev ? patch(prev) : prev));
     setSavedNotice(false);
+    setWaitingMatches(0);
     setServerProblems({ rules: {}, patterns: {} });
     // The result described the rules as they were.
     setResult(null);
@@ -267,6 +279,7 @@ export function RulesPanel() {
       setSavedNotice(true);
       setSuggestionsKey((k) => k + 1);
       await syncConfig();
+      void checkWaiting();
     } catch (err) {
       const placed = isApiError(err, 422) ? problemsForError(err, errorMessage(err)) : null;
       if (placed) {
@@ -302,6 +315,31 @@ export function RulesPanel() {
     setSavedNotice(true);
     setSuggestionsKey((k) => k + 1);
     await syncConfig();
+    void checkWaiting();
+  }
+
+  /** After a save: do the rules now match lines already waiting? Quietly, as a dry run; a failure only hides the offer. */
+  async function checkWaiting() {
+    setWaitingMatches(0);
+    setAppliedMessage(null);
+    try {
+      const preview = await api.applyRules({ dry_run: true, period: null });
+      setWaitingMatches(preview.approved);
+    } catch {
+      setWaitingMatches(0);
+    }
+  }
+
+  function openApply() {
+    setAppliedMessage(null);
+    setApplyOpen(true);
+  }
+
+  function applied(result: ApplyRulesResponse) {
+    setApplyOpen(false);
+    setWaitingMatches(0);
+    setAppliedMessage(appliedSentence(result));
+    refreshReviewBadge();
   }
 
   function discard() {
@@ -310,6 +348,7 @@ export function RulesPanel() {
     setServerProblems({ rules: {}, patterns: {} });
     setSaveError(null);
     setSavedNotice(false);
+    setWaitingMatches(0);
     setResult(null);
   }
 
@@ -811,14 +850,33 @@ export function RulesPanel() {
             {saving && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
             {saving ? 'Saving…' : 'Save changes'}
           </button>
+          {/* Rules run at upload; this re-runs the saved ones on lines already waiting for review. */}
+          <button type="button" className={btnSecondary} onClick={openApply} disabled={busy}>
+            <ListRestart className="h-4 w-4" aria-hidden="true" />
+            {APPLY_BUTTON}
+          </button>
         </div>
         <ErrorMessage message={saveError} onDismiss={() => setSaveError(null)} />
         <ErrorMessage message={syncError} onDismiss={() => setSyncError(null)} />
         {savedNotice && (
-          <Notice tone="good" role="status">
+          <Notice
+            tone="good"
+            role="status"
+            actions={
+              waitingMatches > 0 ? (
+                <button type="button" className={cx(btnSecondary, btnSmall)} onClick={openApply}>
+                  Review and apply
+                </button>
+              ) : undefined
+            }
+          >
             {RULES_SAVED_MESSAGE}
+            {waitingMatches > 0 && ` ${waitingMatchMessage(waitingMatches)}`}
           </Notice>
         )}
+        {/* Always in the page so the result is announced when it appears. */}
+        <div aria-live="polite">{appliedMessage && <Notice tone="good">{appliedMessage}</Notice>}</div>
+        {applyOpen && <ApplyRulesDialog unsaved={changed} onClose={() => setApplyOpen(false)} onApplied={applied} />}
       </div>
     </form>
   );

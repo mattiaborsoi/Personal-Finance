@@ -539,7 +539,10 @@ Precedence for each raw description:
    that has one (classification, `transfers.is_transfer_description` at ingestion,
    re-flagging a transfer, the Settings tester); without an amount a ranged rule
    never matches. Rule answers are not memoised per upload, since two lines with the
-   same description can have different amounts.
+   same description can have different amounts. Rules run at import only, so a rule
+   added later leaves the queue alone until Settings → Rules, "Apply to waiting
+   lines" (`app/services/rule_apply.py`) re-runs the saved rules on `pending_review`
+   lines in open months and files and approves the ones they match as import would.
 2. **Card-payment pattern** (`transfers.payment_patterns`) → `Transfers:Internal`,
    `is_internal_transfer`, `source=transfer`, `auto_approved`.
 3. **Merchant-key memory match** (`memory.lookup_by_key`): the *merchant key* is the

@@ -1149,6 +1149,42 @@ export interface RuleTestResult {
   is_payment: boolean;
 }
 
+export interface ApplyRulesBody {
+  /** Decide without writing anything. */
+  dry_run: boolean;
+  /** One month (YYYY-MM), or null for every open month with lines waiting. */
+  period: string | null;
+}
+
+export interface FiledAs {
+  category: string;
+  claim_type: ClaimType;
+}
+
+export interface ApplyRulesItem {
+  id: string;
+  cleaned_merchant: string;
+  amount: Money;
+  before: FiledAs;
+  after: FiledAs;
+  /** False when the line is already filed the way its rule says (it is only approved). */
+  changed: boolean;
+  /** 0-based index of the rule that matched. */
+  rule_index: number;
+}
+
+export interface ApplyRulesResponse {
+  /** Waiting lines a rule matches; each is approved, as at import. */
+  matched: number;
+  /** Of those, lines whose category, claim type, merchant or transfer flag changes. */
+  changed: number;
+  approved: number;
+  /** Matched lines already filed the way their rule says. */
+  unchanged: number;
+  /** At most 200, the lines that change first. */
+  items: ApplyRulesItem[];
+}
+
 // ---------------------------------------------------------------------------
 // Session storage
 // ---------------------------------------------------------------------------
@@ -1543,6 +1579,8 @@ export const api = {
   updateRules: (body: RulesUpdate) => request<RulesOut>('PUT', '/settings/rules', { body }),
   /** Which rule a description would hit, and whether it counts as a card payment; tests unsaved lists when given. */
   testRule: (body: RuleTestBody) => request<RuleTestResult>('POST', '/settings/rules/test', { body }),
+  /** Re-runs the saved rules on lines waiting for review; `dry_run` only says what would happen. */
+  applyRules: (body: ApplyRulesBody) => request<ApplyRulesResponse>('POST', '/settings/rules/apply', { body }),
   /** Rules the approvals suggest (no AI); reading changes nothing. */
   getRuleSuggestions: () => request<RuleSuggestionsOut>('GET', '/settings/rules/suggestions'),
   /** Remembers that this suggestion is not wanted; it is not shown again. */
