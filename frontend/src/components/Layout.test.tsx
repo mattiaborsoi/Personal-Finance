@@ -92,3 +92,45 @@ describe('<Layout />', () => {
     expect(skip).toHaveFocus();
   });
 });
+
+describe('<Layout /> on a phone', () => {
+  it('opens the same grouped navigation from the header and closes it when a link is followed', async () => {
+    const user = userEvent.setup();
+    mockFetch(({ method, url }) =>
+      method === 'GET' && url === '/api/periods' ? jsonResponse([period({ period_key: monthsBack(1), pending_review_count: 2 })]) : undefined,
+    );
+    renderWithProviders(
+      <Routes>
+        <Route element={<Layout />}>
+          <Route index element={<p>Page body</p>} />
+          <Route path="*" element={<p>Another page</p>} />
+        </Route>
+      </Routes>,
+    );
+
+    // The sidebar's navigation is always there (hidden by CSS on a phone); the menu adds the second.
+    expect(screen.getAllByRole('navigation', { name: 'Main' })).toHaveLength(1);
+    const toggle = screen.getByRole('button', { name: 'Open menu' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+    await user.click(toggle);
+    expect(screen.getByRole('button', { name: 'Close menu' })).toHaveAttribute('aria-expanded', 'true');
+    const [sidebar, menu] = screen.getAllByRole('navigation', { name: 'Main' });
+    expect(menu).toHaveAttribute('id', 'mobile-nav');
+    const names = (nav: HTMLElement) => within(nav).getAllByRole('link').map((l) => l.textContent);
+    expect(names(menu)).toEqual(names(sidebar));
+    expect(within(menu).getByRole('list', { name: 'Partner' })).toBeInTheDocument();
+    expect(await within(menu).findByRole('link', { name: 'Review (2 lines to review)' })).toBeInTheDocument();
+
+    await user.click(within(menu).getByRole('link', { name: 'Transfers' }));
+    expect(await screen.findByText('Another page')).toBeInTheDocument();
+    expect(screen.getAllByRole('navigation', { name: 'Main' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Open menu' })).toHaveAttribute('aria-expanded', 'false');
+    // The open page and its section are marked in the sidebar.
+    expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Transfers' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(screen.getByRole('link', { name: 'Transactions' })).toHaveAttribute('aria-current', 'true');
+  });
+});

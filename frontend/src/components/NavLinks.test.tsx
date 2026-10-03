@@ -22,14 +22,14 @@ function mainNav(): HTMLElement {
 }
 
 describe('<NavLinks />', () => {
-  it('puts Review between Dashboard and Transactions, with no badge when nothing is waiting', () => {
+  it('groups the pages, with Review, the upload and transfers under Transactions and Log a claim under Claims', () => {
     mockFetch(() => undefined);
     renderWithProviders(<NavLinks role="primary" />);
 
     expect(screen.getAllByRole('link').map((l) => l.textContent)).toEqual([
       'Dashboard',
-      'Review',
       'Transactions',
+      'Review',
       'Upload statement',
       'Transfers',
       'Claims',
@@ -38,6 +38,60 @@ describe('<NavLinks />', () => {
       'Settings',
     ]);
     expect(screen.getByRole('link', { name: 'Review' })).toHaveAttribute('href', '/review');
+
+    // Each group is a list named by its label.
+    const money = screen.getByRole('list', { name: 'Money' });
+    const partner = screen.getByRole('list', { name: 'Partner' });
+    const setup = screen.getByRole('list', { name: 'Setup' });
+    expect(within(setup).getAllByRole('link').map((l) => l.textContent)).toEqual(['Merchant memory', 'Settings']);
+
+    // Children sit in a list nested inside their parent's item.
+    const transactions = screen.getByRole('link', { name: 'Transactions' }).closest('li') as HTMLElement;
+    expect(money).toContainElement(transactions);
+    const nested = within(transactions).getByRole('list');
+    expect(within(nested).getAllByRole('link').map((l) => l.textContent)).toEqual(['Review', 'Upload statement', 'Transfers']);
+    const claims = within(partner).getByRole('link', { name: 'Claims' }).closest('li') as HTMLElement;
+    expect(within(within(claims).getByRole('list')).getByRole('link', { name: 'Log a claim' })).toHaveAttribute('href', '/claim');
+  });
+
+  it('marks the open child as the page and its parent as the current section', () => {
+    mockFetch(() => undefined);
+    renderWithProviders(<NavLinks role="primary" reviewCount={3} />, { route: '/upload' });
+
+    expect(screen.getByRole('link', { name: 'Upload statement' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Transactions' })).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByRole('link', { name: /^Review/ })).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('link', { name: 'Claims' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('marks a parent page itself as the page, not as a section', () => {
+    mockFetch(() => undefined);
+    renderWithProviders(<NavLinks role="primary" />, { route: '/claims' });
+
+    expect(screen.getByRole('link', { name: 'Claims' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Log a claim' })).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('link', { name: 'Dashboard' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('closes the menu it sits in when a link is followed', async () => {
+    const user = userEvent.setup();
+    mockFetch(() => undefined);
+    let navigated = 0;
+    renderWithProviders(<NavLinks role="primary" onNavigate={() => (navigated += 1)} />);
+
+    await user.click(screen.getByRole('link', { name: 'Transfers' }));
+    expect(navigated).toBe(1);
+  });
+
+  it('gives the partner only the claim form, on its own and without group labels', () => {
+    mockFetch(() => undefined);
+    renderWithProviders(<NavLinks role="secondary" reviewCount={4} />, { route: '/claim' });
+
+    const links = screen.getAllByRole('link');
+    expect(links.map((l) => l.textContent)).toEqual(['Log a claim']);
+    expect(links[0]).toHaveAttribute('aria-current', 'page');
+    expect(screen.getAllByRole('list')).toHaveLength(1);
+    expect(screen.queryByText('Partner')).not.toBeInTheDocument();
   });
 
   it('shows the count of lines waiting, names their months, and opens Review on the period given', () => {

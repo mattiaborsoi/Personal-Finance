@@ -7,8 +7,10 @@ interface Props {
 }
 
 /**
- * Two overlapping circles: two people, and the part of their money they share.
- * Uses the view accents so it always sits on-palette in both themes.
+ * An S drawn as two hooked halves on a brand-blue tile: two people, each holding
+ * one end, meeting in the middle. The tile follows the brand token, so it matches
+ * the app's blue in both themes; the halves are fixed white and peach. The
+ * favicons in `public/` are rendered from the same drawing with the light-mode blue.
  */
 export function BrandMark({ className = '', size = 28 }: Props) {
   return (
@@ -19,14 +21,11 @@ export function BrandMark({ className = '', size = 28 }: Props) {
       className={cx('shrink-0', className)}
       aria-hidden="true"
       focusable="false"
+      data-testid="brand-mark"
     >
-      <circle cx="12" cy="16" r="9.5" className="fill-accent-macro" />
-      <circle cx="20" cy="16" r="9.5" className="fill-accent-micro" fillOpacity="0.92" />
-      <path
-        d="M16 8.6a9.5 9.5 0 0 1 0 14.8 9.5 9.5 0 0 1 0-14.8z"
-        className="fill-accent-liquidity"
-        fillOpacity="0.95"
-      />
+      <rect width="32" height="32" rx="8" className="fill-brand" />
+      <path d="M21.2 11a5.2 5.2 0 1 0-5.2 5.2" fill="none" stroke="#fff" strokeWidth="4" strokeLinecap="round" />
+      <path d="M16 15.8a5.2 5.2 0 1 1-5.2 5.2" fill="none" stroke="#ffb088" strokeWidth="4" strokeLinecap="round" />
     </svg>
   );
 }
@@ -40,7 +39,7 @@ export function Wordmark({ className = '' }: { className?: string }) {
   return (
     <span className={cx('flex items-center gap-2.5', className)}>
       <BrandMark />
-      <span className="text-[15px] font-semibold tracking-tight text-ink" translate="no">
+      <span className="text-[17px] font-semibold leading-none tracking-[-0.02em] text-ink" translate="no">
         {PRODUCT_NAME}
       </span>
     </span>

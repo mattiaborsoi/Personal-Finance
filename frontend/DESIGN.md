@@ -137,6 +137,20 @@ Rules:
   pending)"). It comes from one request in `Layout` that pages keep current by sharing
   what they load (`useSharePeriods`) or asking once after a change
   (`useRefreshReviewBadge`); never poll for it.
+* Navigation (`NavLinks`): three labelled groups (`eyebrow` labels, each a `<ul
+  aria-labelledby>`): Money (Dashboard; Transactions with Review, Upload statement
+  and Transfers under it), Partner (Claims with Log a claim) and Setup (Merchant
+  memory, Settings). Children are text-only, always shown, and indented on a
+  `hairline` guide line under the parent's icon; the open child gets a 2px brand
+  stretch of that line and `aria-current="page"`, its parent `aria-current="true"`
+  and a brand icon. Items a role cannot see drop out, and a child whose parent is
+  hidden stands on its own with its icon (the partner sees only Log a claim, with
+  no group labels). The phone menu renders the same component.
+* Logo (`BrandMark`): an S drawn as two hooked halves (white and peach `#ffb088`)
+  meeting on a `bg-brand` tile, rx 8 on a 32 grid: two people, one balance. Never
+  recolour the halves or drop the tile; the `Wordmark` sets "Settl" at 17px
+  semibold, -0.02em. `public/` holds the favicons rendered from the same drawing
+  (light-mode blue `#226cc8`; full-bleed and padded for the Apple and maskable icons).
 * Messages: `Notice` (neutral/good/warning/critical wash + icon; closed-period
   notes, confirmations; as an inline `role="alertdialog"` confirmation it names its
   message with `messageId` + `aria-describedby`, takes focus on its safe choice when

@@ -61,7 +61,7 @@ export function Layout() {
         <div className="px-5 pb-4 pt-5">
           <Wordmark />
         </div>
-        <nav aria-label="Main" className="flex-1 overflow-y-auto px-3 py-2">
+        <nav aria-label="Main" className="flex-1 overflow-y-auto px-3 pb-4 pt-1">
           <NavLinks role={session.role} reviewPeriod={review.period} reviewCount={review.count} reviewMonths={review.months} />
         </nav>
         <div className="border-t border-hairline p-3">
@@ -81,9 +81,9 @@ export function Layout() {
       <header className="sticky top-0 z-20 border-b border-hairline bg-surface/90 backdrop-blur md:hidden">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2.5">
-            <BrandMark size={26} />
+            <BrandMark size={28} />
             <div className="leading-tight">
-              <p className="text-sm font-semibold text-ink" translate="no">
+              <p className="text-[15px] font-semibold tracking-[-0.02em] text-ink" translate="no">
                 {PRODUCT_NAME}
               </p>
               <p className="text-xs text-ink-3">{session.display_name}</p>
@@ -107,7 +107,7 @@ export function Layout() {
           </div>
         </div>
         {menuOpen && (
-          <nav id="mobile-nav" aria-label="Main" className="border-t border-hairline px-3 py-2 animate-rise">
+          <nav id="mobile-nav" aria-label="Main" className="max-h-[calc(100dvh-4rem)] overflow-y-auto overscroll-contain border-t border-hairline px-3 pb-3 pt-3 animate-rise">
             <NavLinks
               role={session.role}
               onNavigate={() => setMenuOpen(false)}
