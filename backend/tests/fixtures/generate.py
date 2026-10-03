@@ -127,6 +127,50 @@ def amex_statement_pdf(path: str | Path) -> Path:
     return path
 
 
+# Virgin Money style: one section per card, each headed only by the cardholder's name and
+# the full card number; two dates per line (transaction, posted), "£" amounts, a leading
+# minus for credits. Synthetic names and numbers only.
+VIRGIN_SECTIONS: list[tuple[str, list[tuple[str, str, str, str]]]] = [
+    (
+        "Primary User 0000 00000000 5502",
+        [
+            ("12 Aug 26", "14 Aug 26", "PAYMENT RECEIVED THANK YOU", "-£250.00"),
+            ("15 Aug 26", "16 Aug 26", "WAITROSE LONDON", "£42.10"),
+            ("18 Aug 26", "19 Aug 26", "TFL TRAVEL CHARGE", "£6.80"),
+        ],
+    ),
+    (
+        "Secondary User 0000 000000006617",
+        [
+            ("16 Aug 26", "17 Aug 26", "PRET A MANGER", "£8.45"),
+            ("20 Aug 26", "21 Aug 26", "BOOTS THE CHEMIST", "£12.99"),
+        ],
+    ),
+]
+
+
+def virgin_statement_pdf(path: str | Path) -> Path:
+    """Virgin Money style card statement with a main and a supplementary card section."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pdf = _Canvas(path)
+    pdf.line("Virgin Money credit card", size=14, bold=True)
+    pdf.line("Statement period: 24/07/2026 - 23/08/2026")
+    pdf.gap()
+    pdf.line("Transactions on your card", bold=True)
+    for heading, rows in VIRGIN_SECTIONS:
+        pdf.gap(4)
+        pdf.cells([(50, "Date"), (105, "Posted"), (160, "Description")], [(450, "Amount")], bold=True)
+        pdf.line(heading, bold=True)
+        for date_, posted, desc, amount in rows:
+            pdf.cells([(50, date_), (105, posted), (160, desc)], [(450, amount)])
+    pdf.gap()
+    pdf.line("Your new balance £280.34")
+    pdf.line("1 of 1")
+    pdf.save()
+    return path
+
+
 def _checking_header(pdf: _Canvas) -> None:
     pdf.line("HSBC UK", size=14, bold=True)
     pdf.line("Current Account Statement")

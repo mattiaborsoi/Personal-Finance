@@ -65,6 +65,8 @@ paths = [
   '''^frontend/package-lock\.json$''',
 ]
 regexes = [
+  # Synthetic card numbers in tests: all zeros apart from the last four digits.
+  '''0000\s?0000\s?0000\s?\d{4}''',
   '''sk-local-change-me''',
   '''change-me-db-password''',
   '''changeme_secure_pwd''',

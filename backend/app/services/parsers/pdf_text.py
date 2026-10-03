@@ -59,6 +59,10 @@ _HEADER_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 _CARD_SECTION_RE = re.compile(r"(?i)\b(?:card|cardmember|cardholder)\b")
+# A section heading that is only the cardholder's name and the card number, as Virgin
+# Money prints them (a name, then the full 16-digit card number): 16 characters of digits or masking
+# in any grouping, ending in the four digits that identify the card.
+_HOLDER_AND_NUMBER_RE = re.compile(r"^(?:[A-Za-z][A-Za-z'.\-]*\s+){1,5}(?P<number>[\dXx*•][\dXx*•\s]{14,24}\d)\s*$")
 _LAST4_RE = re.compile(r"(?<!\d)(\d{4})(?!\d)")
 _LAST4_KEYWORD_RE = re.compile(r"(?i)(?:ending(?:\s+in)?|number|no\.?|x{2,}|\*{2,}|-|#|:)\s*[x*]*\s*$")
 _OPENING_BALANCE_RE = re.compile(
@@ -203,8 +207,34 @@ class ColumnLayout:
         return best[1] if best else None
 
 
+_SHORT_YEAR_RE = re.compile(r"^\s+(\d{2})(?=\s)")
+
+
+def _with_short_year(day: date, yy: str) -> date:
+    """``day`` in the year 20<yy> (unchanged if that date does not exist, e.g. 29 Feb)."""
+    try:
+        return day.replace(year=2000 + int(yy))
+    except ValueError:
+        return day
+
+
+def _holder_and_number(text: str) -> str | None:
+    """A name followed by a full card number -> the card's last four digits."""
+    m = _HOLDER_AND_NUMBER_RE.match(text.strip())
+    if not m:
+        return None
+    number = re.sub(r"\s+", "", m.group("number"))
+    if len(number) != 16 or not re.fullmatch(r"[\dXx*•]{12}\d{4}", number):
+        return None
+    return number[-4:]
+
+
 def find_card_section(text: str, known_last4: set[str]) -> str | None:
-    """``Card ending 7715`` / ``Supplementary card ... 3348`` -> ``"7715"`` / ``"3348"``."""
+    """``Card ending 7715`` / ``Supplementary card ... 3348`` / a name and full card number
+    -> ``"7715"`` / ``"3348"``."""
+    holder = _holder_and_number(text)
+    if holder:
+        return holder
     m = _CARD_SECTION_RE.search(text)
     if not m:
         return None
@@ -357,6 +387,17 @@ class PdfTextParser:
         consumed: list[tuple[int, int]] = [(0, m.end())]
         rest_start = m.end()
         post_date: date | None = None
+        # Virgin Money prints "16 Aug 26 17 Aug 26": a two-digit year after each date.
+        # It is only read as a year when another date follows it (or, after the posted
+        # date, when it repeats the first one's year), so "16 Aug 24 HOUR FITNESS" keeps
+        # its "24".
+        yy = _SHORT_YEAR_RE.match(text[rest_start:])
+        if yy and LEADING_DATE_RE.match(text[rest_start + yy.end() :]):
+            txn_date = _with_short_year(txn_date, yy.group(1))
+            consumed.append((rest_start, rest_start + yy.end()))
+            rest_start += yy.end()
+        else:
+            yy = None
         m2 = LEADING_DATE_RE.match(text[rest_start:])
         if m2:
             candidate = ctx.parse(m2.group("date"))
@@ -364,6 +405,11 @@ class PdfTextParser:
                 post_date = candidate
                 consumed.append((rest_start, rest_start + m2.end()))
                 rest_start += m2.end()
+                yy2 = _SHORT_YEAR_RE.match(text[rest_start:])
+                if yy and yy2 and abs(int(yy2.group(1)) - int(yy.group(1))) <= 1:
+                    post_date = _with_short_year(post_date, yy2.group(1))
+                    consumed.append((rest_start, rest_start + yy2.end()))
+                    rest_start += yy2.end()
 
         foreign: ForeignSpend | None = None
         found = find_foreign_spend(text[rest_start:], self.base_currency)

@@ -211,8 +211,13 @@ def ingest_statement(
     # decide whether a closed period blocks the file.
     occurrences: Counter[tuple] = Counter()
     resolved: list[tuple[ParsedTransaction, AccountConfig, str]] = []
+    unknown_cards: Counter[tuple[str, str]] = Counter()
     for line in parsed.transactions:
         acc = _resolve_line_account(line, parsed, config, default_account, explicit=account_id is not None)
+        if line.card_last4 and line.card_last4 != acc.identifier_last4:
+            # A card section whose digits match no account: the line falls back to the
+            # statement's account, which is right for nothing but a missing set-up step.
+            unknown_cards[(line.card_last4, acc.id)] += 1
         occ_key = (
             acc.id,
             line.date,
@@ -222,6 +227,16 @@ def ingest_statement(
         occurrence = occurrences[occ_key]
         occurrences[occ_key] += 1
         resolved.append((line, acc, fingerprint(acc.id, line.date, line.amount, line.raw_text, occurrence)))
+
+    for (last4, acc_id), count in sorted(unknown_cards.items()):
+        fallback = config.get_account(acc_id)
+        label = f"{fallback.label or fallback.institution} ··{fallback.identifier_last4}" if fallback else acc_id
+        warnings.append(
+            f"{count} line{'s' if count != 1 else ''} from the card ending {last4} matched no account and "
+            f"{'were' if count != 1 else 'was'} filed to {label}. Add that card under Settings, Accounts "
+            "(a supplementary card is held by its user and billed to whoever pays), then remove this "
+            "upload and upload the statement again."
+        )
 
     existing = (
         set(

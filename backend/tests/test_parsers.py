@@ -690,6 +690,11 @@ class TestPdfTextLayouts:
         assert find_card_section("Card number xxxx-xxxxxx-x7715", set()) == "7715"
         assert find_card_section("Card issued in 2019", set()) is None
         assert find_card_section("HSBC CARD PYMT", set()) is None
+        # Virgin Money: the heading is only the cardholder's name and the full card number.
+        assert find_card_section("Primary User 0000 00000000 5502", set()) == "5502"
+        assert find_card_section("Secondary User 0000 000000006617", set()) == "6617"
+        assert find_card_section("A Person 5355 XXXX XXXX 6617", set()) == "6617"
+        assert find_card_section("Your new balance 1234 5678", set()) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -821,3 +826,46 @@ class TestLLMFallback:
         assert coerce_transaction(item, ctx) == txn("2025-12-20", "SHOP", "12.34", None)
         assert coerce_transaction({"date": "2026-01-03", "raw_text": "", "amount": 1}, ctx) is None
         assert coerce_transaction({"date": "2026-01-03", "raw_text": "X", "amount": None}, ctx) is None
+
+
+def test_virgin_statement_splits_lines_by_card_section(config, tmp_path):
+    path = generate.virgin_statement_pdf(tmp_path / "virgin.pdf")
+    result = parse_statement(path, config)
+    cards = [(t.card_last4, t.amount) for t in result.transactions]
+    assert cards == [
+        ("5502", Decimal("250.00")),
+        ("5502", Decimal("-42.10")),
+        ("5502", Decimal("-6.80")),
+        ("6617", Decimal("-8.45")),
+        ("6617", Decimal("-12.99")),
+    ]
+    # The two-digit years are read as years, not left in the description.
+    first = result.transactions[1]
+    assert first.raw_text == "WAITROSE LONDON"
+    assert (first.date, first.post_date) == (date(2026, 8, 15), date(2026, 8, 16))
+
+
+def test_foreign_spend_written_with_its_rate(config, tmp_path):
+    """Virgin prints the foreign amount and rate on the line under a purchase."""
+    pdf = generate._Canvas(tmp_path / "card.pdf")
+    pdf.line("Virgin Money credit card", size=14, bold=True)
+    pdf.line("Statement period: 24/07/2026 - 23/08/2026")
+    pdf.cells([(50, "Date"), (105, "Posted"), (160, "Description")], [(450, "Amount")], bold=True)
+    pdf.cells([(50, "12 Aug 26"), (105, "14 Aug 26"), (160, "CAFE CENTRAL VIENNA")], [(450, "£10.70")])
+    pdf.line("12.50 @ 1.168 ITA", x=160)  # Virgin prints the country, not the currency
+    pdf.save()
+    (t,) = parse_statement(tmp_path / "card.pdf", config).transactions
+    assert t.raw_text == "CAFE CENTRAL VIENNA"
+    assert (t.foreign_currency, t.foreign_amount) == ("EUR", Decimal("12.50"))
+
+
+def test_two_digit_number_after_a_date_stays_in_the_description(config, tmp_path):
+    """Only a two-digit number followed by another date is a year; "24 HOUR FITNESS" keeps its 24."""
+    pdf = generate._Canvas(tmp_path / "card.pdf")
+    pdf.line("Virgin Money credit card", size=14, bold=True)
+    pdf.line("Statement period: 24/07/2026 - 23/08/2026")
+    pdf.cells([(50, "Date"), (160, "Description")], [(450, "Amount")], bold=True)
+    pdf.cells([(50, "16 Aug"), (160, "24 HOUR FITNESS")], [(450, "£20.00")])
+    pdf.save()
+    result = parse_statement(tmp_path / "card.pdf", config)
+    assert [t.raw_text for t in result.transactions] == ["24 HOUR FITNESS"]

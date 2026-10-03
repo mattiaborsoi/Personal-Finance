@@ -499,6 +499,16 @@ gives no hint), `PdfTableParser` (pdfplumber tables) and `PdfTextParser` (text-l
 regexes with date context inferred from the statement period). For PDFs both PDF
 parsers run and the one that finds more transactions wins (the table parser on a tie).
 
+A statement covering several cards is split by its card sections: headings such as
+"Card ending 7715", or only the cardholder's name and full card number as Virgin Money
+prints them. Each line goes to the account with that card's last four digits (a
+supplementary card is its own account, held by its user and billed to whoever pays).
+A line whose card matches no account falls back to the statement's account, and the
+upload warns about it with the card's last four digits. Virgin Money's other quirks
+are read too: a two-digit year after each date ("16 Aug 26 17 Aug 26") and foreign
+spend written as "12.50 @ 1.168 ITA", where the last code is the country (mapped to
+its currency) rather than the currency.
+
 On a card account a single Amount column is normally card-style (an unsigned amount
 is a charge; a minus, parentheses or `CR` mean money in). Some card exports are signed
 like a bank account instead, with a minus on purchases. `TabularParser` reads those as
