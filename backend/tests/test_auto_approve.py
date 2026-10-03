@@ -260,7 +260,7 @@ def test_secondary_cannot_auto_approve(client, secondary_headers):
 
 
 def _fake_parse(lines):
-    def parse(path, config, llm=None, filename=None, account=None):
+    def parse(path, config, llm=None, filename=None, account=None, layouts=None):
         meta = StatementMetadata(
             institution="HSBC", account_last4="4471", closing_date=None, account_type_hint="checking"
         )
@@ -270,16 +270,17 @@ def _fake_parse(lines):
 
 
 def _unsure_llm(system: str, user: str) -> dict:
-    """Names the merchant but is never sure enough to approve on its own."""
-    target = "\n".join(row for row in user.splitlines() if "->" not in row).upper()
-    merchant = "Iron Works Gym" if "IRONWORKS" in target else "Brand New Bakery"
-    return {
-        "merchant": merchant,
-        "category": "Dining",
-        "claim_type": "personal",
-        "confidence": 0.3,
-        "reasoning": "stub",
-    }
+    """Names the merchant of every numbered line but is never sure enough to approve on its own."""
+    answers = []
+    for row in user.splitlines():
+        head, _, rest = row.partition(" | ")
+        if not head.isdigit():
+            continue
+        merchant = "Iron Works Gym" if "IRONWORKS" in rest.upper() else "Brand New Bakery"
+        answers.append(
+            {"id": int(head), "merchant": merchant, "category": "Dining", "claim_type": "personal", "confidence": 0.3}
+        )
+    return {"answers": answers}
 
 
 @requires_db

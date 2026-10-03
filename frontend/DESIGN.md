@@ -194,12 +194,37 @@ Rules:
 * Icons: `lucide-react`, 16px (`h-4 w-4`) inline, 20px in feature tiles, always
   `aria-hidden` next to a visible label.
 
+## Dashboard
+
+A personal finance app first, with the partner split as its key feature: the
+settlement card leads every view (headline balance, one line of working, chips for
+the due date, the split, the partner claims with their total, and the month's review
+progress "97% approved · 4 to review"; the full working sits behind "Show the
+working", collapsed by default, and `?lines=open` opens both). Then, only when the
+month on show has lines waiting, the "N lines waiting for review in <month>" card;
+lines waiting in other months are one quiet line under the selectors ("1,193 lines
+still to review in 7 earlier months"), never a list of month names. The views are
+"Household", "My share" and "Cash flow" (the colour dots carry the identity; on a
+phone the switch is one compact segmented row). The Household headline is net of
+refunds by default with a Net / Gross switch remembered per browser, says how it
+moved against last month, and lists what each person paid and bears. The breakdown
+groups categories under their top-level group (totals, expand), shows the top 8
+with "Show all", keeps partner claims out of the categories as a hatched segment of
+their own, and sits beside the Subscriptions card. Audit lives in the header ("Run
+audit") and its card appears only once a report exists; Investments close the page,
+collapsing to one line of figures for a single account. Wide tables on a phone show
+a `TableScroller` swipe hint while they overflow.
+
 ## Data visualisation (dashboard)
 
 Follows the data-viz method: single-series area chart with a 2px line, ~10 %
 wash, hairline solid grid, crosshair tooltip with the value leading, no legend for
-one series, end value labelled; category bars ≤ 8px thick with a rounded data-end
-on a `surface-3` track; the active view's accent colours the marks, never the text.
+one series, end value labelled; the Y axis always includes 0 (`trendYDomain`), axis
+ticks and the end label both read in whole pounds (`wholeMoney`), a month with lines
+still to review is a hollow point with a short legend note, and the cash-flow chart
+draws a zero reference line; category bars ≤ 8px thick with a rounded data-end
+on a `surface-3` track, never narrower than 5 % so the tail stays visible; the
+active view's accent colours the marks, never the text.
 
 ## Voice
 

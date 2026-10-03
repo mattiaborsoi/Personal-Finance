@@ -110,7 +110,8 @@ describe('<SettingsPage />', () => {
     expect(screen.getByRole('region', { name: 'Card payments' })).toBeInTheDocument();
     expect(screen.getByLabelText('Statement description')).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Accounts' })).not.toBeInTheDocument();
-    expect(urls(calls)).toEqual(['/api/settings/rules']);
+    // The suggestions block asks once too; it is a bonus and stays quiet when nothing comes back.
+    expect(urls(calls)).toEqual(['/api/settings/rules', '/api/settings/rules/suggestions']);
   });
 
   it('renders the System tab from ?tab=system', async () => {

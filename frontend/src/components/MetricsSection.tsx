@@ -1,8 +1,16 @@
-import { Suspense, lazy } from 'react';
-import { api } from '../api';
+import { Suspense, lazy, useState, type ReactNode } from 'react';
+import { api, type PeriodOut } from '../api';
 import { useAsync } from '../hooks/useAsync';
 import { cx, eyebrow } from '../lib/ui';
-import { selectViewFigures, viewDefinition, type MetricView } from '../lib/views';
+import {
+  headlineChange,
+  readRefundsMode,
+  selectViewFigures,
+  storeRefundsMode,
+  viewDefinition,
+  type MetricView,
+  type RefundsMode,
+} from '../lib/views';
 import { Card } from './Card';
 import { CategoryBreakdown } from './CategoryBreakdown';
 import { ErrorMessage } from './ErrorMessage';
@@ -16,39 +24,54 @@ interface Props {
   period: string;
   view: MetricView;
   refreshKey: number;
+  /** Every period on record: the months with lines still to review are marked on the chart. */
+  periods?: PeriodOut[] | null;
+  /** A card to sit beside the breakdown (the subscriptions). */
+  aside?: ReactNode;
 }
 
 const TREND_PERIODS = 6;
 
-/** Headline figure, sub-figures, six-period trend ending at `period`, and the breakdown list for one view. */
-export function MetricsSection({ period, view, refreshKey }: Props) {
+/** Headline figure, how it moved, sub-figures and the six-period trend, then the breakdown beside `aside`. */
+export function MetricsSection({ period, view, refreshKey, periods = null, aside }: Props) {
   const metrics = useAsync(() => api.getMetrics(period), `metrics:${period}:${refreshKey}`);
   const trends = useAsync(() => api.getTrends(TREND_PERIODS, period), `trends:${period}:${refreshKey}`);
+  const [refunds, setRefunds] = useState<RefundsMode>(readRefundsMode);
   const definition = viewDefinition(view);
+  const figures = metrics.data ? selectViewFigures(metrics.data, view, refunds) : null;
+  const incomplete = new Set((periods ?? []).filter((p) => p.pending_review_count > 0).map((p) => p.period_key));
+
+  function changeRefunds(mode: RefundsMode) {
+    storeRefundsMode(mode);
+    setRefunds(mode);
+  }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-3">
+    <div className="space-y-4">
       <Card
-        className={cx('lg:col-span-2 transition-opacity', metrics.loading && metrics.data && 'opacity-70')}
+        className={cx('transition-opacity', metrics.loading && metrics.data && 'opacity-70')}
         accentClass={definition.accent.bg}
         title={definition.label}
         actions={metrics.loading && <LoadingState inline />}
       >
         {metrics.error && <ErrorMessage message={metrics.error.message} onRetry={metrics.reload} />}
-        {metrics.data ? (
-          <div className="grid gap-8 md:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+        {metrics.data && figures ? (
+          <div className="grid gap-8 md:grid-cols-[minmax(0,1fr)_minmax(0,1.7fr)]">
             <MetricsHeadline
-              figures={selectViewFigures(metrics.data, view)}
+              figures={figures}
               hint={definition.hint}
               signed={view === 'liquidity'}
               accentClass={definition.accent.bg}
+              change={trends.data ? headlineChange(trends.data, period, view) : null}
+              refunds={view === 'macro' ? { mode: refunds, onChange: changeRefunds } : undefined}
+              people={view === 'macro' ? metrics.data.macro.by_person : undefined}
             />
             <div className="min-w-0">
-              <p className={cx(eyebrow, 'mb-2')}>Last {trends.data?.length ?? TREND_PERIODS} periods</p>
+              <p className={cx(eyebrow, 'mb-2')}>Last {trends.data?.length ?? TREND_PERIODS} months</p>
               {trends.error && <ErrorMessage message={trends.error.message} onRetry={trends.reload} />}
               {trends.data ? (
                 <Suspense fallback={<LoadingState label="Loading chart" />}>
-                  <TrendChart data={trends.data} view={view} />
+                  <TrendChart data={trends.data} view={view} incomplete={incomplete} />
                 </Suspense>
               ) : (
                 !trends.error && <LoadingState />
@@ -59,13 +82,16 @@ export function MetricsSection({ period, view, refreshKey }: Props) {
           !metrics.error && <LoadingState label="Loading metrics" />
         )}
       </Card>
-      <Card title={view === 'liquidity' ? 'By account' : 'By category'} description="This period">
-        {metrics.data ? (
-          <CategoryBreakdown breakdown={selectViewFigures(metrics.data, view).breakdown} accentClass={definition.accent.bg} />
-        ) : (
-          !metrics.error && <LoadingState />
-        )}
-      </Card>
+      <div className={cx('grid gap-4', aside ? 'lg:grid-cols-2' : undefined)}>
+        <Card title={view === 'liquidity' ? 'By account' : 'By category'} description="This month">
+          {figures ? (
+            <CategoryBreakdown breakdown={figures.breakdown} accentClass={definition.accent.bg} />
+          ) : (
+            !metrics.error && <LoadingState />
+          )}
+        </Card>
+        {aside}
+      </div>
     </div>
   );
 }

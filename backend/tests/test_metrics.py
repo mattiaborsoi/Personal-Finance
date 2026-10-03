@@ -104,6 +104,14 @@ def test_macro_view(seeded_db: Session, config: AppConfig) -> None:
     ]
     assert sum((c.amount for c in macro.by_category), D("0")) == macro.household_burn
     assert macro.refunds == D("30.00")
+    assert macro.partner_claims_count == 1
+    # Per person: the card is the primary's, so they paid its 120.00 gross; the secondary paid the
+    # 50.00 claim. Bears: primary 55.56 + 20.00 - 16.67 + 27.78 (claim) = 86.67; secondary
+    # 44.44 - 13.33 + 22.22 = 53.33 (the refund netted, the pending row left out).
+    assert [(p.user_id, p.paid, p.bears) for p in macro.by_person] == [
+        (config.primary_user_id, D("120.00"), D("86.67")),
+        (config.secondary_user_id, D("50.00"), D("53.33")),
+    ]
     for value in (macro.primary_accounts_burn, macro.partner_claims_burn, macro.household_burn, macro.refunds):
         assert _is_2dp(value)
     assert all(_is_2dp(c.amount) for c in macro.by_category)

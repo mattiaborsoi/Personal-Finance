@@ -1,10 +1,13 @@
 """LLM layout extractor (Agent 1 fallback).
 
 Used only when the deterministic parsers found no transactions. Each page's text
-(split into chunks of at most ~6000 characters) is sent to ``llm.complete_json``
-with a strict system prompt asking for exactly the :class:`ParsedStatement` JSON schema; the
-responses are validated, coerced (ISO dates, ``Decimal`` amounts, negative = money
-out) and merged.
+(split into chunks of at most ~6000 characters) is redacted
+(:class:`~app.services.redaction.Redactor`: names, long numbers, postcodes, e-mails,
+phone numbers and the owner's own words become numbered placeholders) and sent to
+``llm.complete_json`` with a strict system prompt asking for exactly the
+:class:`ParsedStatement` JSON schema; the responses are validated, coerced (ISO
+dates, ``Decimal`` amounts, negative = money out), the placeholders in each
+``raw_text`` are put back from the local map, and the pages are merged.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from app.services.parsers.base import (
 )
 from app.services.parsers.dates import DateContext, parse_date
 from app.services.parsers.metadata import date_context, detect_metadata, detect_period, fill_gaps
+from app.services.redaction import Redactor
 
 MAX_CHUNK_CHARS = 6000
 # Hard cap on LLM calls per document: a 25 MB upload must not turn into thousands of
@@ -51,7 +55,9 @@ Rules:
 - Include every transaction line; exclude totals, balances, interest summaries and repeated headers.
 - Infer missing years from the statement period (December lines on a statement closing in January
   belong to the previous year).
-- "raw_text" is the description exactly as printed (merge continuation lines).
+- "raw_text" is the description exactly as printed (merge continuation lines). Bracketed tokens such as
+  [name#1], [number#2] or [card#3:1234] stand for details removed for privacy: copy them exactly as they
+  appear, never expand or drop them.
 - "card_last4" is the last four digits of the card a line belongs to when the statement has sections
   per card, else null.
 - No prose, no code fences, no extra keys. If the page has no transactions return
@@ -187,6 +193,7 @@ class LLMLayoutExtractor:
         if not pages:
             raise ParseError("document has no extractable text to send to the LLM (scanned image?)")
         base_currency = self.config.app.base_currency if self.config else "GBP"
+        redactor = Redactor.from_config(self.config)
         known = json.dumps(
             {
                 "institution": meta.institution,
@@ -195,6 +202,7 @@ class LLMLayoutExtractor:
                 "closing_date": meta.closing_date.isoformat() if meta.closing_date else None,
             }
         )
+        filename = redactor.redact(doc.filename)
         transactions: list[ParsedTransaction] = []
         warnings: list[str] = []
         calls = 0
@@ -207,10 +215,11 @@ class LLMLayoutExtractor:
         for page_no, page in enumerate(pages, start=1):
             chunks = chunk_text(page, self.max_chars)
             for part_no, chunk in enumerate(chunks, start=1):
+                redacted, originals = redactor.redact_indexed(chunk)
                 user = (
-                    f"Statement file: {doc.filename}\n"
+                    f"Statement file: {filename}\n"
                     f"Known metadata (may contain nulls): {known}\n"
-                    f"Page {page_no} of {len(pages)}, part {part_no} of {len(chunks)}:\n\n{chunk}"
+                    f"Page {page_no} of {len(pages)}, part {part_no} of {len(chunks)}:\n\n{redacted}"
                 )
                 response = self.llm.complete_json(system=SYSTEM_PROMPT, user=user, max_tokens=4096)
                 calls += 1
@@ -225,6 +234,7 @@ class LLMLayoutExtractor:
                     if txn is None:
                         warnings.append(f"page {page_no}: skipped malformed transaction {str(item)[:80]!r}")
                         continue
+                    txn.raw_text = " ".join(Redactor.restore(txn.raw_text, originals).split())
                     transactions.append(txn)
         if not transactions:
             raise ParseError(f"LLM layout extraction returned no transactions after {calls} call(s)")

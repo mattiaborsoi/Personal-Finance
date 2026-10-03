@@ -6,14 +6,17 @@ configuration is rebuilt per request, so a change takes effect on the next call.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from decimal import Decimal
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth import require_primary
 from app.config import AppConfig
 from app.database import get_db
 from app.deps import get_config, get_effective_config
-from app.services import site_settings
+from app.services import rule_suggestions, site_settings
 from app.services.site_settings import (
     CategoriesOut,
     CategoriesUpdate,
@@ -155,3 +158,62 @@ def test_rules(
         return site_settings.try_rules(db, base, effective, body)
     except site_settings.SiteSettingsError as exc:
         raise _http(exc) from exc
+
+
+# ----- rule suggestions (no AI) ------------------------------------------- #
+
+
+class SuggestionOut(BaseModel):
+    key: str
+    kind: str
+    text: str
+    merchant: str
+    category: str
+    claim_type: str
+    count: int
+    amount: Decimal | None
+    rule: dict
+    rule_index: int | None
+    action: str
+    examples: list[str]
+
+
+class SuggestionsOut(BaseModel):
+    suggestions: list[SuggestionOut]
+
+
+class DismissRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=200)
+
+
+@router.get("/rules/suggestions", response_model=SuggestionsOut)
+def get_rule_suggestions(
+    db: Session = Depends(get_db), effective: AppConfig = Depends(get_effective_config)
+) -> SuggestionsOut:
+    """Rules the approvals suggest (see ``app.services.rule_suggestions``); nothing is changed by reading them."""
+    items = [
+        SuggestionOut(
+            key=s.key,
+            kind=s.kind,
+            text=rule_suggestions.describe(effective, s),
+            merchant=s.merchant,
+            category=s.category,
+            claim_type=s.claim_type,
+            count=s.count,
+            amount=s.amount,
+            rule=s.rule,
+            rule_index=s.rule_index,
+            action=s.action,
+            examples=s.examples,
+        )
+        for s in rule_suggestions.suggest(db, effective)
+    ]
+    return SuggestionsOut(suggestions=items)
+
+
+@router.post("/rules/suggestions/dismiss", status_code=status.HTTP_204_NO_CONTENT)
+def dismiss_rule_suggestion(body: DismissRequest, db: Session = Depends(get_db)) -> Response:
+    """Remember that the owner does not want this suggestion; it is not shown again."""
+    rule_suggestions.dismiss(db, body.key)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

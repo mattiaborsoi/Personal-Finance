@@ -78,6 +78,7 @@ from app.schemas import (
     MacroMetrics,
     MetricsOut,
     MicroMetrics,
+    PersonSpend,
     TrendPoint,
 )
 from app.services.periods import period_bounds, period_key_for, previous_period_key
@@ -102,7 +103,7 @@ def period_metrics(db: Session, config: AppConfig, period_key: str) -> MetricsOu
     claims = _claim_totals(db, period_key)
     return MetricsOut(
         period_key=period_key,
-        macro=_macro(categories, claims),
+        macro=_macro(categories, claims, _by_person(db, config, period_key)),
         micro=_micro(categories, claims),
         liquidity=_liquidity(db, config, period_key),
     )
@@ -206,6 +207,15 @@ class _CategoryTotals:
 
 
 @dataclass(frozen=True)
+class _PersonTotals:
+    """Per-person sums over the approved, non-transfer rows of a period, by the account's payer."""
+
+    paid: dict[str, Decimal]
+    primary_bears: Decimal
+    secondary_bears: Decimal
+
+
+@dataclass(frozen=True)
 class _ClaimTotals:
     """Sums over the partner claims of a period."""
 
@@ -266,7 +276,46 @@ def _claim_totals(db: Session, period_key: str) -> _ClaimTotals:
     return _ClaimTotals(count=int(count or 0), amount=quantize(amount), primary_owes=quantize(primary_owes))
 
 
-def _macro(categories: list[_CategoryTotals], claims: _ClaimTotals) -> MacroMetrics:
+def _by_person(db: Session, config: AppConfig, period_key: str) -> list[PersonSpend]:
+    """What each person paid (gross debits on the accounts billed to them, plus the claims
+    they paid) and what each bears after the split (allocated amounts with refunds netted,
+    plus their side of the claims). Primary first, then secondary."""
+    debit_abs = case((Transaction.amount < 0, -Transaction.amount), else_=0)
+    stmt = (
+        select(
+            Transaction.account_id,
+            func.coalesce(func.sum(debit_abs), 0),
+            func.coalesce(func.sum(-Transaction.allocated_primary_amount), 0),
+            func.coalesce(func.sum(-Transaction.allocated_secondary_amount), 0),
+        )
+        .where(*_approved_non_transfer(period_key))
+        .group_by(Transaction.account_id)
+    )
+    paid = {config.primary_user_id: ZERO, config.secondary_user_id: ZERO}
+    bears = {config.primary_user_id: ZERO, config.secondary_user_id: ZERO}
+    for account_id, debits, primary, secondary in db.execute(stmt):
+        try:
+            payer = config.payer_for_account(account_id or "")
+        except KeyError:
+            payer = config.primary_user_id  # an account no longer configured: its bill is the owner's, assume primary
+        paid[payer] = paid.get(payer, ZERO) + _as_decimal(debits)
+        bears[config.primary_user_id] += _as_decimal(primary)
+        bears[config.secondary_user_id] += _as_decimal(secondary)
+    claims = select(
+        PartnerClaim.paid_by, PartnerClaim.amount, PartnerClaim.primary_owes, PartnerClaim.secondary_owes
+    ).where(PartnerClaim.period_key == period_key)
+    for paid_by, amount, primary_owes, secondary_owes in db.execute(claims):
+        if paid_by in paid:
+            paid[paid_by] += _as_decimal(amount)
+        bears[config.primary_user_id] += _as_decimal(primary_owes)
+        bears[config.secondary_user_id] += _as_decimal(secondary_owes)
+    return [
+        PersonSpend(user_id=user_id, paid=quantize(paid[user_id]), bears=quantize(bears[user_id]))
+        for user_id in (config.primary_user_id, config.secondary_user_id)
+    ]
+
+
+def _macro(categories: list[_CategoryTotals], claims: _ClaimTotals, by_person: list[PersonSpend]) -> MacroMetrics:
     primary_burn = quantize(sum((c.gross_debits for c in categories), ZERO))
     # Gross per category, like the headline, so the rows reconcile with it: a category
     # that only received a refund this period carries no burn and is left out.
@@ -277,8 +326,10 @@ def _macro(categories: list[_CategoryTotals], claims: _ClaimTotals) -> MacroMetr
         household_burn=primary_burn + claims.amount,
         primary_accounts_burn=primary_burn,
         partner_claims_burn=claims.amount,
+        partner_claims_count=claims.count,
         refunds=quantize(sum((c.credits for c in categories), ZERO)),
         by_category=_sorted_categories(by_category),
+        by_person=by_person,
     )
 
 

@@ -1,15 +1,18 @@
-"""Settings -> AI: which models do what, thresholds, and a connection test."""
+"""Settings -> AI: which models do what, thresholds, a connection test, how the AI is doing, learnt layouts."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import uuid
+from dataclasses import asdict
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.auth import require_primary
 from app.config import AppConfig, Settings
 from app.database import get_db
 from app.deps import get_config, get_settings
-from app.services import ai_settings
+from app.services import ai_accuracy, ai_settings, layouts
 from app.services.ai_settings import AiUpdate, ModelCatalogue
 
 router = APIRouter(prefix="/ai", tags=["ai"], dependencies=[Depends(require_primary)])
@@ -31,6 +34,8 @@ def _payload(
     data["available_models"] = [m.model_dump() for m in models]
     data["memory_rows"] = ai_settings.memory_rows(db)
     data["stored"] = stored
+    data["stats"] = asdict(ai_accuracy.stats(db))
+    data["layouts"] = [layouts.layout_out(row) for row in layouts.list_layouts(db)]
     return data
 
 
@@ -76,3 +81,12 @@ def test_ai(
     current, _ = ai_settings.load(db, settings, config)
     proposed = ai_settings.merged(current, body)
     return ai_settings.run_tests(settings, proposed)
+
+
+@router.delete("/layouts/{layout_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_layout(layout_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
+    """Forget a learnt PDF layout; the next statement of that kind goes to the model again."""
+    if not layouts.delete_layout(db, layout_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "layout not found")
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

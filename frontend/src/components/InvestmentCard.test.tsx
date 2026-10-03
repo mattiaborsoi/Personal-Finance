@@ -72,7 +72,25 @@ describe('<InvestmentCard />', () => {
 
     renderWithProviders(<InvestmentCard />);
 
-    expect(await screen.findByText('No investment accounts yet')).toBeInTheDocument();
+    expect(await screen.findByTestId('no-investments')).toHaveTextContent('No investment accounts yet');
+    expect(screen.getByRole('link', { name: 'Settings, Accounts' })).toHaveAttribute('href', '/settings?tab=accounts');
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  });
+
+  it('collapses to one line of figures when there is a single account', async () => {
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/metrics/investment') {
+        return jsonResponse({ ...metrics, accounts: [metrics.accounts[0]] });
+      }
+      return undefined;
+    });
+
+    renderWithProviders(<InvestmentCard />);
+
+    const line = await screen.findByTestId('investment-single');
+    expect(screen.getByText('HSBC Premier ··4471 · all time')).toBeInTheDocument();
+    expect(within(line).getByText('£1,000.00')).toBeInTheDocument();
+    expect(within(line).getByText('+£50.00')).toHaveClass('text-good-ink');
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 

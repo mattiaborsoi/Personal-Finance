@@ -12,6 +12,7 @@ import { MerchantAvatar } from './MerchantAvatar';
 import { MerchantName } from './MerchantName';
 import { MoneyText } from './MoneyText';
 import { SourceBadge } from './SourceBadge';
+import { UnusualBadge } from './UnusualBadge';
 import { NoteButton, NoteLine } from './TransactionNote';
 import { TransferToggle } from './TransferToggle';
 
@@ -155,7 +156,10 @@ export function ApprovalRow({
           <TransferToggle transaction={tx} merchant={merchant} disabled={locked} title={closedTitle} onChange={onTransferChange} />
         </td>
         <td className="px-2 py-3 align-middle">
-          <SourceBadge source={tx.classification_source} confidence={tx.classification_confidence} />
+          <div className="flex flex-col items-start gap-1">
+            <SourceBadge source={tx.classification_source} confidence={tx.classification_confidence} />
+            <UnusualBadge unusual={tx.unusual} />
+          </div>
         </td>
         <td className="whitespace-nowrap px-2 py-3 text-right align-middle">
           <span className="inline-flex items-center justify-end gap-1">

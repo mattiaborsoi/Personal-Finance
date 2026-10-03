@@ -14,6 +14,8 @@ export interface TransactionFilterValues {
   category: string;
   q: string;
   include_transfers: boolean;
+  /** Only lines filed unlike their merchant usually is on that card. */
+  unusual: boolean;
 }
 
 interface Props {
@@ -151,7 +153,7 @@ export function TransactionFilters({ periods, values, onChange }: Props) {
           </button>
         </div>
       </div>
-      <div className="flex items-end sm:col-span-2 lg:col-span-1">
+      <div className="flex flex-wrap items-end gap-x-5 gap-y-1 sm:col-span-2 lg:col-span-1">
         <label htmlFor="f-transfers" className="flex min-h-[38px] cursor-pointer items-center gap-2 text-sm text-ink-2">
           <input
             id="f-transfers"
@@ -161,6 +163,20 @@ export function TransactionFilters({ periods, values, onChange }: Props) {
             onChange={(e) => set('include_transfers', e.target.checked)}
           />
           Include internal transfers
+        </label>
+        <label
+          htmlFor="f-unusual"
+          className="flex min-h-[38px] cursor-pointer items-center gap-2 text-sm text-ink-2"
+          title="Lines filed unlike their merchant usually is on that card"
+        >
+          <input
+            id="f-unusual"
+            type="checkbox"
+            className={checkboxBase}
+            checked={values.unusual}
+            onChange={(e) => set('unusual', e.target.checked)}
+          />
+          Unusual only
         </label>
       </div>
     </form>

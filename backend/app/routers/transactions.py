@@ -23,8 +23,9 @@ from app.schemas import (
     TransactionListOut,
     TransactionOut,
     TransactionUpdate,
+    UnusualOut,
 )
-from app.services import auto_approve, ingestion, memory, rules, settlement, splits, transfers
+from app.services import ai_accuracy, auto_approve, ingestion, memory, rules, settlement, splits, transfers, unusual
 from app.services.embeddings import EmbeddingClient
 from app.services.guesser import INTERNAL_TRANSFER_CATEGORY
 from app.services.periods import PERIOD_KEY_RE
@@ -38,6 +39,24 @@ NOTE_MAX_LENGTH = 500
 def _escape_like(value: str) -> str:
     """Escape LIKE wildcards so a search for ``%`` or ``_`` matches literally."""
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _outs(db: Session, config: AppConfig, rows: list[Transaction]) -> list[TransactionOut]:
+    """Rows as the API shows them, each flagged when filed unlike its merchant usually is (one history query)."""
+    flags = unusual.annotate(db, config, rows)
+    out: list[TransactionOut] = []
+    for row in rows:
+        item = TransactionOut.model_validate(row)
+        flag = flags.get(row.id)
+        if flag is not None:
+            item.unusual = UnusualOut(
+                usual_category=flag.usual_category,
+                usual_claim_type=flag.usual_claim_type,
+                times=flag.times,
+                total=flag.total,
+            )
+        out.append(item)
+    return out
 
 
 def _get_or_404(db: Session, txn_id: uuid.UUID) -> Transaction:
@@ -239,6 +258,7 @@ def _approve(
     txn.review_status = "manual_approved"
     txn.classification_source = "manual"
     txn.classification_confidence = Decimal("1.000")
+    ai_accuracy.record_approval(txn)
     db.flush()
     if remember:
         _remember(db, txn, embedder)
@@ -253,9 +273,11 @@ def list_transactions(
     category: str | None = Query(default=None),
     q: str | None = Query(default=None, description="case-insensitive search in description / merchant / note"),
     include_transfers: bool = Query(default=True),
+    unusual_only: bool = Query(default=False, alias="unusual", description="only lines filed unlike usual"),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
+    config: AppConfig = Depends(get_effective_config),
 ) -> TransactionListOut:
     # Parts are embedded in their parent, never listed on their own.
     stmt = select(Transaction).where(Transaction.split_parent_id.is_(None)).options(selectinload(Transaction.parts))
@@ -289,18 +311,22 @@ def list_transactions(
         )
     if not include_transfers:
         stmt = stmt.where(Transaction.is_internal_transfer.is_(False))
+    if unusual_only:
+        stmt = unusual.with_unusual_filter(stmt)
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(
         stmt.order_by(Transaction.transaction_date.desc(), Transaction.created_at.desc(), Transaction.id)
         .limit(limit)
         .offset(offset)
     ).all()
-    return TransactionListOut(items=[TransactionOut.model_validate(r) for r in rows], total=int(total))
+    return TransactionListOut(items=_outs(db, config, list(rows)), total=int(total))
 
 
 @router.get("/{txn_id}", response_model=TransactionOut)
-def get_transaction(txn_id: uuid.UUID, db: Session = Depends(get_db)) -> Transaction:
-    return _get_or_404(db, txn_id)
+def get_transaction(
+    txn_id: uuid.UUID, db: Session = Depends(get_db), config: AppConfig = Depends(get_effective_config)
+) -> TransactionOut:
+    return _outs(db, config, [_get_or_404(db, txn_id)])[0]
 
 
 @router.patch("/{txn_id}", response_model=TransactionOut)

@@ -44,8 +44,10 @@ from sqlalchemy.orm import Session
 from app.config import APPROVED_STATUSES, TRANSFER_CATEGORY_PREFIX, AppConfig
 from app.models import AuditReport, Transaction
 from app.schemas import AnomalyOut, AuditReportOut, CategoryComparisonOut
+from app.services import ai_usage
 from app.services.llm import LLMClient, LLMError
 from app.services.periods import get_or_create_period, previous_period_key
+from app.services.redaction import Redactor
 
 log = logging.getLogger(__name__)
 
@@ -360,8 +362,11 @@ def _llm_payload(
     """Compact JSON for the narrative prompt: aggregates and anomalies only, never line items.
 
     States the currency and how many prior periods the baseline averages over
-    (``baseline_periods``, 0 when there is nothing to compare against).
+    (``baseline_periods``, 0 when there is nothing to compare against). Merchant
+    names go through the redactor (a merchant can be a person: a transfer to a
+    landlord by name), category names are the taxonomy's own.
     """
+    redactor = Redactor.from_config(config)
     payload = {
         "period_key": period_key,
         "currency": {"code": config.app.base_currency, "symbol": config.app.currency_symbol},
@@ -380,7 +385,7 @@ def _llm_payload(
         ],
         "anomalies": [
             {
-                "merchant": a.merchant,
+                "merchant": redactor.redact(a.merchant),
                 "current": str(a.current_amount),
                 "baseline": str(a.baseline_amount),
                 "deviation": None if a.deviation is None else round(a.deviation, 4),
@@ -461,6 +466,7 @@ def run_audit(db: Session, config: AppConfig, llm: LLMClient, period_key: str) -
     if summary is None:
         summary = deterministic_summary(config, period_key, comparison, anomalies)
 
+    ai_usage.flush(db)
     row = AuditReport(
         id=uuid.uuid4(),
         period_key=period_key,

@@ -1,6 +1,15 @@
 import { ArrowDown, ArrowUp, CircleAlert, CircleCheck, CreditCard, FlaskConical, ListChecks, LoaderCircle, Minus, Plus, Trash2 } from 'lucide-react';
 import { Fragment, useEffect, useId, useRef, useState, type FormEvent } from 'react';
-import { api, CONFIG_DEFAULTS_MESSAGE, errorMessage, isApiError, type ClaimType, type RuleTestResult, type RulesOut } from '../api';
+import {
+  api,
+  CONFIG_DEFAULTS_MESSAGE,
+  errorMessage,
+  isApiError,
+  type ClaimType,
+  type RuleSuggestion,
+  type RuleTestResult,
+  type RulesOut,
+} from '../api';
 import { useConfig, useNames, useReloadConfig } from '../config/ConfigContext';
 import { useFocusFirstProblem } from '../hooks/useFocusFirstProblem';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
@@ -8,6 +17,7 @@ import { accountName, claimTypeLabel, plural } from '../lib/format';
 import {
   blankPattern,
   blankRule,
+  ruleRowFrom,
   buildRulesUpdate,
   hasRulesProblems,
   matchText,
@@ -52,6 +62,7 @@ import { ErrorMessage } from './ErrorMessage';
 import { Field } from './Field';
 import { LoadingState } from './LoadingState';
 import { Notice } from './Notice';
+import { RuleSuggestions } from './RuleSuggestions';
 
 export const RULES_SAVED_MESSAGE = 'Saved. The rules apply to the next upload; lines already imported keep their classification.';
 export const RULES_DESCRIPTION =
@@ -149,6 +160,8 @@ export function RulesPanel() {
   const [testing, setTesting] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
   const [result, setResult] = useState<RuleTestResult | null>(null);
+  /** Bumped after every save, so the suggestions are worked out against the rules as saved. */
+  const [suggestionsKey, setSuggestionsKey] = useState(0);
 
   const formRef = useRef<HTMLFormElement>(null);
   const focusFirstProblem = useFocusFirstProblem(formRef, saving || testing);
@@ -252,6 +265,7 @@ export function RulesPanel() {
       setForm(rulesFormFrom(next));
       setServerProblems({ rules: {}, patterns: {} });
       setSavedNotice(true);
+      setSuggestionsKey((k) => k + 1);
       await syncConfig();
     } catch (err) {
       const placed = isApiError(err, 422) ? problemsForError(err, errorMessage(err)) : null;
@@ -263,6 +277,31 @@ export function RulesPanel() {
     } finally {
       setSaving(false);
     }
+  }
+
+  /**
+   * A suggestion accepted: the rule is added, edited or removed on the form and the whole
+   * list saved straight away through the rules API, as a Save would. Unsaved edits on the
+   * form go with it; the button is disabled while they cannot be sent.
+   */
+  async function acceptSuggestion(suggestion: RuleSuggestion) {
+    if (!form || !saved) return;
+    let rules = [...form.rules];
+    if (suggestion.action === 'add') rules = [...rules, ruleRowFrom(suggestion.rule)];
+    else if (suggestion.rule_index !== null && suggestion.rule_index < rules.length) {
+      if (suggestion.action === 'remove') rules = rules.filter((_, i) => i !== suggestion.rule_index);
+      else rules = rules.map((row, i) => (i === suggestion.rule_index ? { ...ruleRowFrom(suggestion.rule), key: row.key } : row));
+    } else return;
+    const nextForm = { ...form, rules };
+    setForm(nextForm);
+    setResult(null);
+    const next = await api.updateRules(buildRulesUpdate(nextForm, saved));
+    setSaved(next);
+    setForm(rulesFormFrom(next));
+    setServerProblems({ rules: {}, patterns: {} });
+    setSavedNotice(true);
+    setSuggestionsKey((k) => k + 1);
+    await syncConfig();
   }
 
   function discard() {
@@ -315,6 +354,7 @@ export function RulesPanel() {
           {CONFIG_DEFAULTS_MESSAGE}
         </Notice>
       )}
+      <RuleSuggestions refreshKey={suggestionsKey} onAccept={acceptSuggestion} acceptDisabled={!valid || busy} />
       <Card flush icon={ListChecks} title="Rules" description={RULES_DESCRIPTION}>
         {form.rules.length === 0 ? (
           <EmptyState

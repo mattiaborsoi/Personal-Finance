@@ -88,6 +88,8 @@ class PeriodOut(BaseModel):
     closed_at: datetime | None = None
     transaction_count: int = 0
     pending_review_count: int = 0
+    unusual_count: int = 0
+    """Lines filed unlike their merchant usually is on that card (app.services.unusual)."""
 
 
 # --------------------------------------------------------------------------- #
@@ -143,6 +145,17 @@ class TransactionOut(BaseModel):
     is_split: bool = False
     split_parent_id: uuid.UUID | None = None
     parts: list[TransactionPartOut] = Field(default_factory=list)
+    unusual: UnusualOut | None = None
+    """Set when the line is filed unlike this merchant usually is on the same card."""
+
+
+class UnusualOut(BaseModel):
+    usual_category: str
+    usual_claim_type: str
+    times: int
+    """How often the line's own filing appears in the card's history for this merchant."""
+    total: int
+    """That history's size (approved lines, the line itself aside)."""
 
 
 class TransactionListOut(BaseModel):
@@ -478,14 +491,27 @@ class CategoryAmount(BaseModel):
     amount: Decimal
 
 
+class PersonSpend(BaseModel):
+    """One household member's side of the month: what they paid and what they bear."""
+
+    user_id: str
+    paid: Decimal
+    """Gross debits on the accounts billed to them, plus the claims they paid."""
+    bears: Decimal
+    """Their net share after the split: allocated amounts (refunds netted) plus their side of the claims."""
+
+
 class MacroMetrics(BaseModel):
     household_burn: Decimal
     primary_accounts_burn: Decimal
     partner_claims_burn: Decimal
+    partner_claims_count: int = 0
     refunds: Decimal = Decimal("0.00")
     """Credits received in spend categories this period; shown, never deducted from the burn."""
     by_category: list[CategoryAmount]
     """Gross debits per category plus a ``Partner claims`` row; sums exactly to ``household_burn``."""
+    by_person: list[PersonSpend] = Field(default_factory=list)
+    """Primary then secondary: what each paid and what each bears (see :class:`PersonSpend`)."""
 
 
 class MicroMetrics(BaseModel):
@@ -530,6 +556,43 @@ class InvestmentSummary(BaseModel):
     total_withdrawals: Decimal
     net_invested_capital: Decimal
     realized_gain: Decimal
+
+
+# --------------------------------------------------------------------------- #
+# Subscriptions (app.services.subscriptions)
+# --------------------------------------------------------------------------- #
+
+
+class SubscriptionChange(BaseModel):
+    """The newest charge differs from the one before it."""
+
+    from_amount: Decimal = Field(serialization_alias="from")
+    to_amount: Decimal = Field(serialization_alias="to")
+    month: str
+    """The month of the newest charge (YYYY-MM)."""
+
+
+class SubscriptionOut(BaseModel):
+    merchant: str
+    category: str
+    cadence: Literal["monthly", "yearly"]
+    amount: Decimal
+    """The latest charge, as a positive magnitude."""
+    monthly_cost: Decimal
+    charges: int
+    first_date: date
+    last_date: date
+    next_expected: date
+    status: Literal["active", "new", "stopped"]
+    change: SubscriptionChange | None = None
+
+
+class SubscriptionsOut(BaseModel):
+    items: list[SubscriptionOut]
+    total_monthly: Decimal
+    """The monthly cost of every subscription that has not stopped."""
+    as_of: date | None
+    """The newest transaction date in the ledger, which "new" and "stopped" are judged against."""
 
 
 # --------------------------------------------------------------------------- #

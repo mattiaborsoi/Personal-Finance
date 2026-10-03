@@ -1,4 +1,4 @@
-import { Calendar, ChevronDown, ChevronUp, HandCoins, Landmark, Lock, Receipt, Scale, Trash2 } from 'lucide-react';
+import { Calendar, ChevronDown, ChevronUp, HandCoins, Landmark, ListChecks, Lock, Receipt, Scale, Trash2 } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, errorMessage, type PeriodOut, type SettlementEntry } from '../api';
@@ -86,6 +86,17 @@ function WorkingRow({
   );
 }
 
+/** How much of the month is approved: "97% approved" with the lines still to review. */
+export function reviewProgress(info: Pick<PeriodOut, 'transaction_count' | 'pending_review_count'>): {
+  percent: number;
+  pending: number;
+} {
+  const total = Math.max(info.transaction_count, 0);
+  const pending = Math.min(Math.max(info.pending_review_count, 0), total);
+  const percent = total === 0 ? 100 : Math.floor(((total - pending) / total) * 100);
+  return { percent, pending };
+}
+
 /**
  * The emotional centre of the dashboard: the outstanding balance between the two
  * of them, how it was reached (carried in, this month, payments, adjustments), and
@@ -101,6 +112,9 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
   // The open lines panel lives in the URL (?lines=open), so a reload or a shared link keeps it open.
   const [searchParams, setSearchParams] = useSearchParams();
   const expanded = searchParams.get('lines') === 'open';
+  // The working is collapsed by default: the headline and its one-line summary are the point.
+  const [workingOpen, setWorkingOpen] = useState(expanded);
+  const showWorking = workingOpen || expanded;
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -212,6 +226,11 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
     );
   }
 
+  const claimLines = data ? data.lines.filter((line) => line.source === 'claim') : [];
+  const claimsTotal = claimLines.reduce((sum, line) => sum + Math.abs(toNumber(line.amount) || 0), 0);
+  const claimCount = Math.max(claimLines.length, data?.unsettled_claim_count ?? 0);
+  const progress = periodInfo && periodInfo.transaction_count > 0 ? reviewProgress(periodInfo) : null;
+
   const headlineLabel = history
     ? `At the end of ${month}, before the balance was set`
     : `Outstanding at end of ${month}`;
@@ -252,7 +271,7 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
                     <InitialsChip name={names.secondary} size={36} className="ring-2 ring-surface" />
                   </span>
                   <p
-                    className="min-w-0 flex-1 text-balance text-2xl font-semibold leading-tight tracking-tight text-ink sm:text-4xl"
+                    className="min-w-0 flex-1 text-balance text-xl font-semibold leading-tight tracking-tight text-ink sm:text-4xl"
                     data-testid="settlement-headline"
                   >
                     {noFigure ? 'Nothing approved yet' : balanceHeadline(balance.balance_out, names, symbol)}
@@ -299,10 +318,38 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
                       </span>
                     </span>
                   </li>
-                  <li className={cx(chip, 'whitespace-nowrap')}>
+                  <li className={cx(chip, 'whitespace-nowrap')} data-testid="settlement-claims">
                     <Receipt className="h-3.5 w-3.5 text-ink-3" aria-hidden="true" />
-                    {plural(data.unsettled_claim_count, 'unsettled claim')}
+                    {claimCount === 0
+                      ? 'No partner claims'
+                      : `${plural(claimCount, 'partner claim')} · ${formatMoney(claimsTotal, symbol)}${
+                          data.unsettled_claim_count > 0 ? `, ${data.unsettled_claim_count} unsettled` : ''
+                        }`}
                   </li>
+                  {progress && (
+                    <li className={cx(chip, 'whitespace-nowrap')} data-testid="settlement-progress">
+                      <ListChecks className="h-3.5 w-3.5 text-ink-3" aria-hidden="true" />
+                      {progress.pending > 0 ? (
+                        <Link to={reviewPath(period)} className={cx('rounded', linkBase, 'font-medium')}>
+                          {progress.percent}% approved · {progress.pending} to review
+                        </Link>
+                      ) : (
+                        `${progress.percent}% approved`
+                      )}
+                      {(periodInfo?.unusual_count ?? 0) > 0 && (
+                        <>
+                          {' · '}
+                          <Link
+                            to={`/transactions?period=${encodeURIComponent(period)}&unusual=true`}
+                            className={cx('rounded', linkBase, 'font-medium')}
+                            title="Filed unlike that merchant usually is on the same card"
+                          >
+                            {plural(periodInfo?.unusual_count ?? 0, 'line looks', 'lines look')} unusual
+                          </Link>
+                        </>
+                      )}
+                    </li>
+                  )}
                 </ul>
               </>
             )}
@@ -379,7 +426,35 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
           <ErrorMessage message={actionError} onDismiss={() => setActionError(null)} />
 
           {!noFigure && (
-            <div>
+            <button
+              type="button"
+              className={cx(btnGhost, btnSmall, '-ml-2.5')}
+              aria-expanded={showWorking}
+              aria-controls="settlement-working"
+              onClick={() => {
+                if (showWorking && expanded) {
+                  setSearchParams(
+                    (prev) => {
+                      const next = new URLSearchParams(prev);
+                      next.delete('lines');
+                      return next;
+                    },
+                    { replace: true },
+                  );
+                }
+                setWorkingOpen(!showWorking);
+              }}
+            >
+              {showWorking ? (
+                <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              {showWorking ? 'Hide the working' : 'Show the working'}
+            </button>
+          )}
+          {!noFigure && showWorking && (
+            <div id="settlement-working" className="animate-rise">
               <h3 className={eyebrow}>The working</h3>
               <ol className="mt-3 divide-y divide-hairline" data-testid="settlement-working">
                 <WorkingRow
@@ -514,7 +589,7 @@ export function SettlementBanner({ period, periodInfo = null, refreshKey = 0, on
             </div>
           )}
 
-          {data.snapshot && recordedAtClose !== null && (
+          {showWorking && data.snapshot && recordedAtClose !== null && (
             <p
               className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 border-t border-hairline pt-4 text-xs text-ink-3"
               data-testid="settlement-snapshot"

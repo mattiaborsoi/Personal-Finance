@@ -78,12 +78,19 @@ class AiProxy(BaseModel):
     api_key: str | None = None
 
 
+MAX_REDACT_WORDS = 50
+MAX_REDACT_WORD_LENGTH = 64
+
+
 class AiSettings(BaseModel):
     enabled: bool
     embedding_provider: EmbeddingProvider
     models: AiModels
     thresholds: AiThresholds
     proxy: AiProxy = Field(default_factory=AiProxy)
+    redact_words: list[str] = Field(default_factory=list)
+    """Extra words masked before any text goes to a model, besides the names, numbers,
+    postcodes, e-mails and phone numbers that are always masked (``app.services.redaction``)."""
 
     def proxy_url(self, settings: Settings) -> str:
         if self.proxy.mode == "external":
@@ -138,6 +145,8 @@ class AiUpdate(BaseModel):
     models: AiModelsUpdate | None = None
     thresholds: AiThresholdsUpdate | None = None
     proxy: AiProxyUpdate | None = None
+    redact_words: list[str] | None = Field(default=None, max_length=MAX_REDACT_WORDS)
+    """The whole list; it replaces the saved one. Blank entries are dropped, the rest trimmed."""
     clear_memory: bool = False
 
 
@@ -181,6 +190,7 @@ def defaults(settings: Settings, config: AppConfig) -> AiSettings:
         # LITELLM_URL in .env means "I already run one": start from it; a saved choice
         # overrides this, and a saved external proxy without a URL keeps this one.
         proxy=AiProxy(mode="external", url=settings.litellm_url.rstrip("/")) if settings.litellm_url else AiProxy(),
+        redact_words=list(config.privacy.redact_words),
     )
 
 
@@ -235,7 +245,8 @@ def apply(config: AppConfig, ai: AiSettings) -> AppConfig:
             "lookback_periods": ai.thresholds.lookback_periods,
         }
     )
-    return config.model_copy(update={"llm": llm, "auditor": auditor})
+    privacy = config.privacy.model_copy(update={"redact_words": list(ai.redact_words)})
+    return config.model_copy(update={"llm": llm, "auditor": auditor, "privacy": privacy})
 
 
 def merged(current: AiSettings, update: AiUpdate) -> AiSettings:
@@ -250,6 +261,13 @@ def merged(current: AiSettings, update: AiUpdate) -> AiSettings:
         if url and not url.lower().startswith(("http://", "https://")):
             raise AiSettingsError("the proxy URL must start with http:// or https://")
         proxy_patch["url"] = url or None
+    if patch.get("redact_words") is not None:
+        words = [w.strip() for w in patch["redact_words"] if isinstance(w, str) and w.strip()]
+        for word in words:
+            if len(word) > MAX_REDACT_WORD_LENGTH:
+                raise AiSettingsError(f"a word to redact must be at most {MAX_REDACT_WORD_LENGTH} characters")
+        seen: set[str] = set()
+        patch["redact_words"] = [w for w in words if not (w.lower() in seen or seen.add(w.lower()))]
     result = AiSettings.model_validate(_merge(data, patch))
     if result.proxy.mode == "external" and not result.proxy.url:
         raise AiSettingsError("enter the URL of your LiteLLM proxy, e.g. http://host.docker.internal:4000")

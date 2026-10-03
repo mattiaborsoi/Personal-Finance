@@ -32,6 +32,15 @@ function markTipSeen(key: string) {
   }
 }
 
+/** Below `sm` (a phone), where the open explainer pushes the queue off the screen. */
+function onPhone(): boolean {
+  try {
+    return window.matchMedia?.('(max-width: 639px)').matches ?? false;
+  } catch {
+    return false;
+  }
+}
+
 function Glyph({ icon: Icon, initial, tone }: { icon?: LucideIcon; initial?: string; tone: string }) {
   return (
     <span aria-hidden="true" className={cx('mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md', tone)}>
@@ -52,7 +61,12 @@ export function ClaimTypeHelp({ tipKey, className }: Props) {
   const names = useNames();
   const symbol = useCurrency();
   const panelId = useId();
-  const [asTip] = useState(() => Boolean(tipKey) && !tipSeen(tipKey as string));
+  const [asTip] = useState(() => {
+    const show = Boolean(tipKey) && !tipSeen(tipKey as string);
+    // On a phone one visit is enough: the tip shows this once and stays collapsed from the next visit on.
+    if (show && tipKey && onPhone()) markTipSeen(tipKey);
+    return show;
+  });
   const [open, setOpen] = useState(asTip);
   const [tipShowing, setTipShowing] = useState(asTip);
 

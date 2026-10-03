@@ -22,12 +22,14 @@ _embedders: dict[tuple, EmbeddingClient] = {}
 _null_llm = NullLLMClient()
 
 # Each job waits only as long as its answer is worth waiting for. Classification is
-# one call per unseen merchant, so a hung proxy must give up quickly (the Guesser's
-# circuit breaker then skips the rest of the file); PDF extraction and the audit are
-# single, longer calls. ``LLM_TIMEOUT_SECONDS`` (default 90) is the ceiling for all
-# three and the extraction timeout itself.
-CLASSIFY_TIMEOUT_SECONDS = 20.0
+# one call per batch of unseen merchants (up to ``guesser.BATCH_SIZE`` lines), so a
+# hung proxy must still give up fairly quickly (the Guesser's circuit breaker then
+# skips the rest of the file); PDF extraction and the audit are single, longer calls.
+# ``LLM_TIMEOUT_SECONDS`` (default 90) is the ceiling for all three and the
+# extraction timeout itself.
+CLASSIFY_TIMEOUT_SECONDS = 45.0
 AUDIT_TIMEOUT_SECONDS = 60.0
+ASK_TIMEOUT_SECONDS = 30.0
 
 
 def reset_caches() -> None:
@@ -35,17 +37,22 @@ def reset_caches() -> None:
     _embedders.clear()
 
 
-def build_llm(settings: Settings, ai: AiSettings, model: str, timeout: float | None = None) -> LLMClient:
-    """A cached proxy client for ``model``; ``timeout`` (seconds) is capped by ``LLM_TIMEOUT_SECONDS``."""
+def build_llm(
+    settings: Settings, ai: AiSettings, model: str, timeout: float | None = None, job: str = "chat"
+) -> LLMClient:
+    """A cached proxy client for ``model``; ``timeout`` (seconds) is capped by ``LLM_TIMEOUT_SECONDS``.
+
+    ``job`` is what the calls are counted under in the usage figures (Settings -> AI).
+    """
     if not ai.enabled:
         return _null_llm
     url, api_key = ai.proxy_url(settings), ai.proxy_key(settings)
     ceiling = settings.llm_timeout_seconds
     timeout = ceiling if timeout is None else min(timeout, ceiling)
-    key = (url, api_key, model, timeout)
+    key = (url, api_key, model, timeout, job)
     client = _llm_clients.get(key)
     if client is None:
-        client = LiteLLMClient(base_url=url, api_key=api_key, model=model, timeout=timeout)
+        client = LiteLLMClient(base_url=url, api_key=api_key, model=model, timeout=timeout, job=job)
         _llm_clients[key] = client
     return client
 
@@ -75,7 +82,7 @@ def get_llm(
     ai: AiSettings = Depends(get_ai_settings),
 ) -> LLMClient:
     """The model that categorises transactions."""
-    return build_llm(settings, ai, config.llm.chat_model, timeout=CLASSIFY_TIMEOUT_SECONDS)
+    return build_llm(settings, ai, config.llm.chat_model, timeout=CLASSIFY_TIMEOUT_SECONDS, job="chat")
 
 
 def get_extraction_llm(
@@ -84,7 +91,7 @@ def get_extraction_llm(
     ai: AiSettings = Depends(get_ai_settings),
 ) -> LLMClient:
     """The model that reads PDFs the deterministic parsers cannot (full ``LLM_TIMEOUT_SECONDS``)."""
-    return build_llm(settings, ai, config.llm.extraction_model_name)
+    return build_llm(settings, ai, config.llm.extraction_model_name, job="extraction")
 
 
 def get_audit_llm(
@@ -93,7 +100,16 @@ def get_audit_llm(
     ai: AiSettings = Depends(get_ai_settings),
 ) -> LLMClient:
     """The model that writes the monthly summary."""
-    return build_llm(settings, ai, config.llm.audit_model_name, timeout=AUDIT_TIMEOUT_SECONDS)
+    return build_llm(settings, ai, config.llm.audit_model_name, timeout=AUDIT_TIMEOUT_SECONDS, job="audit")
+
+
+def get_ask_llm(
+    settings: Settings = Depends(get_settings),
+    config: AppConfig = Depends(get_effective_config),
+    ai: AiSettings = Depends(get_ai_settings),
+) -> LLMClient:
+    """The model that turns a plain-English question into a query (the chat model)."""
+    return build_llm(settings, ai, config.llm.chat_model, timeout=ASK_TIMEOUT_SECONDS, job="ask")
 
 
 def get_embedder(

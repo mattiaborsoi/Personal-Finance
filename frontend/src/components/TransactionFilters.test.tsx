@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { fixtureConfig, renderWithProviders } from '../test/utils';
 import { TransactionFilters, type TransactionFilterValues } from './TransactionFilters';
 
-const values: TransactionFilterValues = { period: '', status: '', account_id: '', category: '', q: '', include_transfers: false };
+const values: TransactionFilterValues = { period: '', status: '', account_id: '', category: '', q: '', include_transfers: false, unusual: false };
 
 describe('<TransactionFilters />', () => {
   it('groups the category filter under "emoji Group" headings, bare names on their own and Uncategorised last', async () => {
@@ -35,5 +35,17 @@ describe('<TransactionFilters />', () => {
     // The value sent is still the stored name.
     await user.selectOptions(select, 'Bills:Energy');
     expect(onChange).toHaveBeenCalledWith({ ...values, category: 'Bills:Energy' });
+  });
+});
+
+describe('<TransactionFilters /> unusual only', () => {
+  it('offers an "Unusual only" switch that reports the change', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderWithProviders(<TransactionFilters periods={[]} values={values} onChange={onChange} />);
+    const box = screen.getByRole('checkbox', { name: 'Unusual only' });
+    expect(box).not.toBeChecked();
+    await user.click(box);
+    expect(onChange).toHaveBeenCalledWith({ ...values, unusual: true });
   });
 });

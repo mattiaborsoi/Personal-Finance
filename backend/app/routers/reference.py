@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.auth import require_any_role
 from app.config import AppConfig
 from app.database import get_db
-from app.deps import get_effective_config
+from app.deps import get_ai_settings, get_effective_config
 from app.schemas import HealthOut
 
 router = APIRouter(tags=["reference"])
@@ -30,5 +30,7 @@ def health(db: Session = Depends(get_db)) -> HealthOut:
 
 
 @router.get("/config", dependencies=[Depends(require_any_role)])
-def public_config(config: AppConfig = Depends(get_effective_config)) -> dict:
-    return config.public_dict()
+def public_config(config: AppConfig = Depends(get_effective_config), ai=Depends(get_ai_settings)) -> dict:
+    data = config.public_dict()
+    data["ai_enabled"] = bool(ai.enabled)  # the Ask box only shows while a model can answer
+    return data

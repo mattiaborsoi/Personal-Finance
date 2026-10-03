@@ -4,13 +4,17 @@ import {
   ChevronRight,
   CircleAlert,
   CircleCheck,
+  FileSearch,
+  Gauge,
   Info,
   LoaderCircle,
   Minus,
   PlugZap,
   Server,
+  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
@@ -22,19 +26,24 @@ import {
   type AiModels,
   type AiProxyUpdate,
   type AiSettings,
+  type AiStats,
   type AiTestResult,
   type AiThresholds,
   type AiUpdate,
   type EmbeddingProvider,
+  type PdfLayoutOut,
   type ProxyMode,
 } from '../api';
 import { useFocusFirstProblem } from '../hooks/useFocusFirstProblem';
 import { useUnsavedChanges } from '../hooks/useUnsavedChanges';
+import { formatCount } from '../lib/money';
+import { formatDate } from '../lib/dates';
 import { plural } from '../lib/format';
 import { btnPrimary, btnSecondary, cardInset, checkboxBase, cx, eyebrow, focusRing, inputBase, inputInvalid, selectBase } from '../lib/ui';
 import { Badge } from './Badge';
 import { PRODUCT_NAME } from './BrandMark';
 import { Card } from './Card';
+import { ConfirmButton } from './ConfirmButton';
 import { ErrorMessage } from './ErrorMessage';
 import { Field } from './Field';
 import { LoadingState } from './LoadingState';
@@ -57,6 +66,18 @@ export const EXTERNAL_PROXY_LABEL = 'A LiteLLM I already run';
 export const BUNDLED_PROXY_DOWN_MESSAGE = `${PRODUCT_NAME}'s own LiteLLM is not answering.`;
 /** Instead of the proxy warnings while nothing uses the proxy (AI off, merchants matched offline). */
 export const AI_OFF_PROXY_MESSAGE = `AI is off, so ${PRODUCT_NAME} is not using the proxy. Turn AI on to check the connection.`;
+export const REDACT_HELP =
+  'One per line. Always masked already: both your names, any run of six or more digits, UK postcodes, e-mail addresses and phone numbers. The original text never changes; only what leaves does.';
+export const NO_STATS_MESSAGE = 'Nothing to measure yet: approve a few lines the AI classified and the figures appear here.';
+export const NO_LAYOUTS_MESSAGE = 'No layouts learnt yet. A PDF the built-in parsers cannot read goes to the model once; its layout is kept here and the next one is read without AI.';
+
+/** The usage jobs as the figures name them. */
+const USAGE_LABELS: Record<string, string> = {
+  chat: 'Categorising',
+  extraction: 'Reading PDFs',
+  audit: 'Monthly summary',
+  ask: 'Questions',
+};
 
 // ---------------------------------------------------------------------------
 // The jobs and the thresholds, as the form shows them
@@ -114,6 +135,21 @@ interface AiForm {
   models: AiModels;
   thresholds: ThresholdFields;
   proxy: ProxyFields;
+  /** The extra words to redact, one per line, as typed. */
+  redact_words: string;
+}
+
+/** The list as typed: one entry per line, trimmed, blanks dropped, repeats (ignoring case) dropped. */
+export function parseRedactWords(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const word = line.trim();
+    if (!word || seen.has(word.toLowerCase())) continue;
+    seen.add(word.toLowerCase());
+    out.push(word);
+  }
+  return out;
 }
 
 /** The URL saved for an external proxy; blank when the bundled one is in use. */
@@ -134,6 +170,7 @@ function formFrom(settings: AiSettings): AiForm {
     models: { ...settings.models },
     thresholds,
     proxy: { mode: settings.proxy.mode, url: savedExternalUrl(settings), api_key: '' },
+    redact_words: (settings.redact_words ?? []).join('\n'),
   };
 }
 
@@ -223,6 +260,8 @@ function buildUpdate(form: AiForm, parsed: Parsed, saved: AiSettings): AiUpdate 
   if (parsed.proxy.url !== undefined && parsed.proxy.url !== savedExternalUrl(saved)) proxy.url = parsed.proxy.url;
   if (parsed.proxy.api_key !== undefined) proxy.api_key = parsed.proxy.api_key;
   if (Object.keys(proxy).length > 0) body.proxy = proxy;
+  const words = parseRedactWords(form.redact_words);
+  if (JSON.stringify(words) !== JSON.stringify(saved.redact_words ?? [])) body.redact_words = words;
   return body;
 }
 
@@ -392,6 +431,90 @@ function TestLine({ job, result }: { job: AiJob; result: AiTestResult[AiJob] }) 
   );
 }
 
+/** "How the AI is doing": acceptance over the window and this month's usage, as a compact block. */
+function AiStatsBlock({ stats, symbolless = false }: { stats: AiStats; symbolless?: boolean }) {
+  const rate = stats.acceptance_rate;
+  const nothingYet = stats.classified === 0 && stats.usage.length === 0;
+  return (
+    <Card icon={Gauge} title="How the AI is doing" description={`The last ${stats.window_days} days, and this month's usage.`}>
+      {nothingYet ? (
+        <p className="text-sm text-ink-2">{NO_STATS_MESSAGE}</p>
+      ) : (
+        <div className="space-y-4">
+          <dl className="grid gap-3 sm:grid-cols-3">
+            <StatTile
+              as="dl-item"
+              label="Suggestions accepted"
+              value={rate === null ? '—' : `${Math.round(rate * 100)}%`}
+              hint={rate === null ? 'None approved yet' : `${stats.accepted} of ${plural(stats.approved, 'approved line')} kept as suggested`}
+            />
+            <StatTile as="dl-item" label="Lines classified by the AI" value={formatCount(stats.classified)} />
+            <StatTile
+              as="dl-item"
+              label="Requests this month"
+              value={formatCount(stats.usage.reduce((n, u) => n + u.requests, 0))}
+              hint={symbolless ? undefined : 'Counts only; prompts are never stored'}
+            />
+          </dl>
+          {stats.usage.length > 0 && (
+            <ul aria-label="Usage per job this month" className="divide-y divide-hairline text-sm">
+              {stats.usage.map((u) => (
+                <li key={u.job} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
+                  <span className="text-ink">{USAGE_LABELS[u.job] ?? u.job}</span>
+                  <span className="tabular text-ink-2">
+                    {plural(u.requests, 'request')}
+                    {u.failures > 0 && `, ${plural(u.failures, 'failure')}`}
+                    {u.prompt_tokens + u.completion_tokens > 0 &&
+                      ` · ${formatCount(u.prompt_tokens)} in / ${formatCount(u.completion_tokens)} out tokens`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** Learnt PDF layouts with a delete each; the next statement of a deleted kind goes to the model again. */
+function LayoutsBlock({ layouts, onDelete }: { layouts: PdfLayoutOut[]; onDelete: (layout: PdfLayoutOut) => Promise<void> }) {
+  return (
+    <Card icon={FileSearch} title="Learnt PDF layouts" description="Statement layouts the model described once, read without AI since.">
+      {layouts.length === 0 ? (
+        <p className="text-sm text-ink-2">{NO_LAYOUTS_MESSAGE}</p>
+      ) : (
+        <ul aria-label="Learnt layouts" className="divide-y divide-hairline text-sm">
+          {layouts.map((layout) => {
+            const name = layout.institution || 'Unknown institution';
+            return (
+              <li key={layout.id} className="flex flex-wrap items-center justify-between gap-2 py-2 first:pt-0 last:pb-0">
+                <div className="min-w-0">
+                  <p className="font-medium text-ink">{name}</p>
+                  <p className="text-xs text-ink-3">
+                    Learnt {formatDate(layout.created_at)} · used {plural(layout.times_used, 'time')}
+                    {layout.last_used_at && `, last ${formatDate(layout.last_used_at)}`}
+                  </p>
+                </div>
+                <ConfirmButton
+                  tone="danger"
+                  icon={Trash2}
+                  iconOnly
+                  ariaLabel={`Forget the ${name} layout`}
+                  confirmLabel={`Forget the ${name} layout? The next such statement goes to the model again.`}
+                  onConfirm={() => onDelete(layout)}
+                >
+                  Forget
+                </ConfirmButton>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 const switchTrack = `relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`;
 const switchKnob = 'inline-block h-5 w-5 rounded-full bg-surface shadow-sm motion-safe:transition-transform';
 
@@ -463,6 +586,18 @@ export function AiPanel() {
 
   function setProxy(patch: Partial<ProxyFields>) {
     edit((prev) => ({ ...prev, proxy: { ...prev.proxy, ...patch } }));
+  }
+
+  const [layoutError, setLayoutError] = useState<string | null>(null);
+
+  async function deleteLayout(layout: PdfLayoutOut) {
+    setLayoutError(null);
+    try {
+      await api.deleteLayout(layout.id);
+      setSaved((prev) => (prev ? { ...prev, layouts: prev.layouts.filter((l) => l.id !== layout.id) } : prev));
+    } catch (err) {
+      setLayoutError(errorMessage(err));
+    }
   }
 
   /** Switching to the external proxy starts from the URL `.env` offers, when the form has none yet. */
@@ -773,6 +908,29 @@ export function AiPanel() {
           })}
         </div>
       </Card>
+
+      <Card icon={ShieldCheck} title="Privacy" description="What is masked before any text leaves for a model.">
+        <Field id={f('redact')} label="Also redact these words" help={REDACT_HELP}>
+          <textarea
+            id={f('redact')}
+            className={cx(inputBase, 'min-h-[5rem] font-mono')}
+            rows={3}
+            value={form.redact_words}
+            placeholder={'e.g. a street name\nan employer'}
+            spellCheck={false}
+            disabled={busy}
+            aria-describedby={`${f('redact')}-help`}
+            onChange={(e) => edit((prev) => ({ ...prev, redact_words: e.target.value }))}
+          />
+        </Field>
+      </Card>
+
+      <AiStatsBlock stats={saved.stats} />
+
+      <div className="space-y-3">
+        <LayoutsBlock layouts={saved.layouts ?? []} onDelete={deleteLayout} />
+        <ErrorMessage message={layoutError} onDismiss={() => setLayoutError(null)} />
+      </div>
 
       <Card icon={SlidersHorizontal} title="Fine-tuning" description="The thresholds behind those jobs. The defaults suit most households.">
         <details onToggle={(e) => setTuningOpen(e.currentTarget.open)}>

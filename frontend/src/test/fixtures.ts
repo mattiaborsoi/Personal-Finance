@@ -288,6 +288,9 @@ export function aiSettings(overrides: Partial<AiSettings> = {}): AiSettings {
     proxy: { mode: 'bundled', url: 'http://litellm:4000', bundled_url: 'http://litellm:4000', env_url: null, reachable: true, has_key: true },
     memory_rows: 8,
     stored: true,
+    redact_words: [],
+    stats: { window_days: 90, classified: 0, approved: 0, accepted: 0, acceptance_rate: null, month: '2026-10', usage: [] },
+    layouts: [],
     ...overrides,
   };
 }

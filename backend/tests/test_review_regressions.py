@@ -214,7 +214,7 @@ def test_patch_null_subcategory_clears_it(client, primary_headers, seeded_db, co
 
 
 def _fake_parse(lines, closing: date | None):
-    def parse(path, config, llm=None, filename=None, account=None):
+    def parse(path, config, llm=None, filename=None, account=None, layouts=None):
         meta = StatementMetadata(
             institution="HSBC", account_last4="4471", closing_date=closing, account_type_hint="checking"
         )

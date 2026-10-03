@@ -1,7 +1,9 @@
 import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import type { MetricsOut } from '../api';
-import { magnitude, selectViewFigures } from '../lib/views';
+import { magnitude, selectViewFigures, type RefundsMode } from '../lib/views';
 import { metrics as metricsFixture } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/utils';
 import { MetricsHeadline } from './MetricsHeadline';
@@ -43,11 +45,58 @@ describe('<MetricsHeadline /> liquidity view', () => {
     expect(figureFor('Debits (out)')).not.toHaveTextContent('-');
   });
 
-  it('never signs the macro view', () => {
+  it('never signs the household view', () => {
     mockFetch(() => undefined);
     renderWithProviders(<MetricsHeadline figures={selectViewFigures(metrics, 'macro')} hint="" />);
-    expect(screen.getByText('£1,200.00')).not.toHaveClass('text-good-ink');
+    // No refunds in the fixture: net and gross agree, and the hero figure is the one in proportional numerals.
+    expect(screen.getByText('£1,200.00', { selector: '.\\!normal-nums' })).not.toHaveClass('text-good-ink');
     expect(figureFor('Partner claims')).toHaveTextContent('£300.00');
+    expect(figureFor('Gross spend')).toHaveTextContent('£1,200.00');
+  });
+});
+
+describe('<MetricsHeadline /> household extras', () => {
+  it('says how the headline moved against last month', () => {
+    mockFetch(() => undefined);
+    renderWithProviders(
+      <MetricsHeadline
+        figures={selectViewFigures(metrics, 'macro')}
+        hint=""
+        change={{ delta: 120, fraction: 0.12, previousLabel: 'February 2026' }}
+      />,
+    );
+    expect(screen.getByTestId('headline-change')).toHaveTextContent('up £120.00 (12%) on February 2026');
+  });
+
+  it('switches between net and gross, and lists what each person paid and bears', async () => {
+    const user = userEvent.setup();
+    mockFetch(() => undefined);
+    const withRefunds = { ...metrics, macro: { ...metrics.macro, refunds: '83.00' } };
+    function Harness() {
+      const [mode, setMode] = useState<RefundsMode>('net');
+      return (
+        <MetricsHeadline
+          figures={selectViewFigures(withRefunds, 'macro', mode)}
+          hint=""
+          refunds={{ mode, onChange: setMode }}
+          people={[
+            { user_id: 'user_primary', paid: '900.00', bears: '640.00' },
+            { user_id: 'user_secondary', paid: '300.00', bears: '560.00' },
+          ]}
+        />
+      );
+    }
+    renderWithProviders(<Harness />);
+
+    expect(screen.getByText('£1,117.00')).toBeInTheDocument();
+    expect(figureFor('Gross spend')).toHaveTextContent('£1,200.00');
+    await user.click(screen.getByRole('button', { name: 'Gross' }));
+    expect(screen.getByText('£1,200.00', { selector: '.\\!normal-nums' })).toBeInTheDocument();
+    expect(figureFor('Net of refunds')).toHaveTextContent('£1,117.00');
+
+    const people = screen.getByTestId('per-person');
+    expect(people).toHaveTextContent('Alexpaid £900.00, bears £640.00');
+    expect(people).toHaveTextContent('Sampaid £300.00, bears £560.00');
   });
 });
 

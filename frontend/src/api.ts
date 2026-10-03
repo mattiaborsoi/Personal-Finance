@@ -86,6 +86,8 @@ export interface AppConfig {
    * group), only for groups that have one. Optional: an older server leaves it out.
    */
   category_emojis?: Record<string, string>;
+  /** True while a model can answer: the Ask box shows only then. Optional: an older server leaves it out. */
+  ai_enabled?: boolean;
 }
 
 export interface AccountOut {
@@ -143,6 +145,8 @@ export interface PeriodOut {
   closed_at: string | null;
   transaction_count: number;
   pending_review_count: number;
+  /** Lines filed unlike their merchant usually is on that card; optional on an older server. */
+  unusual_count?: number;
 }
 
 export interface UploadResult {
@@ -216,6 +220,20 @@ export interface TransactionOut {
   split_parent_id: string | null;
   /** Populated only when `is_split`; otherwise empty. */
   parts: TransactionPart[];
+  /**
+   * Set when the line is filed unlike this merchant usually is on the same card: at least
+   * four approved lines there, and this (category, claim type) in at most a fifth of them.
+   */
+  unusual?: UnusualOut | null;
+}
+
+export interface UnusualOut {
+  usual_category: string;
+  usual_claim_type: ClaimType;
+  /** How often the line's own filing appears in that history. */
+  times: number;
+  /** The history's size. */
+  total: number;
 }
 
 /**
@@ -262,6 +280,8 @@ export interface TransactionQuery {
   category?: string;
   q?: string;
   include_transfers?: boolean;
+  /** Only lines filed unlike their merchant usually is (`unusual=true`). */
+  unusual?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -512,16 +532,29 @@ export interface AccountFlow {
 /** The pseudo-category both `by_category` lists use for partner claims. */
 export const PARTNER_CLAIMS_CATEGORY = 'Partner claims';
 
+/** One household member's side of the month (Household view). */
+export interface PersonSpend {
+  user_id: string;
+  /** Gross debits on the accounts billed to them, plus the claims they paid. */
+  paid: Money;
+  /** Their net share after the split (refunds netted), plus their side of the claims. */
+  bears: Money;
+}
+
 export interface MetricsOut {
   period_key: string;
   macro: {
     household_burn: Money;
     primary_accounts_burn: Money;
     partner_claims_burn: Money;
+    /** How many partner claims the month has; absent on an older server. */
+    partner_claims_count?: number;
     /** Gross debits per category plus a `PARTNER_CLAIMS_CATEGORY` row, summing to `household_burn`. */
     by_category: CategoryAmount[];
     /** Refunds received in the period (positive); the headline deliberately does not deduct them. */
     refunds: Money;
+    /** Primary then secondary; absent on an older server. */
+    by_person?: PersonSpend[];
   };
   micro: {
     true_net_expense: Money;
@@ -558,6 +591,43 @@ export interface InvestmentMetrics {
   total_withdrawals: Money;
   net_invested_capital: Money;
   realized_gain: Money;
+}
+
+// Subscriptions: recurring payments found from the ledger, no AI (GET /api/subscriptions).
+export type SubscriptionCadence = 'monthly' | 'yearly';
+export type SubscriptionStatus = 'active' | 'new' | 'stopped';
+
+/** The newest charge differs from the one before it; `month` is the newest charge's YYYY-MM. */
+export interface SubscriptionChange {
+  from: Money;
+  to: Money;
+  month: string;
+}
+
+export interface SubscriptionOut {
+  merchant: string;
+  category: string;
+  cadence: SubscriptionCadence;
+  /** The latest charge, a positive magnitude. */
+  amount: Money;
+  /** `amount` for a monthly subscription, a twelfth of it for a yearly one. */
+  monthly_cost: Money;
+  charges: number;
+  first_date: string;
+  last_date: string;
+  next_expected: string;
+  /** `new`: first charged within the last 90 days; `stopped`: the next charge is well overdue. */
+  status: SubscriptionStatus;
+  change: SubscriptionChange | null;
+}
+
+export interface SubscriptionsOut {
+  /** Running ones first, by monthly cost; stopped ones last. */
+  items: SubscriptionOut[];
+  /** The monthly cost of every subscription that has not stopped. */
+  total_monthly: Money;
+  /** The newest transaction date in the ledger; null when the ledger is empty. */
+  as_of: string | null;
 }
 
 export interface AuditAnomaly {
@@ -773,6 +843,47 @@ export interface AiSettings {
   memory_rows: number;
   /** False until something is saved: the values shown are the config/.env defaults. */
   stored: boolean;
+  /**
+   * Extra words masked before any text goes to a model, on top of the household's
+   * names, long numbers, postcodes, e-mails and phone numbers that are always masked.
+   */
+  redact_words: string[];
+  /** How the AI is doing: acceptance over the last 90 days and this month's usage. */
+  stats: AiStats;
+  /** PDF layouts learnt from the model, replayed without AI; delete one to learn it afresh. */
+  layouts: PdfLayoutOut[];
+}
+
+/** Requests, failures and tokens the proxy reported for one job this month; never prompts. */
+export interface AiJobUsage {
+  job: 'chat' | 'extraction' | 'audit' | 'ask' | string;
+  requests: number;
+  failures: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+}
+
+export interface AiStats {
+  window_days: number;
+  /** Lines a model classified in the window. */
+  classified: number;
+  /** Of those, approved so far. */
+  approved: number;
+  /** Of those approved, with the suggested category and claim type kept unchanged. */
+  accepted: number;
+  /** accepted / approved, or null before anything was approved. */
+  acceptance_rate: number | null;
+  /** YYYY-MM the usage rows are for. */
+  month: string;
+  usage: AiJobUsage[];
+}
+
+export interface PdfLayoutOut {
+  id: string;
+  institution: string | null;
+  created_at: string | null;
+  last_used_at: string | null;
+  times_used: number;
 }
 
 /** A blank or omitted `api_key` keeps the stored key; `url` must start with http:// or https://. */
@@ -789,8 +900,81 @@ export interface AiUpdate {
   models?: Partial<AiModels>;
   thresholds?: Partial<AiThresholds>;
   proxy?: AiProxyUpdate;
+  /** The whole list; it replaces the saved one. Blank entries are dropped, the rest trimmed. */
+  redact_words?: string[];
   /** Required (true) when the embedding model or provider changes while `memory_rows` > 0. */
   clear_memory?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Ask: a plain-English question turned into a local query (POST /api/ask)
+// ---------------------------------------------------------------------------
+
+export type AskMetric = 'sum' | 'count' | 'average' | 'list';
+export type AskGroupBy = 'month' | 'category' | 'merchant' | 'account';
+
+/** The query the model answered with, validated by the server; the only thing the model produced. */
+export interface AskQuery {
+  kind: 'spend' | 'settlement';
+  metric: AskMetric;
+  date_from: string | null;
+  date_to: string | null;
+  months: string[];
+  categories: string[];
+  merchant_text: string | null;
+  accounts: string[];
+  claim_types: string[];
+  people: Array<'primary' | 'secondary'>;
+  direction: 'out' | 'in' | 'any';
+  status: 'approved' | 'pending' | 'all';
+  group_by: AskGroupBy | null;
+  settlement_period: string | null;
+}
+
+/** A grouped total (`label`, `amount`, `count`) or a listed line (`date`, `merchant`, `amount`, `category`, `account_id`). */
+export type AskRow = Record<string, string | number | null>;
+
+export interface AskOut {
+  answer: string;
+  /** "Showing: Travel, Jan 2026 to Sep 2026, money out, approved and pending" */
+  interpreted: string;
+  query: AskQuery;
+  /** The closest Transactions view (or the dashboard month for a settlement question). */
+  link: string | null;
+  value: Money | null;
+  count: number;
+  rows: AskRow[];
+}
+
+// ---------------------------------------------------------------------------
+// Rule suggestions (GET /api/settings/rules/suggestions), worked out from approvals without AI
+// ---------------------------------------------------------------------------
+
+export type RuleSuggestionKind = 'fixed_amount' | 'always_same' | 'override';
+
+export interface RuleSuggestion {
+  /** Stable identity, sent back to dismiss it. */
+  key: string;
+  kind: RuleSuggestionKind;
+  /** One plain sentence: "Third Space, £40.00, filed as Health:Gym 3 times: make it a rule?" */
+  text: string;
+  merchant: string;
+  category: string;
+  claim_type: ClaimType;
+  /** Approved lines behind it. */
+  count: number;
+  amount: Money | null;
+  /** The rule to add, or (for `override`) the existing rule as it would be after the edit. */
+  rule: Rule;
+  /** For `override`: the position of the existing rule in the saved list. */
+  rule_index: number | null;
+  action: 'add' | 'edit' | 'remove';
+  /** Up to three raw descriptions the pattern covers. */
+  examples: string[];
+}
+
+export interface RuleSuggestionsOut {
+  suggestions: RuleSuggestion[];
 }
 
 export interface AiJobTest {
@@ -1299,6 +1483,9 @@ export const api = {
   /** The latest report, or null (200 with a JSON `null` body) when none has been run for the period. */
   getAudit: (periodKey: string) => request<AuditReportOut | null>('GET', `/audit/${enc(periodKey)}`),
 
+  // Subscriptions (no AI): recurring payments, price changes, new and stopped ones
+  getSubscriptions: () => request<SubscriptionsOut>('GET', '/subscriptions'),
+
   // Merchant memory
   listMemory: (limit = 200) => request<MemoryOut[]>('GET', '/memory', { query: { limit } }),
   deleteMemory: (id: string) => request<void>('DELETE', `/memory/${enc(id)}`),
@@ -1330,6 +1517,10 @@ export const api = {
   updateAi: (body: AiUpdate) => request<AiSettings>('PUT', '/ai', { body }),
   /** Calls each model once, through the proxy on the form (a freshly typed key included), saved or not. */
   testAi: (body: AiUpdate) => request<AiTestResult>('POST', '/ai/test', { body }),
+  /** Forgets a learnt PDF layout; the next statement of that kind goes to the model again. 404 unknown. */
+  deleteLayout: (id: string) => request<void>('DELETE', `/ai/layouts/${enc(id)}`),
+  /** 409 while AI is off, 422 when the question cannot be expressed (the detail says why), 502 when the model failed. */
+  ask: (question: string) => request<AskOut>('POST', '/ask', { body: { question } }),
 
   // Household, categories and rules (primary only)
   getHousehold: () => request<HouseholdOut>('GET', '/settings/household'),
@@ -1352,6 +1543,10 @@ export const api = {
   updateRules: (body: RulesUpdate) => request<RulesOut>('PUT', '/settings/rules', { body }),
   /** Which rule a description would hit, and whether it counts as a card payment; tests unsaved lists when given. */
   testRule: (body: RuleTestBody) => request<RuleTestResult>('POST', '/settings/rules/test', { body }),
+  /** Rules the approvals suggest (no AI); reading changes nothing. */
+  getRuleSuggestions: () => request<RuleSuggestionsOut>('GET', '/settings/rules/suggestions'),
+  /** Remembers that this suggestion is not wanted; it is not shown again. */
+  dismissRuleSuggestion: (key: string) => request<void>('POST', '/settings/rules/suggestions/dismiss', { body: { key } }),
 };
 
 export type Api = typeof api;

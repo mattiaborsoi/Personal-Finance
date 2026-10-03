@@ -42,3 +42,21 @@ describe('<ClaimTypeHelp />', () => {
     expect(screen.queryByRole('region', { name: 'What the claim types mean' })).not.toBeInTheDocument();
   });
 });
+
+describe('<ClaimTypeHelp /> on a phone', () => {
+  it('shows the tip once and stays collapsed from the next visit, without needing "Got it"', () => {
+    localStorage.removeItem(TIP);
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({ matches: query.includes('max-width'), media: query, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia;
+    try {
+      const { unmount } = renderWithProviders(<ClaimTypeHelp tipKey="claim-types" />);
+      expect(screen.getByRole('region', { name: 'What the claim types mean' })).toBeInTheDocument();
+      expect(localStorage.getItem(TIP)).toBe('seen');
+      unmount();
+      renderWithProviders(<ClaimTypeHelp tipKey="claim-types" />);
+      expect(screen.queryByRole('region', { name: 'What the claim types mean' })).not.toBeInTheDocument();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+});

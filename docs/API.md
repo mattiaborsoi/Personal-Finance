@@ -63,14 +63,34 @@ Which proxy and models Settl uses, and the thresholds behind them. Defaults come
   "proxy": { "mode": "bundled", "url": "http://litellm:4000", "bundled_url": "http://litellm:4000", "env_url": null, "reachable": true, "has_key": true },
   "available_models": [ { "name": "cheap-chat", "mode": "chat", "provider": "Anthropic", "model": "claude-haiku-4-5" } ],
   "memory_rows": 8,
-  "stored": false
+  "stored": false,
+  "redact_words": ["Example Street"],
+  "stats": { "window_days": 90, "classified": 120, "approved": 80, "accepted": 72, "acceptance_rate": 0.9, "month": "2026-10",
+             "usage": [ { "job": "chat", "requests": 14, "failures": 1, "prompt_tokens": 21000, "completion_tokens": 3200 } ] },
+  "layouts": [ { "id": "…", "institution": "Fictional Bank", "created_at": "…", "last_used_at": "…", "times_used": 3 } ]
 }
 ```
+`redact_words` are the owner's extra words masked before any text goes to a model (names, long numbers, postcodes, e-mails and phone numbers are always masked). `stats` is "How the AI is doing": of the lines a model classified in the last `window_days` days, how many are approved and how many of those kept the suggested category and claim type (`acceptance_rate` = accepted / approved, `null` before anything is approved), plus this month's usage per job (`chat`, `extraction`, `audit`, `ask`) as the proxy reported it; never prompts. `layouts` are the PDF layouts learnt from the model and replayed without AI.
 `models.chat` categorises transactions, `extraction` reads PDFs the parsers cannot, `audit` writes the monthly summary, `embedding` turns merchants into vectors (`embedding_provider: "hash"` = offline, no AI). `available_models` is what the selected LiteLLM proxy lists (`/model/info`, falling back to `/v1/models`), cached for a minute; `proxy.mode` is `bundled` (Settl's own LiteLLM container: `bundled_url` with `LITELLM_MASTER_KEY`) or `external` (a LiteLLM you already run, at `proxy.url` with a key stored server-side and never returned; `env_url` is what `LITELLM_URL` in `.env` offers for it, and when that is set `external` is the default mode with that URL and `LITELLM_API_KEY`). `stored: false` means nothing has been saved yet.
 
-`PUT /api/ai` body: any subset of `{ enabled, embedding_provider, models: {chat?, extraction?, audit?, embedding?}, thresholds: {...}, proxy: {mode?, url?, api_key?}, clear_memory }` → the same body as `GET`. A blank or omitted `api_key` keeps the stored one. **422** for out-of-range thresholds (similarity 0.5–0.99, top_k 1–10, deviation 0.05–1.0, look-back 1–12), a model the proxy does not list or lists with the wrong kind (only checked when the proxy answers with a model list; with the proxy unreachable or listing nothing, the names are saved as typed), or `mode: external` without an `http(s)://` URL. **409** when the embedding model or provider changes while `memory_rows > 0` and `clear_memory` is not `true`: the stored vectors would no longer be comparable; with `clear_memory: true` the merchant memory is emptied and the change saved.
+`PUT /api/ai` body: any subset of `{ enabled, embedding_provider, models: {chat?, extraction?, audit?, embedding?}, thresholds: {...}, proxy: {mode?, url?, api_key?}, redact_words: [...], clear_memory }` → the same body as `GET`. `redact_words` replaces the whole list (blank entries dropped, the rest trimmed, repeats ignoring case dropped; at most 50 words of 64 characters, else **422**). A blank or omitted `api_key` keeps the stored one. **422** for out-of-range thresholds (similarity 0.5–0.99, top_k 1–10, deviation 0.05–1.0, look-back 1–12), a model the proxy does not list or lists with the wrong kind (only checked when the proxy answers with a model list; with the proxy unreachable or listing nothing, the names are saved as typed), or `mode: external` without an `http(s)://` URL. **409** when the embedding model or provider changes while `memory_rows > 0` and `clear_memory` is not `true`: the stored vectors would no longer be comparable; with `clear_memory: true` the merchant memory is emptied and the change saved.
 
 `POST /api/ai/test` body: the same shape as `PUT` (the values on the form, saved or not) → `{ "chat": {ok, ms, model, error} | null, "extraction": ..., "audit": ..., "embedding": {ok, ms, model, dimensions, error} }`. Each chat job is one tiny completion; the embedding test also checks the vector has the schema's 1536 dimensions. `null` for a job that is switched off; never a 5xx.
+
+`DELETE /api/ai/layouts/{id}` → **204**; forgets a learnt PDF layout, so the next statement of that kind goes to the model again. **404** unknown.
+
+## Ask
+
+`POST /api/ask` body `{ "question": "How much did we spend on travel this year?" }` (1 to 300 characters) →
+```json
+{ "answer": "£230.00 over 3 transactions.",
+  "interpreted": "Showing: Travel, Jan 2026 to Sep 2026, money out, approved and pending",
+  "query": { "kind": "spend", "metric": "sum", "date_from": "2026-01-01", "date_to": "2026-10-03", "months": [], "categories": ["Travel"],
+             "merchant_text": null, "accounts": [], "claim_types": [], "people": [], "direction": "out", "status": "all",
+             "group_by": null, "settlement_period": null },
+  "link": "/transactions?category=Travel&include_transfers=false", "value": "230.00", "count": 3, "rows": [] }
+```
+The model sees the question (names swapped for roles, then redacted) and a description of what can be asked; `query` is the validated query it answered with, run locally. `rows` holds grouped totals (`{label, amount, count}`) when `group_by` is set, or listed lines (`{date, merchant, amount, category, account_id}`, at most 50) when `metric` is `list`; `value` is the sum, average or count (spending as a positive figure), or the net owed by the secondary for a settlement question (`link` is then the dashboard month). **409** while AI is off, **422** when the question cannot be expressed as a query (the `detail` says why: an unknown category, a question that is not about the ledger), **502** when the model could not be reached or answered off-contract. Primary only.
 
 ## Household, categories and rules (Settings → Household / Categories / Rules)
 
@@ -115,6 +135,10 @@ Primary login only. Each is one `app_settings` document; `config.yaml` (or the b
 `PUT /api/settings/rules` body: any subset of `{ rules, payment_patterns, match_window_days, amount_tolerance }` (an omitted or `null` field keeps its value) → the same body. **422** naming the rule (`rule 3: ...`) for a pattern that is empty, longer than 512 characters or not a valid regex, a category outside the taxonomy, an unknown claim type, a `transfer_to_account` that is not an account, or an `amount_min` / `amount_max` that is negative, has more than two decimals or is the wrong way round (`rule 2: amount_max must not be less than amount_min`); also for `match_window_days` outside 0–60 or `amount_tolerance` outside 0–10.
 
 `POST /api/settings/rules/test` `{ "description": "CARD PAYMENT THANK YOU", "amount"?: "-40.00", "rules"?: [...], "payment_patterns"?: [...] }` → `{ rule_index, rule, is_payment }`: the zero-based position and body of the first rule that matches (`null` for none) and whether the card-payment patterns match. `amount` (either sign) lets a rule with an amount range match; without it such a rule is skipped. Without `rules` / `payment_patterns` the saved ones are used; with them (unsaved edits) they are validated as on `PUT`.
+
+`GET /api/settings/rules/suggestions` → `{ "suggestions": [ { key, kind, text, merchant, category, claim_type, count, amount, rule, rule_index, action, examples } ] }`, strongest first; worked out from the approvals without AI (see TECHNICAL.md, "Rule suggestions"). `kind` is `fixed_amount` (the same merchant and amount filed the same way at least 3 times), `always_same` (filed one way at least 5 times) or `override` (an existing rule, `rule_index` into the saved list, overridden at least 3 times); `action` is `add`, `edit` (the `rule` given is the existing one narrowed to an amount range) or `remove`; `text` is the sentence shown ("Third Space, £40.00, filed as Health:Gym 3 times: make it a rule?"). Reading changes nothing: accepting is an ordinary `PUT /api/settings/rules` with the rule added, replaced or removed.
+
+`POST /api/settings/rules/suggestions/dismiss` `{ "key" }` → **204**; the suggestion is not shown again.
 
 ## System (Settings → System)
 
@@ -167,13 +191,13 @@ One database transaction; `deleted` counts the rows removed (`accounts` counts t
 
 ## Periods
 
-`GET /api/periods` → `[ {period_key, start_date, end_date, is_closed, closed_at, transaction_count, pending_review_count} ]` (newest first). An open period that nothing files under (no transaction, partner claim, settlement entry, snapshot or audit report) is left out, except the current calendar month; closed periods are always listed. An upload's months do not count.
+`GET /api/periods` → `[ {period_key, start_date, end_date, is_closed, closed_at, transaction_count, pending_review_count, unusual_count} ]` (newest first). An open period that nothing files under (no transaction, partner claim, settlement entry, snapshot or audit report) is left out, except the current calendar month; closed periods are always listed. An upload's months do not count.
 
 `POST /api/periods/{period_key}/close?force=false` → PeriodOut. Runs the auditor and records the settlement snapshot first. Returns **409** when transactions are still `pending_review` unless `force=true`, and **409** when the period is already closed.
 
 `POST /api/periods/{period_key}/reopen` → PeriodOut
 
-While a period is closed, `PATCH`/`approve`/`approve-batch`/`DELETE`/`split` on its transactions and `DELETE` on its claims return **409**; uploads adding new lines to it, new claims dated in it, and settlement payments or adjustments dated in it (or deleted from it) are refused the same way. A settlement checkpoint may still be set or removed. Closing records the running balance (`carried_in`, `payments`, `adjustments`, `balance_out`) in the snapshot; reopening a month and changing it moves every later month's live balance until the next checkpoint. Transfer matching is exempt (the buffer persists across closes). `transaction_count` and `pending_review_count` count split transactions once (through the parent).
+While a period is closed, `PATCH`/`approve`/`approve-batch`/`DELETE`/`split` on its transactions and `DELETE` on its claims return **409**; uploads adding new lines to it, new claims dated in it, and settlement payments or adjustments dated in it (or deleted from it) are refused the same way. A settlement checkpoint may still be set or removed. Closing records the running balance (`carried_in`, `payments`, `adjustments`, `balance_out`) in the snapshot; reopening a month and changing it moves every later month's live balance until the next checkpoint. Transfer matching is exempt (the buffer persists across closes). `transaction_count` and `pending_review_count` count split transactions once (through the parent); `unusual_count` is the month's lines flagged `unusual` (see Transactions).
 
 ## Statements
 
@@ -194,7 +218,7 @@ Errors: **422** when the account cannot be determined (`detail` is `{message, ca
 
 ## Transactions
 
-`GET /api/transactions?period=YYYY-MM&status=pending_review|auto_approved|manual_approved&account_id=&category=&q=&include_transfers=true&limit=100&offset=0`
+`GET /api/transactions?period=YYYY-MM&status=pending_review|auto_approved|manual_approved&account_id=&category=&q=&include_transfers=true&unusual=false&limit=100&offset=0`
 → `{ items: [TransactionOut], total }` (ordered by date desc, then created_at desc)
 
 TransactionOut:
@@ -204,8 +228,10 @@ amount, currency, original_currency, foreign_amount, category, subcategory, clai
 is_claimable, allocated_primary_amount, allocated_secondary_amount, review_status,
 is_internal_transfer, linked_transfer_id, classification_source (rule|memory|llm|manual|transfer|none),
 classification_confidence, source_file, note, created_at,
-is_split, split_parent_id, parts: [TransactionPart]
+is_split, split_parent_id, parts: [TransactionPart],
+unusual: { usual_category, usual_claim_type, times, total } | null
 ```
+`unusual` is set when the line is filed unlike this merchant usually is on the same card: at least 4 approved lines of the merchant on that account (the line itself aside) and the line's own category and claim type in at most a fifth of them (`times` of `total`); never on split lines or internal transfers. `unusual=true` lists only those lines; `unusual_count` on `GET /api/periods` counts them per month.
 TransactionPart: `id, split_index, amount, category, subcategory, claim_type, is_claimable, allocated_primary_amount, allocated_secondary_amount, note`
 
 `note` is the user's own free text on what the payment was (null when there is none). `raw_description` is exactly what the bank printed and is never edited, because the duplicate fingerprint is built from it.
@@ -326,12 +352,13 @@ All money is a string with two decimals, in "secondary owes primary" terms unles
 ```json
 {
   "period_key",
-  "macro": { "household_burn", "primary_accounts_burn", "partner_claims_burn", "refunds", "by_category": [{category, amount}] },
+  "macro": { "household_burn", "primary_accounts_burn", "partner_claims_burn", "partner_claims_count", "refunds",
+             "by_category": [{category, amount}], "by_person": [{user_id, paid, bears}] },
   "micro": { "true_net_expense", "from_transactions", "from_partner_claims", "by_category": [...] },
   "liquidity": { "credits", "debits", "net_cash_flow", "by_account": [{account_id, credits, debits, net}] }
 }
 ```
-`macro.by_category` is gross debits per category plus a `Partner claims` row when the period has claims, so the rows add up exactly to `household_burn`; categories with no debit are left out. `macro.refunds` is the total of credits in spend categories for the period, reported for display and never deducted from the burn.
+`macro.by_category` is gross debits per category plus a `Partner claims` row when the period has claims, so the rows add up exactly to `household_burn`; categories with no debit are left out. `macro.refunds` is the total of credits in spend categories for the period, reported for display and never deducted from the burn. `macro.by_person` lists the primary then the secondary user: `paid` is the gross debits on the accounts billed to them plus the claims they paid, `bears` their net share after the split (refunds netted) plus their side of the claims.
 
 `GET /api/metrics/trends?periods=6&ending=YYYY-MM` → `[ {period_key, household_burn, true_net_expense, net_cash_flow} ]` (oldest first; `periods` 1–36; `ending` is the last month of the window, by default the newest period, **422** when malformed; months with no data are zeros)
 
@@ -353,6 +380,10 @@ AuditReportOut:
 }
 ```
 `deviation` is a signed fraction (0.28 = +28 %); `change_pct` is a percentage and `null` when there is no baseline. `baseline_average` is averaged over the prior look-back months that carry any approved spend, not over the whole window (a fresh install's first months are not read as zero spend); `baseline_periods` is that count, the same on every row, and `0` (reports stored before the field existed also read `0`) when no prior month has data. The summary sentence is written in the configured currency; an LLM answer quoting another currency is replaced by the deterministic sentence. Macro and micro metrics exclude internal transfers and the `Transfers:*` and `Income:*` categories. Split transactions count through their parts in macro, micro and the audit; the liquidity view counts the parent (the actual cash movement) and ignores the parts.
+
+## Subscriptions
+
+`GET /api/subscriptions` → `{ "items": [ { merchant, category, cadence: "monthly"|"yearly", amount, monthly_cost, charges, first_date, last_date, next_expected, status: "active"|"new"|"stopped", change: { from, to, month } | null } ], "total_monthly", "as_of" }`. Recurring payments found from the ledger without AI (see TECHNICAL.md, "Subscriptions and price rises"): running ones first by monthly cost, stopped ones last; `change` is set when the newest charge differs from the one before it (`month` is the newest charge's); `total_monthly` adds up the ones that have not stopped; `as_of` is the newest transaction date, which "new" and "stopped" are judged against. Primary only.
 
 ## Merchant memory
 

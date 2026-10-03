@@ -70,7 +70,9 @@ def upload_statement(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "empty file")
 
     try:
-        result = ingest_statement(db, config, embedder, llm, dest, filename, account_id=account_id)
+        result = ingest_statement(
+            db, config, embedder, llm, dest, filename, account_id=account_id, extraction_llm=extraction_llm
+        )
     except DuplicateUploadError as exc:
         db.rollback()
         dest.unlink(missing_ok=True)

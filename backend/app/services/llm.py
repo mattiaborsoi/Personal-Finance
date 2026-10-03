@@ -23,6 +23,8 @@ from typing import Any, Protocol
 
 import httpx
 
+from app.services import ai_usage
+
 log = logging.getLogger(__name__)
 
 
@@ -120,18 +122,23 @@ class LiteLLMClient:
         model: str,
         timeout: float = 90.0,
         client: httpx.Client | None = None,
+        job: str = "chat",
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
         self._client = client
+        self.job = job
+        """Which job the calls are counted under (``app.services.ai_usage``)."""
 
     @property
     def available(self) -> bool:
         return True
 
     def _http(self) -> httpx.Client:
+        # One client per instance, shared by the threads that classify batches side by side
+        # (httpx.Client is thread-safe and pools the connections).
         if self._client is None:
             self._client = httpx.Client(timeout=self.timeout)
         return self._client
@@ -158,27 +165,36 @@ class LiteLLMClient:
                 f"{self.base_url}/v1/chat/completions", json=payload, headers=self._headers()
             )
         except httpx.TransportError as exc:
+            ai_usage.record_failure(self.job)
             raise LLMUnreachable(f"LiteLLM request failed: {exc}", unreachable_reason(exc, self.timeout)) from exc
         except httpx.HTTPError as exc:
+            ai_usage.record_failure(self.job)
             raise LLMError(f"LiteLLM request failed: {exc}") from exc
         if resp.status_code >= 400:
+            ai_usage.record_failure(self.job)
             raise LLMStatusError(f"LiteLLM returned {resp.status_code}: {resp.text[:300]}", resp.status_code)
         try:
             data = resp.json()
         except ValueError as exc:
+            ai_usage.record_failure(self.job)
             raise LLMError(f"LiteLLM returned a non-JSON body: {resp.text[:300]}") from exc
         if not isinstance(data, dict):
+            ai_usage.record_failure(self.job)
             raise LLMError(f"unexpected LiteLLM response shape: {str(data)[:300]}")
+        usage = data.get("usage") if isinstance(data.get("usage"), dict) else None
+        ai_usage.record(self.job, usage)
         try:
             content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError(f"unexpected LiteLLM response shape: {str(data)[:300]}") from exc
-        log.debug("llm call model=%s prompt_tokens=%s", self.model, (data.get("usage") or {}).get("prompt_tokens"))
+        log.debug("llm call job=%s model=%s prompt_tokens=%s", self.job, self.model, (usage or {}).get("prompt_tokens"))
         return parse_json_object(content)
 
 
 class NullLLMClient:
     """Stands in when no LLM is configured."""
+
+    job = "none"
 
     @property
     def available(self) -> bool:
@@ -205,6 +221,7 @@ class FakeLLMClient:
     fail: bool = False
     unreachable: bool = False
     http_status: int | None = None
+    job: str = "chat"
 
     @property
     def available(self) -> bool:

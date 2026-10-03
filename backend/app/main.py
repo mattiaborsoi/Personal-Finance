@@ -19,6 +19,7 @@ from app.models import EMBEDDING_DIMENSIONS
 from app.routers import (
     accounts,
     ai,
+    ask,
     audit,
     auth,
     categories,
@@ -30,6 +31,7 @@ from app.routers import (
     settlement,
     site_settings,
     statements,
+    subscriptions,
     system,
     transactions,
     transfers,
@@ -45,6 +47,7 @@ ROUTERS = (
     reference.router,
     accounts.router,
     ai.router,
+    ask.router,
     site_settings.router,
     categories.router,
     periods.router,
@@ -55,6 +58,7 @@ ROUTERS = (
     settlement.router,
     metrics.router,
     audit.router,
+    subscriptions.router,
     memory.router,
     system.router,
 )

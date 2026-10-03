@@ -14,6 +14,7 @@ import { MerchantAvatar } from './MerchantAvatar';
 import { MerchantName } from './MerchantName';
 import { MoneyText } from './MoneyText';
 import { SourceBadge } from './SourceBadge';
+import { UnusualBadge } from './UnusualBadge';
 import { NoteButton, NoteLine } from './TransactionNote';
 import { TransferToggle } from './TransferToggle';
 
@@ -165,6 +166,7 @@ export function TransactionRow({
               {reviewStatusLabel(tx.review_status)}
             </Badge>
             <SourceBadge source={tx.classification_source} confidence={tx.classification_confidence} />
+            <UnusualBadge unusual={tx.unusual} />
             {tx.is_internal_transfer && <Badge tone="neutral">Transfer</Badge>}
             {readOnly && (
               <Badge tone="neutral" title="This period is closed; reopen it to make changes">

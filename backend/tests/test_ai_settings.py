@@ -233,7 +233,7 @@ def test_each_job_waits_only_as_long_as_its_answer_is_worth(config):
     providers.reset_caches()
     ai = ai_settings.defaults(settings, config)
     effective = ai_settings.apply(config, ai)
-    assert providers.get_llm(settings, effective, ai).timeout == 20.0  # one call per unseen merchant
+    assert providers.get_llm(settings, effective, ai).timeout == 45.0  # one call per batch of unseen merchants
     assert providers.get_audit_llm(settings, effective, ai).timeout == 60.0
     assert providers.get_extraction_llm(settings, effective, ai).timeout == 90.0
     assert providers.get_llm(settings, effective, ai) is providers.get_llm(settings, effective, ai)

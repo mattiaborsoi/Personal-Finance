@@ -49,6 +49,7 @@ from sqlalchemy.orm import Session
 
 from app.config import APPROVED_STATUSES, UNCATEGORIZED, AppConfig
 from app.models import LedgerPeriod, Transaction
+from app.services import ai_accuracy
 
 REASONS: tuple[str, ...] = (
     "approved",
@@ -255,6 +256,7 @@ def apply(db: Session, config: AppConfig, txn: Transaction, decision: Decision) 
     txn.review_status = "auto_approved"
     txn.classification_source = SOURCE
     txn.classification_confidence = CONFIDENCE
+    ai_accuracy.record_approval(txn)
     db.flush()
     return txn
 

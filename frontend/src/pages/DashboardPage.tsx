@@ -1,8 +1,8 @@
-import { ArrowRight, ListChecks, Upload } from 'lucide-react';
+import { Upload } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { api, type PeriodOut } from '../api';
-import { AuditCard } from '../components/AuditCard';
+import { AuditCard, RunAuditButton, useAuditReport } from '../components/AuditCard';
 import { Badge } from '../components/Badge';
 import { Card } from '../components/Card';
 import { ClosePeriodButton } from '../components/ClosePeriodButton';
@@ -16,52 +16,32 @@ import { Notice } from '../components/Notice';
 import { PageHeader } from '../components/PageHeader';
 import { PeriodSelector } from '../components/PeriodSelector';
 import { SettlementBanner } from '../components/SettlementBanner';
+import { SubscriptionsCard } from '../components/SubscriptionsCard';
 import { UnmatchedTransfersLink } from '../components/UnmatchedTransfersLink';
 import { ViewToggleBar } from '../components/ViewToggleBar';
 import { useSharePeriods } from '../hooks/reviewBadge';
 import { useAsync } from '../hooks/useAsync';
 import { useSetupSteps } from '../hooks/useSetupSteps';
 import { defaultPeriodKey, isPeriodKey, periodLabel } from '../lib/dates';
+import { formatCount } from '../lib/money';
+
 import { readNotice } from '../lib/navNotice';
-import { pendingMonths, pendingSummary, reviewPath } from '../lib/review';
+import { pendingMonths, reviewPath } from '../lib/review';
 import { setupIncomplete } from '../lib/setup';
-import { btnPrimary, btnSecondary, btnSmall, cardBase, cx } from '../lib/ui';
+import { btnPrimary, btnSecondary, btnSmall, cx, linkBase } from '../lib/ui';
 import { readStoredView, storeView, type MetricView } from '../lib/views';
 
 /**
- * Lines waiting for review in any month (not only the one on show), naming the
- * months, with the way to the Review page, which opens on the oldest of them.
+ * "1,193 lines still to review in 7 earlier months": lines waiting in months other
+ * than the one on show, as one quiet line for the header. Never lists the months.
  */
-function PendingReviewCard({ periods, period }: { periods: PeriodOut[]; period: string | null }) {
-  const months = pendingMonths(periods);
-  const includesThisMonth = months.some((m) => m.period === period);
-  return (
-    <section
-      aria-label="Waiting for review"
-      className={cx(cardBase, 'flex flex-wrap items-center justify-between gap-3 py-4 sm:py-4')}
-    >
-      <div className="flex min-w-0 items-center gap-3">
-        <span
-          aria-hidden="true"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-warning/15 text-warning-ink"
-        >
-          <ListChecks className="h-4 w-4" />
-        </span>
-        <div className="min-w-0">
-          <p className="text-base font-semibold tracking-tight text-ink">{pendingSummary(periods)}</p>
-          <p className="mt-0.5 text-xs text-ink-3">
-            {includesThisMonth
-              ? 'The figures below may change until they are approved.'
-              : 'Figures for those months may change until they are approved.'}
-          </p>
-        </div>
-      </div>
-      <Link to={reviewPath(null)} className={cx(btnSecondary, btnSmall)}>
-        Review now
-        <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-      </Link>
-    </section>
-  );
+export function pendingElsewhereNote(periods: ReadonlyArray<PeriodOut> | null, period: string | null): string | null {
+  const others = pendingMonths(periods).filter((m) => m.period !== period);
+  if (others.length === 0) return null;
+  const count = others.reduce((sum, m) => sum + m.count, 0);
+  const allEarlier = period !== null && others.every((m) => m.period < period);
+  const where = `${others.length} ${allEarlier ? 'earlier' : 'other'} ${others.length === 1 ? 'month' : 'months'}`;
+  return `${formatCount(count)} ${count === 1 ? 'line' : 'lines'} still to review in ${where}`;
 }
 
 export function DashboardPage() {
@@ -86,9 +66,10 @@ export function DashboardPage() {
     requested && isPeriodKey(requested) ? requested : periods.data ? defaultPeriodKey(periods.data) : null;
   const periodInfo = periods.data?.find((p) => p.period_key === period) ?? null;
   const closed = periodInfo?.is_closed ?? false;
-  const anyPending = pendingMonths(periods.data).length > 0;
+  const elsewhere = pendingElsewhereNote(periods.data, period);
   const setup = useSetupSteps();
   const settingUp = setupIncomplete(setup);
+  const audit = useAuditReport(period ?? '', refreshKey);
 
   const reloadPeriods = periods.reload;
   const bump = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -130,6 +111,7 @@ export function DashboardPage() {
                 </Badge>
               )}
               <UnmatchedTransfersLink refreshKey={refreshKey} />
+              <RunAuditButton period={period} audit={audit} />
               <ClosePeriodButton period={periodInfo} periodKey={period} onChanged={onPeriodChanged} />
             </>
           )
@@ -162,6 +144,15 @@ export function DashboardPage() {
         </div>
       )}
 
+      {elsewhere && (
+        <p className="-mt-3 text-xs text-ink-3" data-testid="pending-elsewhere">
+          {elsewhere}.{' '}
+          <Link to={reviewPath(null)} className={linkBase}>
+            Review them
+          </Link>
+        </p>
+      )}
+
       {periods.data && !period && (
         <Card>
           <EmptyState
@@ -184,14 +175,18 @@ export function DashboardPage() {
         </Card>
       )}
 
-      {periods.data && anyPending && <PendingReviewCard periods={periods.data} period={period} />}
-
       {period && (
         <>
-          <MetricsSection period={period} view={view} refreshKey={refreshKey} />
           <SettlementBanner period={period} periodInfo={periodInfo} refreshKey={refreshKey} onChanged={bump} />
+          <MetricsSection
+            period={period}
+            view={view}
+            refreshKey={refreshKey}
+            periods={periods.data}
+            aside={<SubscriptionsCard refreshKey={refreshKey} />}
+          />
+          <AuditCard audit={audit} />
           <InvestmentCard refreshKey={refreshKey} />
-          <AuditCard period={period} refreshKey={refreshKey} />
         </>
       )}
     </div>

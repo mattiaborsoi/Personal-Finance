@@ -12,6 +12,7 @@ from decimal import Decimal
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Computed,
     Date,
@@ -161,6 +162,11 @@ class Transaction(Base):
     )
     # The user's free-text note on what the payment was; raw_description stays untouched.
     note: Mapped[str | None] = mapped_column(Text)
+    # What the AI suggested at ingestion (NULL unless a model classified the line) and whether
+    # the approval kept it unchanged (NULL until approved): the AI accuracy figure.
+    suggested_category: Mapped[str | None] = mapped_column(String(128))
+    suggested_claim_type: Mapped[str | None] = mapped_column(claim_type_enum)
+    suggestion_accepted: Mapped[bool | None] = mapped_column(Boolean)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     account: Mapped[Account | None] = relationship(back_populates="transactions")
@@ -179,6 +185,43 @@ class Transaction(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Transaction {self.transaction_date} {self.account_id} {self.amount} {self.cleaned_merchant!r}>"
+
+
+class AiUsage(Base):
+    """Requests, failures and token counts per job per month; never prompts."""
+
+    __tablename__ = "ai_usage"
+
+    month: Mapped[str] = mapped_column(String(7), primary_key=True)
+    job: Mapped[str] = mapped_column(String(16), primary_key=True)
+    requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    prompt_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    completion_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class PdfLayout(Base):
+    """A statement layout learnt from the LLM fallback, replayed without AI next time."""
+
+    __tablename__ = "pdf_layouts"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    fingerprint: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    institution: Mapped[str | None] = mapped_column(String(64))
+    template: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    times_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DismissedSuggestion(Base):
+    __tablename__ = "dismissed_suggestions"
+
+    key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class MerchantMemory(Base):

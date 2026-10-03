@@ -10,7 +10,7 @@ from app.database import get_db
 from app.deps import get_effective_config
 from app.models import LedgerPeriod, Transaction
 from app.schemas import PeriodOut
-from app.services import auditor, settlement_snapshots
+from app.services import auditor, settlement_snapshots, unusual
 from app.services.llm import LLMClient
 from app.services.periods import (
     PERIOD_KEY_RE,
@@ -43,7 +43,9 @@ def _counts(db: Session) -> dict[str, tuple[int, int]]:
     return {key: (int(total), int(pending)) for key, total, pending in rows}
 
 
-def _to_out(period: LedgerPeriod, counts: dict[str, tuple[int, int]]) -> PeriodOut:
+def _to_out(
+    period: LedgerPeriod, counts: dict[str, tuple[int, int]], unusual_counts: dict[str, int] | None = None
+) -> PeriodOut:
     total, pending = counts.get(period.period_key, (0, 0))
     return PeriodOut(
         period_key=period.period_key,
@@ -53,6 +55,7 @@ def _to_out(period: LedgerPeriod, counts: dict[str, tuple[int, int]]) -> PeriodO
         closed_at=period.closed_at,
         transaction_count=total,
         pending_review_count=pending,
+        unusual_count=(unusual_counts or {}).get(period.period_key, 0),
     )
 
 
@@ -61,7 +64,8 @@ def list_periods(db: Session = Depends(get_db)) -> list[PeriodOut]:
     """Newest first. Open months with nothing in them are left out, except the current one;
     closed months always stay (see :func:`app.services.periods.listed_periods`)."""
     counts = _counts(db)
-    return [_to_out(p, counts) for p in listed_periods(db)]
+    unusual_counts = unusual.counts_by_period(db)
+    return [_to_out(p, counts, unusual_counts) for p in listed_periods(db)]
 
 
 @router.post("/{period_key}/close", response_model=PeriodOut)

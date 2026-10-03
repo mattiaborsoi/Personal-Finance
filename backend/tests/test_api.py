@@ -8,6 +8,7 @@ against PostgreSQL.
 from __future__ import annotations
 
 import io
+import re
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -35,13 +36,9 @@ KEYWORDS = [
 ]
 
 
-def keyword_llm(system: str, user: str) -> dict:
-    """Stub LLM: classifies by keyword in the merchant line, ignoring few-shot example lines."""
-    if "summary_sentence" in system:
-        return {"summary_sentence": "Stub audit summary."}
-    target = "\n".join(line for line in user.splitlines() if "->" not in line).upper()
+def keyword_answer(text: str) -> dict:
     for key, merchant, category, claim_type in KEYWORDS:
-        if key in target:
+        if key in text.upper():
             return {
                 "merchant": merchant,
                 "category": category,
@@ -50,6 +47,18 @@ def keyword_llm(system: str, user: str) -> dict:
                 "reasoning": "stub",
             }
     return {"merchant": "Unknown", "category": "Uncategorized", "claim_type": "personal", "confidence": 0.2}
+
+
+def keyword_llm(system: str, user: str) -> dict:
+    """Stub LLM: answers every numbered line of a batch by keyword, ignoring the example lines."""
+    if "summary_sentence" in system:
+        return {"summary_sentence": "Stub audit summary."}
+    answers = []
+    for line in user.splitlines():
+        m = re.match(r"^(\d+) \| (.*)$", line)
+        if m:
+            answers.append({"id": int(m.group(1)), **keyword_answer(m.group(2))})
+    return {"answers": answers}
 
 
 def upload(client, headers, path: Path, account_id: str | None = None):

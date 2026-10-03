@@ -447,17 +447,20 @@ parse (Agent 1) → per-line account resolution → fingerprint / dedupe
   skipped, so a statement overlapping a closed month still goes through. The upload
   record keeps the span of months the file touched (`period_from` / `period_to`,
   counting skipped lines too); `period_key` stays the newest month for compatibility.
-* **AI outage:** one `guesser.UploadState` is shared by the file's `classify` calls.
-  It memoises answers per (normalised description, account), so duplicate lines cost
-  one lookup or LLM call, and it carries a circuit breaker: the first time the proxy
-  is unreachable (connection refused, timeout) or answers with an HTTP error status,
-  the rest of the file skips the LLM and lands `Uncategorized` instead of waiting out
-  the timeout line after line. The result then carries a warning such as
+* **AI calls:** the file's lines go through rules, payment patterns and memory one
+  by one (`guesser.classify_many`); the lines left over go to the model in batches of
+  up to 25 per account, three requests in flight at once, the database touched only
+  between them. One `guesser.UploadState` memoises answers per (normalised
+  description, account), so duplicate lines take one place in a batch, and carries a
+  circuit breaker: the first time the proxy is unreachable (connection refused,
+  timeout) or answers with an HTTP error status, the batches not yet sent are skipped
+  and their lines land `Uncategorized`. The result then carries a warning such as
   `AI unavailable (connection refused): 3 lines left uncategorised; approve them in
-  the queue or retry the upload later` (an unusable model answer is a per-line
-  problem: it never trips the breaker and is reported separately). AI switched off
-  raises no warning. Classification is still synchronous; classifying in the
-  background is a possible follow-up.
+  the queue or retry the upload later` (an unusable answer for one line is a per-line
+  problem: that line alone falls back, the breaker stays shut, and it is reported
+  separately). AI switched off raises no warning. The model's suggestion is kept on
+  the row (`suggested_category`, `suggested_claim_type`) so approvals can measure it
+  (section 3a). Classification is still synchronous.
 * **Limits:** `.pdf`, `.csv`, `.xlsx`, `.xls`; 25 MB; PDFs of more than 60 pages are
   refused before parsing.
 * **Provenance:** every inserted line carries `upload_id`, and so do the mirror legs
@@ -512,11 +515,15 @@ The **LLM layout extractor** (`llm_extractor.py`) is a fallback only:
 
 * used only when no deterministic parser found any transaction, only for PDFs, and only
   when an LLM is configured (never for spreadsheets, never raw bytes);
-* page text is chunked at ~6 000 characters; a document needing more than **20 LLM
-  calls** is refused up front; **60 pages** is the hard document limit;
+* page text is chunked at ~6 000 characters and redacted before it leaves (section
+  3b); a document needing more than **20 LLM calls** is refused up front; **60 pages**
+  is the hard document limit;
 * the model must return the parsers' own JSON schema (`ParsedStatement`); every field
   is validated and coerced (ISO dates, `Decimal` amounts, negative = money out), malformed items are
-  dropped with a warning.
+  dropped with a warning;
+* its answer is used once more to learn the statement's layout (section 3c), so the
+  next statement of that kind is read without AI; a layout learnt earlier is tried
+  before the model is called.
 
 ### Agent 2: the Guesser (`app/services/guesser.py`)
 
@@ -553,18 +560,31 @@ Precedence for each raw description:
    confidence = similarity, `pending_review`. A hit on the same brand's other service
    (`UBER TRIP` against `UBER EATS`, which embed at 0.85) is demoted to a few-shot
    example rather than pre-filled.
-5. **One LLM call** with a minimal payload: the quoted description, the signed amount,
-   the account context (institution, type, owner role, default claim type), the allowed
-   categories and claim types, and the memory hits with **similarity ≥ 0.5** as
-   few-shot examples (weaker hits are noise and an injection surface), written as
-   `"raw" -> merchant | category` lines with no claim type (a memory row's split was
-   approved on whichever card and says nothing about this one). The JSON answer
-   is validated field by field: an unknown category becomes `Uncategorized` and halves
-   the confidence, an unknown claim type falls back to the account default, a blank
-   merchant falls back to the heuristic cleaner → `source=llm`, `pending_review`.
-   The classification client waits **20 s** per call (PDF extraction 90 s, the audit
-   60 s; `LLM_TIMEOUT_SECONDS` caps all three), and within one upload the circuit
-   breaker described in section 3 stops calling a dead proxy after the first failure.
+5. **The model, in batches** (`guesser.classify_many`): the lines of one upload that
+   reach this step are grouped per account into batches of up to 25 and each batch is
+   one request, up to three in flight at once (HTTP only; every database write happens
+   in the calling thread as a batch finishes). The payload is minimal: the account
+   context (institution, type, owner role, default claim type), the union of the
+   batch's memory hits with **similarity ≥ 0.5** as few-shot examples (weaker hits
+   are noise and an injection surface), written as `"raw" -> merchant | category`
+   lines with no claim type, and the numbered lines as `n | "description" | amount`.
+   The answer is one object, `{"answers": [{"id", "merchant", "category",
+   "claim_type", "confidence", "reasoning"}, ...]}`, sized at ~110 tokens per line
+   (`max_tokens`), and validated line by line: an unknown category becomes
+   `Uncategorized` and halves the confidence, an unknown claim type falls back to the
+   account default, a blank merchant (or one that only echoes a placeholder) falls
+   back to the heuristic cleaner, a missing or unusable answer leaves that one line
+   `Uncategorized` → `source=llm`, `pending_review`.
+   **Prompt caching:** the system prompt is the unchanging part (task, output contract,
+   allowed categories and claim types) and is byte-identical from one call to the next
+   while the taxonomy stands, so a provider can cache it as a prefix; the account
+   context, examples and lines come last, in the user message. Calls are deterministic
+   (temperature 0, `response_format: json_object`).
+   **Redaction:** every statement line and example goes through `redaction.Redactor`
+   first (section 3b). The classification client waits **45 s** per batch (PDF
+   extraction 90 s, the audit 60 s, a question 30 s; `LLM_TIMEOUT_SECONDS` caps them
+   all), and within one upload the circuit breaker described in section 3 stops
+   sending batches to a dead proxy after the first failure.
 6. **No answer** (no LLM, the call failed, or the breaker is open) → `Uncategorized`,
    the account's default claim type, `source=none`, `pending_review`.
 
@@ -594,6 +614,114 @@ merchant, and remembering "unknown" would silence the model for that merchant fo
 Embeddings are 1 536-dimensional. `EMBEDDING_PROVIDER=litellm` calls `/v1/embeddings`;
 `EMBEDDING_PROVIDER=hash` is an offline character-n-gram feature hasher into the same
 space. The two spaces are incompatible: do not switch providers once memory has rows.
+
+### 3a. How the AI is doing (`app/services/ai_accuracy.py`, `ai_usage.py`)
+
+Ingestion keeps the model's answer on the row (`suggested_category`,
+`suggested_claim_type`, only when a model classified the line). Every approval (by
+hand, in a batch, or through "approve known merchants") records
+`suggestion_accepted`: whether the approved category and claim type are the ones
+suggested. Settings → AI shows the acceptance rate over the last 90 days (by
+ingestion date) and how many lines a model classified. Next to it, this month's
+usage per job: `LiteLLMClient` counts every request, failure and the token counts
+the proxy reports (`usage.prompt_tokens` / `completion_tokens`) in an in-memory
+tally keyed by (month, job); an upload, an audit or a question flushes it into
+`ai_usage` with its own session. Counts only: no prompt or answer is ever stored.
+
+### 3b. Redaction (`app/services/redaction.py`)
+
+Nothing leaves for a model before a `Redactor` built from the configuration has
+masked, in this order: e-mail addresses (`[email]`), phone numbers (`[phone]`), UK
+postcodes (`[postcode]`), runs of six or more digits, sort codes and card numbers in
+any grouping (`[number]`; a card-length run keeps its last four as `[card:5502]`,
+which the app stores anyway and needs to tell card sections apart), every word of
+the two household members' display names (`[name]`, whole words, ignoring case)
+and the owner's own list (`[word]`, Settings → AI → Privacy, stored as
+`redact_words` in the AI document and `config.privacy.redact_words` once applied).
+Dates, amounts and four-digit store or card endings stay. It is applied to the
+classification lines and examples, to the page text of a PDF the parsers could not
+read (there with numbered placeholders, `[number#3]`, and a local map so the
+`raw_text` the model copies back is restored before it is stored), to the merchant
+names in the monthly summary payload and to a question asked in plain English. The
+original text in the ledger never changes.
+
+### 3c. Learnt PDF layouts (`app/services/layouts.py`, `parsers/template.py`)
+
+When the LLM fallback has read a PDF, one cheap follow-up call asks the model, on
+the redacted first page and a few of the lines it extracted, to describe the layout
+as a *template*: a line regex with named groups (`date`, `description`, `amount` or
+`debit` / `credit`, optional `post_date`, `cr`, `card`), the sign convention
+(`unsigned_is_debit`, `signed`, `debit_credit`), `day_first`, a card-section regex
+with a `last4` group, patterns to skip and whether descriptions run on. The template
+is validated (patterns compile, at most 400 characters, no nested quantifiers, lines
+capped at 300 characters before matching) and replayed on the same document at once:
+it is kept only when it reproduces the model's own lines exactly (date, amount, text).
+It is stored in `pdf_layouts` under a fingerprint: SHA-256 of the institution and
+the sorted words of the first page's digit-free lines after redaction, so never a
+name, number, date or amount. The next PDF with that fingerprint, when the built-in
+parsers fail on it, is parsed with the template and no AI call is made
+(`parser: pdf_template`). Settings → AI lists the learnt layouts (institution, when
+learnt, times used) with a delete; a deleted layout is learnt afresh next time.
+
+### 3d. Asking in plain English (`app/services/ask.py`)
+
+The Ask box on the Transactions page (shown only while AI is on) sends the model
+the question and nothing else: the names of the two people are swapped for "the
+primary user" / "the secondary user" first, then the redactor runs. With it goes a
+description of what can be asked (today's date, the category names and groups, the
+account ids with institution and type, the claim types), no amounts, merchants or
+lines. The model must answer `{"query": {...}}` in a strict schema (`QuerySpec`:
+`kind` spend or settlement; `metric` sum, count, average or list; a date range or
+`months`; `categories` as names or group names; `merchant_text`; `accounts`;
+`claim_types`; `people`; `direction` out / in / any; `status` all / approved /
+pending; `group_by` month, category, merchant or account; `settlement_period`) or
+`{"cannot": "..."}`. The server validates it against the configuration (unknown
+categories, accounts, claim types or months are refused with a 422 saying so) and
+runs it locally with SQL (split parents and internal transfers never count; a
+settlement question uses `settlement.compute_settlement`). The answer comes back
+with the filters as interpreted ("Showing: Travel, Jan 2026 to Sep 2026, money
+out, approved and pending") and the closest Transactions view (its filters take one
+period, one exact category and one account).
+
+### 3e. Rule suggestions (`app/services/rule_suggestions.py`, no AI)
+
+Settings → Rules opens with the rules the approvals suggest, built from approved
+lines (no transfers, split parents or `Uncategorized`) grouped by merchant key:
+a merchant at the same exact amount filed the same way at least 3 times with no
+rule matching (a rule with `amount_min = amount_max`), a merchant filed one way at
+least 5 times, every time, with no rule, and an existing rule the owner keeps
+overriding (matched, but the approved category or claim type differs at least 3
+times for the same correction: narrow the rule to the amount range of the lines that
+kept its answer, or remove it when none ever did). The proposed pattern is the
+merchant key's words, escaped, joined by `\s*`, case-insensitive. Accepting saves
+through `PUT /settings/rules` like any edit; dismissing stores the suggestion's key in
+`dismissed_suggestions`. Nothing changes without the owner.
+
+### 3f. Subscriptions and price rises (`app/services/subscriptions.py`, no AI)
+
+A merchant charged at a regular cadence for a similar amount is a subscription:
+monthly when the median gap between charges is 26 to 35 days (two thirds of the gaps
+within 20 to 45) and there are at least three charges, yearly when the median gap is
+350 to 380 days and there are at least two; every charge within half and one and a
+half times the median amount. Lines of any review status count, except internal
+transfers, `Transfers:` categories and split parents. The newest charge is compared
+with the one before it for a price change, a first charge within 90 days makes it
+*new*, a next expected charge more than half a cadence overdue makes it *stopped*;
+"now" is the newest transaction date in the ledger. `GET /api/subscriptions` feeds
+the dashboard card.
+
+### 3g. Unusual lines (`app/services/unusual.py`, no AI)
+
+A line filed unlike its merchant usually is on the same card is flagged on Review
+and Transactions ("Usually Dining · Personal", with the counts in the tooltip). The
+yardstick is the per-card history the auto-approve service builds
+(`auto_approve.load_history`): the approved lines of that merchant on that account,
+the line itself aside. A line is unusual when that history holds at least 4 lines
+and the line's own (category, claim type) appears in at most a fifth of them; split
+lines and internal transfers never are. One history query annotates a page of
+results; the same rule as SQL (`unusual_condition`) drives the Transactions filter
+`unusual=true` and the per-month `unusual_count` on the dashboard's review-progress
+line.
 
 ### Reviewing and correcting
 
@@ -855,7 +983,12 @@ positive costs and are included whether or not they are settled.
 * **Macro / household burn:** `primary_accounts_burn` = Σ |debits| across all accounts
   (gross, refunds not netted) + `partner_claims_burn` = Σ claim amounts. `by_category`
   is the same gross figure per category plus a `Partner claims` row, so it adds up to
-  the headline; `refunds` = Σ credits in spend categories, shown but never deducted.
+  the headline; `refunds` = Σ credits in spend categories, shown but never deducted
+  (the dashboard nets them off by default, with a gross/net switch remembered per
+  browser). `partner_claims_count` and `by_person` (primary then secondary: `paid` =
+  Σ |debits| on the accounts billed to them via `payer_for_account` plus the claims
+  they paid; `bears` = Σ their allocated amounts, refunds netted, plus their side of
+  the claims) feed the Household view's per-person line.
 * **Micro / true net expense:** Σ `−allocated_primary_amount` (refunds and credits
   reduce it) + Σ `partner_claims.primary_owes`; claims appear under the
   pseudo-category `Partner claims`.
@@ -1001,7 +1134,7 @@ development): `DATABASE_URL`, `BUNDLED_LITELLM_URL` (Compose sets
 `http://litellm:4000`; `http://localhost:4000` outside Docker), `UPDATER_URL`
 (`http://updater:9000`), `CONFIG_PATH`,
 `UPLOAD_DIR`, `SESSION_TTL_SECONDS`, `LLM_TIMEOUT_SECONDS` (default 90: the PDF
-extraction timeout and the ceiling for the 20 s classification and 60 s audit
+extraction timeout and the ceiling for the 45 s classification batch and 60 s audit
 timeouts), `EMBEDDING_DIMENSIONS` (must be 1536) and `CORS_ORIGINS`.
 
 ## 12. Database schema (`backend/app/schema.sql`)
@@ -1012,7 +1145,8 @@ timeouts), `EMBEDDING_DIMENSIONS` (must be 1536) and `CORS_ORIGINS`.
 | `app_settings`          | one JSONB document per `key`, saved from Settings (`household`, `categories`, `rules`, `ai`); each overrides the matching `config.yaml` / `.env` defaults |
 | `ledger_periods`        | one row per `YYYY-MM`, `is_closed`, `closed_at`                                             |
 | `statement_uploads`     | file provenance and sha256 for duplicate detection; `period_from` / `period_to` (the months the file spans, NULL on older rows) beside the legacy `period_key` |
-| `transactions`          | the master ledger: amounts, category, `claim_type`, generated `is_claimable`, the two allocations, `review_status`, transfer flag and link, `classification_source` / `_confidence`, `fingerprint`, the split columns `is_split`, `split_parent_id`, `split_index`, `source_file`, `upload_id` (nullable FK to `statement_uploads`, `ON DELETE SET NULL`; set on the upload's lines, their split parts and mirror legs, NULL on older rows), and `note` (nullable free text, at most 500 characters, the user's own words on what the payment was; `raw_description` is never edited because the fingerprint is built from it) |
+| `ai_usage`              | requests, failures and token counts per job per month (never prompts); `pdf_layouts`: learnt statement layouts keyed by fingerprint; `dismissed_suggestions`: rule suggestions the owner declined |
+| `transactions`          | the master ledger: amounts, category, `claim_type`, generated `is_claimable`, the two allocations, `review_status`, transfer flag and link, `classification_source` / `_confidence`, `fingerprint`, the split columns `is_split`, `split_parent_id`, `split_index`, `source_file`, `upload_id` (nullable FK to `statement_uploads`, `ON DELETE SET NULL`; set on the upload's lines, their split parts and mirror legs, NULL on older rows), `note` (nullable free text, at most 500 characters, the user's own words on what the payment was; `raw_description` is never edited because the fingerprint is built from it), and `suggested_category` / `suggested_claim_type` / `suggestion_accepted` (what the model suggested and whether the approval kept it) |
 | `merchant_memory`       | `raw_pattern` (normalised key, unique), merchant, category, claim type, `vector(1536)` embedding with an HNSW cosine index, `review_count` |
 | `partner_claims`        | claims logged at `/claim`: positive `amount`, `paid_by`, `primary_owes` / `secondary_owes`, `is_settled` |
 | `transfer_buffer`       | one row per transfer leg, `match_status` `unmatched` \| `matched` \| `ignored`              |

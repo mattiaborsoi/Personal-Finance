@@ -1,15 +1,16 @@
 import { PiggyBank } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useConfig } from '../config/ConfigContext';
 import { useAsync } from '../hooks/useAsync';
 import { accountLabel } from '../lib/format';
-import { cx, tableBase, tdBase, thBase, trHover } from '../lib/ui';
+import { cx, linkBase, tableBase, tdBase, thBase, trHover } from '../lib/ui';
 import { Card } from './Card';
-import { EmptyState } from './EmptyState';
 import { ErrorMessage } from './ErrorMessage';
 import { LoadingState } from './LoadingState';
 import { MoneyText } from './MoneyText';
 import { StatTile } from './StatTile';
+import { TableScroller } from './TableScroller';
 
 interface Props {
   refreshKey?: number;
@@ -19,36 +20,41 @@ interface Props {
  * Lifetime money in and out of the investment accounts. Deposits and
  * withdrawals are magnitudes; net invested capital and realised gain are
  * signed, and only the gain is coloured because only it can reasonably go
- * either way.
+ * either way. One account collapses to a single line; none to a quiet note.
  */
 export function InvestmentCard({ refreshKey = 0 }: Props) {
   const config = useConfig();
   const investment = useAsync(() => api.getInvestmentMetrics(), `investment:${refreshKey}`);
   const data = investment.data;
+  const single = data && data.accounts.length === 1 ? data.accounts[0] : null;
 
   return (
     <Card
       icon={PiggyBank}
       title="Investments"
-      description="All time, across investment accounts"
+      description={single ? `${accountLabel(config.accounts, single.account_id)} · all time` : 'All time, across investment accounts'}
       actions={investment.loading && <LoadingState inline />}
     >
       {investment.error && <ErrorMessage message={investment.error.message} onRetry={investment.reload} />}
-      {!data && !investment.error && <LoadingState label="Loading investments" rows={3} />}
+      {!data && !investment.error && <LoadingState label="Loading investments" rows={2} />}
       {data && data.accounts.length === 0 && (
-        <EmptyState
-          icon={PiggyBank}
-          title="No investment accounts yet"
-          hint={
-            <>
-              Add an account with type{' '}
-              <code translate="no" className="rounded bg-surface-2 px-1 py-0.5 font-mono text-xs text-ink">investment_cash</code> to the
-              configuration to track it here.
-            </>
-          }
-        />
+        <p className="text-sm text-ink-2" data-testid="no-investments">
+          No investment accounts yet. Add one with the type Investment under{' '}
+          <Link to="/settings?tab=accounts" className={linkBase}>
+            Settings, Accounts
+          </Link>{' '}
+          and transfers to it are tracked here.
+        </p>
       )}
-      {data && data.accounts.length > 0 && (
+      {single && (
+        <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="investment-single">
+          <StatTile as="dl-item" label="Deposits" value={<MoneyText value={single.total_deposits} />} />
+          <StatTile as="dl-item" label="Withdrawals" value={<MoneyText value={single.total_withdrawals} />} />
+          <StatTile as="dl-item" label="Net invested" value={<MoneyText value={single.net_invested_capital} />} />
+          <StatTile as="dl-item" label="Realised gain" value={<MoneyText value={single.realized_gain} tone signed />} />
+        </dl>
+      )}
+      {data && data.accounts.length > 1 && (
         <div className="space-y-4">
           <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatTile as="dl-item" label="Deposits" value={<MoneyText value={data.total_deposits} />} />
@@ -56,7 +62,7 @@ export function InvestmentCard({ refreshKey = 0 }: Props) {
             <StatTile as="dl-item" label="Net invested" value={<MoneyText value={data.net_invested_capital} />} />
             <StatTile as="dl-item" label="Realised gain" value={<MoneyText value={data.realized_gain} tone signed />} />
           </dl>
-          <div className="overflow-x-auto rounded-xl border border-hairline">
+          <TableScroller className="rounded-xl border border-hairline p-px">
             <table className={cx(tableBase, 'tabular')}>
               <thead>
                 <tr>
@@ -80,7 +86,7 @@ export function InvestmentCard({ refreshKey = 0 }: Props) {
               <tbody className="divide-y divide-hairline">
                 {data.accounts.map((row) => (
                   <tr key={row.account_id} className={trHover}>
-                    <td className={cx(tdBase, 'font-medium')}>{accountLabel(config.accounts, row.account_id)}</td>
+                    <td className={cx(tdBase, 'whitespace-nowrap font-medium')}>{accountLabel(config.accounts, row.account_id)}</td>
                     <td className={cx(tdBase, 'text-right text-ink-2')}>
                       <MoneyText value={row.total_deposits} />
                     </td>
@@ -116,7 +122,7 @@ export function InvestmentCard({ refreshKey = 0 }: Props) {
                 </tr>
               </tfoot>
             </table>
-          </div>
+          </TableScroller>
         </div>
       )}
     </Card>

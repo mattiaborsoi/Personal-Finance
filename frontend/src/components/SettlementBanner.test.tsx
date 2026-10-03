@@ -94,6 +94,11 @@ function nothingApproved(overrides: Partial<SettlementOut> = {}): SettlementOut 
   });
 }
 
+/** The working is collapsed by default; tests about its contents open it first. */
+async function openWorking() {
+  fireEvent.click(await screen.findByRole('button', { name: 'Show the working' }));
+}
+
 function serve(body: SettlementOut | (() => SettlementOut)) {
   return mockFetch(({ method, url }) => {
     if (method === 'GET' && url === '/api/settlement/2026-03') return jsonResponse(typeof body === 'function' ? body() : body);
@@ -108,7 +113,7 @@ describe('<SettlementBanner />', () => {
 
     const headline = await screen.findByTestId('settlement-headline');
     // Smaller on a phone, so the headline does not wrap one word per line.
-    expect(headline).toHaveClass('text-2xl', 'sm:text-4xl');
+    expect(headline).toHaveClass('text-xl', 'sm:text-4xl');
     expect(screen.getByTestId('settlement-top')).toHaveClass('flex-col', 'sm:flex-row');
     expect(screen.getByRole('button', { name: 'Record a payment' })).toHaveClass('w-full', 'sm:w-auto');
     expect(screen.getByRole('button', { name: 'Set the balance' })).toHaveClass('w-full', 'sm:w-auto');
@@ -117,6 +122,45 @@ describe('<SettlementBanner />', () => {
     for (const half of screen.getByText(/Split 55\.6% Alex/).closest('li')!.querySelectorAll('span > span')) {
       expect(half).toHaveClass('whitespace-nowrap');
     }
+  });
+
+  it('keeps the working behind a disclosure, and shows the claims and the review progress as chips', async () => {
+    serve(settlement({ unsettled_claim_count: 1 }));
+    renderWithProviders(
+      <SettlementBanner period="2026-03" periodInfo={period({ transaction_count: 40, pending_review_count: 1 })} />,
+    );
+
+    await screen.findByTestId('settlement-headline');
+    expect(screen.queryByTestId('settlement-working')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show the working' })).toHaveAttribute('aria-expanded', 'false');
+    // One claim in the lines, £60.00: count and amount, with how many are unsettled.
+    expect(screen.getByTestId('settlement-claims')).toHaveTextContent('1 partner claim · £60.00, 1 unsettled');
+    const progress = screen.getByTestId('settlement-progress');
+    expect(progress).toHaveTextContent('97% approved · 1 to review');
+    expect(within(progress).getByRole('link')).toHaveAttribute('href', '/review?period=2026-03');
+    expect(progress).not.toHaveTextContent('unusual');
+
+    await openWorking();
+    expect(screen.getByTestId('settlement-working')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide the working' }));
+    expect(screen.queryByTestId('settlement-working')).not.toBeInTheDocument();
+  });
+
+  it('counts the lines that look unusual in the progress chip, linking to the filtered Transactions view', async () => {
+    serve(settlement());
+    renderWithProviders(
+      <SettlementBanner
+        period="2026-03"
+        periodInfo={period({ transaction_count: 40, pending_review_count: 0, unusual_count: 3 })}
+      />,
+    );
+    await screen.findByTestId('settlement-headline');
+    const progress = screen.getByTestId('settlement-progress');
+    expect(progress).toHaveTextContent('100% approved · 3 lines look unusual');
+    expect(within(progress).getByRole('link', { name: '3 lines look unusual' })).toHaveAttribute(
+      'href',
+      '/transactions?period=2026-03&unusual=true',
+    );
   });
 
   it('headlines the outstanding balance, not the month’s gross, with the working in one line', async () => {
@@ -160,6 +204,7 @@ describe('<SettlementBanner />', () => {
     );
     renderWithProviders(<SettlementBanner period="2026-03" />);
     await screen.findByTestId('settlement-headline');
+    await openWorking();
 
     const working = screen.getByTestId('settlement-working');
     expect(within(working).getByText('From February 2026')).toBeInTheDocument();
@@ -200,6 +245,7 @@ describe('<SettlementBanner />', () => {
     expect(await screen.findByTestId('settlement-headline')).toHaveTextContent('Sam owes Alex £45.90');
     expect(screen.getByText(/Split 55\.6% Alex \//).closest('li')).toHaveTextContent('Split 55.6% Alex / 44.4% Sam');
     expect(screen.getByText(/3 transactions are still pending review/)).toBeInTheDocument();
+    await openWorking();
     expect(screen.getByText('Sam’s share of shared items Alex paid')).toBeInTheDocument();
     expect(screen.getByText('Alex’s personal items on Sam’s cards')).toBeInTheDocument();
     expect(screen.getByText('£24.10')).toBeInTheDocument();
@@ -211,15 +257,18 @@ describe('<SettlementBanner />', () => {
     serve(settlement());
 
     const view = renderWithProviders(<SettlementBanner period="2026-03" />, { route: '/?period=2026-03' });
-    const toggle = await screen.findByRole('button', { name: /^Show / });
+    await openWorking();
+    const toggle = await screen.findByRole('button', { name: /^Show \d/ });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await user.click(toggle);
-    expect(screen.getByRole('button', { name: /^Hide / })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: /^Hide \d/ })).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('Ocado')).toBeInTheDocument();
 
     view.unmount();
     renderWithProviders(<SettlementBanner period="2026-03" />, { route: '/?period=2026-03&lines=open' });
-    expect(await screen.findByRole('button', { name: /^Hide / })).toHaveAttribute('aria-expanded', 'true');
+    // The lines live inside the working, so the link opens both.
+    expect(await screen.findByRole('button', { name: /^Hide \d/ })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: 'Hide the working' })).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('says nothing is approved yet, not "Settled up", while every line is still pending', async () => {
@@ -256,6 +305,7 @@ describe('<SettlementBanner />', () => {
     expect(await screen.findByTestId('settlement-headline')).toHaveTextContent('Settled up');
     expect(screen.queryByTestId('settlement-awaiting')).not.toBeInTheDocument();
     expect(screen.getByText(/3 transactions are still pending review/)).toBeInTheDocument();
+    await openWorking();
     expect(screen.getByRole('button', { name: /show 0 lines/i })).toBeInTheDocument();
   });
 
@@ -264,6 +314,7 @@ describe('<SettlementBanner />', () => {
     serve(() => settlement({ net_owed_by_secondary: net, snapshot }));
 
     const view = renderWithProviders(<SettlementBanner period="2026-03" />);
+    await openWorking();
     const recorded = await screen.findByTestId('settlement-snapshot');
     expect(recorded).toHaveTextContent('Recorded at close: Sam owes Alex £45.90 (1 Apr 2026)');
     expect(screen.queryByRole('note')).not.toBeInTheDocument();
@@ -271,12 +322,14 @@ describe('<SettlementBanner />', () => {
     view.unmount();
     net = '52.00';
     renderWithProviders(<SettlementBanner period="2026-03" />);
+    await openWorking();
     expect(await screen.findByRole('note')).toHaveTextContent(/live figure differs/i);
   });
 
   it('compares the outstanding balance with the one recorded at close when the snapshot has it', async () => {
     serve(running({ snapshot: { ...snapshot, balance_out: '212.40' } }));
     renderWithProviders(<SettlementBanner period="2026-03" />);
+    await openWorking();
     expect(await screen.findByTestId('settlement-snapshot')).toHaveTextContent('Recorded at close: Sam owes Alex £212.40');
     expect(screen.queryByRole('note')).not.toBeInTheDocument();
   });
@@ -325,6 +378,7 @@ describe('<SettlementBanner />', () => {
   it('says there is nothing earlier when the balance is carried in from the month itself', async () => {
     serve(settlement({ balance: settlementBalance({ from_period: '2026-03' }) }));
     renderWithProviders(<SettlementBanner period="2026-03" />);
+    await openWorking();
     expect(await screen.findByTestId('settlement-working')).toHaveTextContent('Nothing earlier on record');
   });
 
@@ -463,6 +517,7 @@ describe('<SettlementBanner />', () => {
     renderWithProviders(<SettlementBanner period="2026-03" />);
 
     expect(await screen.findByText('Balance set on 31 Mar 2026')).toBeInTheDocument();
+    await openWorking();
     expect(screen.getByTestId('settlement-outstanding')).toHaveTextContent(
       'Balance set on 31 Mar 2026: £300.00 owed by Sam (Agreed over dinner)',
     );
@@ -577,6 +632,7 @@ describe('<SettlementBanner />', () => {
       return undefined;
     });
     renderWithProviders(<SettlementBanner period="2026-03" />);
+    await openWorking();
 
     await user.click(await screen.findByRole('button', { name: 'Delete the payment of £50.00 on 10 Mar 2026' }));
     expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
@@ -592,6 +648,7 @@ describe('<SettlementBanner />', () => {
     renderWithProviders(<SettlementBanner period="2026-03" />, { session: secondarySession });
 
     await screen.findByTestId('settlement-headline');
+    await openWorking();
     expect(screen.getByTestId('settlement-payments')).toHaveTextContent('Cash for the plumber');
     expect(screen.queryByRole('button', { name: 'Record a payment' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Set the balance' })).not.toBeInTheDocument();

@@ -319,6 +319,17 @@ class AuditorSection(BaseModel):
     lookback_periods: int = Field(default=3, ge=1, le=24)
 
 
+class PrivacySection(BaseModel):
+    """What is masked before any text goes to a language model (see ``app.services.redaction``).
+
+    The household names, long digit runs, postcodes, e-mail addresses and phone
+    numbers are always masked; ``redact_words`` adds the owner's own list (saved
+    under Settings -> AI).
+    """
+
+    redact_words: list[str] = Field(default_factory=list)
+
+
 class AppConfig(BaseModel):
     app: AppSection = Field(default_factory=AppSection)
     users: UsersSection
@@ -328,6 +339,7 @@ class AppConfig(BaseModel):
     transfers: TransfersSection = Field(default_factory=TransfersSection)
     llm: LLMSection = Field(default_factory=LLMSection)
     auditor: AuditorSection = Field(default_factory=AuditorSection)
+    privacy: PrivacySection = Field(default_factory=PrivacySection)
     categories: list[str] = Field(default_factory=lambda: list(DEFAULT_CATEGORIES))
     # Group -> emoji; "" means "no emoji" for that group. The defaults the categories
     # document (Settings -> Categories) is overlaid on; after the overlay, the effective

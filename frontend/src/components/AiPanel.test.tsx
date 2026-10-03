@@ -13,9 +13,12 @@ import {
   BUNDLED_PROXY_DOWN_MESSAGE,
   EXTERNAL_PROXY_LABEL,
   MODEL_BLANK_MESSAGE,
+  NO_LAYOUTS_MESSAGE,
+  NO_STATS_MESSAGE,
   PROXY_URL_BLANK_MESSAGE,
   PROXY_URL_PLACEHOLDER,
   PROXY_URL_SCHEME_MESSAGE,
+  REDACT_HELP,
   SAVED_MESSAGE,
   STALE_MODEL_LIST_MESSAGE,
 } from './AiPanel';
@@ -31,6 +34,7 @@ function applyUpdate(current: AiSettings, body: AiUpdate): AiSettings {
   if (proxy.mode === 'bundled') proxy.url = current.proxy.bundled_url;
   return {
     ...current,
+    redact_words: body.redact_words ?? current.redact_words,
     enabled: body.enabled ?? current.enabled,
     embedding_provider: body.embedding_provider ?? current.embedding_provider,
     models: { ...current.models, ...body.models },
@@ -650,5 +654,90 @@ describe('<AiPanel />', () => {
 
     expect(await screen.findByRole('switch', { name: 'Use AI' })).toBeChecked();
     expect(byMethod(calls, 'GET')).toHaveLength(2);
+  });
+});
+
+describe('<AiPanel /> privacy, figures and learnt layouts', () => {
+  it('saves the extra words to redact, one per line, trimmed and without repeats', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockAi(aiSettings({ redact_words: ['Acme Corp'] }));
+    await renderPanel();
+    const field = screen.getByLabelText('Also redact these words');
+    expect(field).toHaveValue('Acme Corp');
+    expect(screen.getByText(REDACT_HELP)).toBeInTheDocument();
+    await user.clear(field);
+    await user.type(field, ' Acme Corp {enter}acme corp{enter}{enter}Example Street ');
+    await user.click(saveButton());
+    expect(await screen.findByRole('status')).toHaveTextContent(SAVED_MESSAGE);
+    expect(byMethod(calls, 'PUT').map((c) => c.body)).toEqual([{ redact_words: ['Acme Corp', 'Example Street'] }]);
+  });
+
+  it('shows how the AI is doing: acceptance, lines classified and this month’s usage', async () => {
+    mockAi(
+      aiSettings({
+        stats: {
+          window_days: 90,
+          classified: 120,
+          approved: 80,
+          accepted: 72,
+          acceptance_rate: 0.9,
+          month: '2026-10',
+          usage: [
+            { job: 'chat', requests: 14, failures: 1, prompt_tokens: 21000, completion_tokens: 3200 },
+            { job: 'ask', requests: 2, failures: 0, prompt_tokens: 0, completion_tokens: 0 },
+          ],
+        },
+      }),
+    );
+    await renderPanel();
+    const card = screen.getByRole('region', { name: 'How the AI is doing' });
+    expect(within(card).getByText('Suggestions accepted')).toBeInTheDocument();
+    expect(within(card).getByText('90%')).toBeInTheDocument();
+    expect(card).toHaveTextContent('72 of 80 approved lines kept as suggested');
+    expect(within(card).getByText('120')).toBeInTheDocument();
+    expect(within(card).getByText('16')).toBeInTheDocument();
+    const usage = within(card).getByRole('list', { name: 'Usage per job this month' });
+    expect(within(usage).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      'Categorising14 requests, 1 failure · 21,000 in / 3,200 out tokens',
+      'Questions2 requests',
+    ]);
+  });
+
+  it('says so when there is nothing to measure yet', async () => {
+    mockAi(aiSettings());
+    await renderPanel();
+    expect(screen.getByRole('region', { name: 'How the AI is doing' })).toHaveTextContent(NO_STATS_MESSAGE);
+    expect(screen.getByRole('region', { name: 'Learnt PDF layouts' })).toHaveTextContent(NO_LAYOUTS_MESSAGE);
+  });
+
+  it('lists learnt layouts and forgets one after a confirmation', async () => {
+    const user = userEvent.setup();
+    const deleted: string[] = [];
+    const settings = aiSettings({
+      layouts: [
+        { id: 'lay-1', institution: 'Fictional Bank', created_at: '2026-09-01T10:00:00Z', last_used_at: '2026-10-01T10:00:00Z', times_used: 3 },
+        { id: 'lay-2', institution: null, created_at: '2026-09-15T10:00:00Z', last_used_at: null, times_used: 0 },
+      ],
+    });
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/ai') return jsonResponse(settings);
+      if (method === 'DELETE' && url.startsWith('/api/ai/layouts/')) {
+        deleted.push(url.slice('/api/ai/layouts/'.length));
+        return new Response(null, { status: 204 });
+      }
+      return undefined;
+    });
+    await renderPanel();
+    const card = screen.getByRole('region', { name: 'Learnt PDF layouts' });
+    const items = within(card).getAllByRole('listitem');
+    expect(items[0]).toHaveTextContent('Fictional Bank');
+    expect(items[0]).toHaveTextContent('Learnt 1 Sep 2026 · used 3 times, last 1 Oct 2026');
+    expect(items[1]).toHaveTextContent('Unknown institution');
+    expect(items[1]).toHaveTextContent('used 0 times');
+
+    await user.click(within(items[0]).getByRole('button', { name: 'Forget the Fictional Bank layout' }));
+    await user.click(within(card).getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(within(card).getAllByRole('listitem')).toHaveLength(1));
+    expect(deleted).toEqual(['lay-1']);
   });
 });

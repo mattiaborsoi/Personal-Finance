@@ -9,6 +9,7 @@ import {
   type TransactionPart,
   type TransactionPatch,
 } from '../api';
+import { AskBox } from '../components/AskBox';
 import { Card } from '../components/Card';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { LoadingState } from '../components/LoadingState';
@@ -36,6 +37,7 @@ function readFilters(params: URLSearchParams): TransactionFilterValues & { offse
     category: params.get('category') ?? '',
     q: params.get('q') ?? '',
     include_transfers: params.get('include_transfers') !== 'false',
+    unusual: params.get('unusual') === 'true',
     offset: Math.max(0, Number(params.get('offset') ?? 0) || 0),
   };
 }
@@ -53,6 +55,7 @@ export function TransactionsPage() {
         category: filters.category || undefined,
         q: filters.q || undefined,
         include_transfers: filters.include_transfers,
+        unusual: filters.unusual || undefined,
         limit: PAGE_SIZE,
         offset: filters.offset,
       }),
@@ -73,6 +76,7 @@ export function TransactionsPage() {
     if (next.category) params.category = next.category;
     if (next.q) params.q = next.q;
     if (!next.include_transfers) params.include_transfers = 'false';
+    if (next.unusual) params.unusual = 'true';
     if (offset > 0) params.offset = String(offset);
     setSearchParams(params);
   }
@@ -151,6 +155,7 @@ export function TransactionsPage() {
         title="Transactions"
         description={list.data ? `${plural(list.data.total, 'transaction')} match` : undefined}
       />
+      <AskBox />
       <Card icon={Filter} title="Filters">
         <TransactionFilters periods={periods.data ?? []} values={filters} onChange={(v) => writeFilters(v, 0)} />
       </Card>

@@ -1,8 +1,10 @@
 """Parser selection and the public ``parse_statement`` entry point.
 
 Strategy: try deterministic parsers in order (tabular files, pdfplumber tables,
-text-line regexes). If none yields transactions, fall back to the LLM layout
-extractor (Agent 1) when an LLM is available; otherwise raise ``ParseError``.
+text-line regexes). If none yields transactions, try a layout learnt earlier for
+this kind of statement (``app.services.layouts``, no AI); failing that, fall back to
+the LLM layout extractor (Agent 1) when an LLM is available, and learn the layout
+from its answer for next time; otherwise raise ``ParseError``.
 
 For PDFs both the table and the text parser run and the one that found the most
 transactions wins (the table parser on a tie). Nothing is de-duplicated here: the
@@ -15,6 +17,7 @@ import logging
 from pathlib import Path
 
 from app.config import AccountConfig, AppConfig
+from app.services import layouts as layout_store
 from app.services.llm import LLMClient, LLMError
 from app.services.parsers.base import ParsedStatement, ParseError, StatementDocument, StatementMetadata
 from app.services.parsers.llm_extractor import LLMLayoutExtractor
@@ -36,6 +39,7 @@ def parse_statement(
     llm: LLMClient | None = None,
     filename: str | None = None,
     account: AccountConfig | None = None,
+    layouts: layout_store.LayoutStore | None = None,
 ) -> ParsedStatement:
     """Parse an uploaded statement file into a :class:`ParsedStatement`.
 
@@ -43,7 +47,8 @@ def parse_statement(
     document; the caller (ingestion) maps ``metadata.account_last4`` to an account.
     ``account`` is the account the caller already knows the file belongs to; its type
     supplies the sign convention (card exports print charges as positive numbers)
-    when the document itself gives no hint.
+    when the document itself gives no hint. ``layouts`` is where learnt PDF layouts
+    are looked up and saved (none: nothing is learnt or replayed).
 
     Every transaction carries ``card_last4`` where possible: the card section it was
     printed under, else the statement's ``account_last4``. Amounts are ``Decimal``
@@ -110,6 +115,9 @@ def parse_statement(
                     f"{other.parser_name} found {len(other.transactions)} transaction(s) "
                     f"vs {len(best.transactions)} from {best.parser_name}; using {best.parser_name}"
                 )
+    elif doc.is_pdf and layouts is not None and (replayed := _replay(doc, config, metadata, layouts)):
+        best = replayed
+        best.warnings.insert(0, "deterministic parsers found no transactions; used a layout learnt earlier (no AI)")
     elif llm is not None and llm.available and doc.is_pdf:
         # Only PDFs go to the LLM: a spreadsheet the tabular parser rejects is not a
         # statement layout problem, and raw bytes must never be fed to a model.
@@ -118,6 +126,10 @@ def parse_statement(
             if extractor.can_parse(doc):
                 best = extractor.parse(doc)
                 best.warnings.insert(0, "deterministic parsers found no transactions; used LLM layout extraction")
+                if layouts is not None:
+                    learnt = layout_store.learn_layout(doc, best, llm, config, metadata, layouts)
+                    if learnt is not None:
+                        best.warnings.append("the layout of this statement was learnt: next time it is read without AI")
             else:
                 notes.append("llm_layout: document has no extractable text")
         except ParseError as exc:
@@ -132,6 +144,10 @@ def parse_statement(
     if sign_warning:
         best.warnings.append(sign_warning)
     return _finalise(best, metadata)
+
+
+def _replay(doc, config, metadata, layouts) -> ParsedStatement | None:
+    return layout_store.replay_layout(doc, config, metadata, layouts)
 
 
 def _finalise(result: ParsedStatement, detected: StatementMetadata) -> ParsedStatement:

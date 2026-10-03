@@ -144,6 +144,12 @@ ALTER TABLE transactions ADD COLUMN IF NOT EXISTS split_index INT;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS upload_id UUID REFERENCES statement_uploads(id) ON DELETE SET NULL;
 -- Upgrade for databases created before lines could carry a note.
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS note TEXT;
+-- What the AI suggested when the line came in (NULL unless a model classified it), and
+-- whether that suggestion was approved unchanged (set on approval; NULL until then).
+-- Only ever compared with the approved category and claim type: the AI's accuracy figure.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS suggested_category VARCHAR(128);
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS suggested_claim_type claim_type_enum;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS suggestion_accepted BOOLEAN;
 CREATE INDEX IF NOT EXISTS ix_transactions_period ON transactions (period_key);
 CREATE INDEX IF NOT EXISTS ix_transactions_account_date ON transactions (account_id, transaction_date);
 CREATE INDEX IF NOT EXISTS ix_transactions_review_status ON transactions (review_status);
@@ -248,6 +254,39 @@ CREATE TABLE IF NOT EXISTS settlement_entries (
 );
 CREATE INDEX IF NOT EXISTS ix_settlement_entries_period ON settlement_entries (period_key);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_settlement_checkpoint ON settlement_entries (period_key) WHERE kind = 'checkpoint';
+
+-- AI usage per job per month (Settings -> AI, "How the AI is doing"). Counts only:
+-- requests made, failures, and the token counts the proxy reported. Never prompts.
+CREATE TABLE IF NOT EXISTS ai_usage (
+    month VARCHAR(7) NOT NULL,       -- YYYY-MM (UTC)
+    job VARCHAR(16) NOT NULL,        -- chat | extraction | audit | ask | layout
+    requests INT NOT NULL DEFAULT 0,
+    failures INT NOT NULL DEFAULT 0,
+    prompt_tokens BIGINT NOT NULL DEFAULT 0,
+    completion_tokens BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (month, job)
+);
+
+-- PDF layouts learnt from the LLM fallback (app/services/layouts.py): a template the
+-- deterministic text parser can replay, keyed by a fingerprint of the institution and
+-- the statement's digit-free header words (hashed; never names, numbers or amounts).
+CREATE TABLE IF NOT EXISTS pdf_layouts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    fingerprint VARCHAR(64) UNIQUE NOT NULL,
+    institution VARCHAR(64),
+    template JSONB NOT NULL,
+    times_used INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Rule suggestions the owner dismissed (Settings -> Rules); the key identifies the
+-- suggestion (its kind, merchant key, category, claim type and amount) so it stays away.
+CREATE TABLE IF NOT EXISTS dismissed_suggestions (
+    key VARCHAR(200) PRIMARY KEY,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 
 -- Investment cash-basis position -------------------------------------------
 -- Transfers into an investment account are recorded on that account as

@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
@@ -28,7 +28,7 @@ function queueRequests(calls: RecordedCall[]): RecordedCall[] {
 }
 
 describe('<DashboardPage />', () => {
-  it('says how many lines are waiting and in which months, and links to the Review page, without the queue itself', async () => {
+  it('keeps the queue on the Review page and does not repeat the waiting count in a card', async () => {
     const { calls } = mockFetch(({ method, url }) => {
       if (method === 'GET' && url === '/api/periods') return jsonResponse(periodsWith(12));
       return undefined;
@@ -36,22 +36,13 @@ describe('<DashboardPage />', () => {
 
     renderWithProviders(<DashboardPage />, { route: '/?period=2026-07' });
 
-    const card = await screen.findByRole('region', { name: 'Waiting for review' });
-    expect(card).toHaveTextContent(/12 lines waiting for review in July( 2026)?/);
-    expect(card).toHaveTextContent('The figures below may change until they are approved.');
-    // The Review page opens on the oldest month with lines waiting.
-    expect(within(card).getByRole('link', { name: 'Review now' })).toHaveAttribute('href', '/review');
+    // The settlement card's progress chip is the way to Review; no separate card repeats it.
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Waiting for review' })).not.toBeInTheDocument());
     // The queue lives on the Review page now: the dashboard neither shows it nor asks for it.
     expect(screen.queryByRole('region', { name: 'Approval queue' })).not.toBeInTheDocument();
     expect(queueRequests(calls)).toEqual([]);
-  });
-
-  it('uses the singular for one line', async () => {
-    mockFetch(({ method, url }) => (method === 'GET' && url === '/api/periods' ? jsonResponse(periodsWith(1)) : undefined));
-
-    renderWithProviders(<DashboardPage />, { route: '/?period=2026-07' });
-
-    expect(await screen.findByRole('region', { name: 'Waiting for review' })).toHaveTextContent('1 line waiting for review');
+    // Nothing waits elsewhere, so there is no header note either.
+    expect(screen.queryByTestId('pending-elsewhere')).not.toBeInTheDocument();
   });
 
   it('shows no card when nothing is waiting', async () => {
@@ -62,6 +53,25 @@ describe('<DashboardPage />', () => {
     expect(await screen.findByRole('option', { name: 'July 2026' })).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Waiting for review' })).not.toBeInTheDocument();
     expect(screen.queryByText(/waiting for review/)).not.toBeInTheDocument();
+  });
+
+  it('leads with the settlement, puts Run audit in the header, and ends with the investments', async () => {
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse(periodsWith(0));
+      if (method === 'GET' && url === '/api/audit/2026-07') return jsonResponse(null);
+      return undefined;
+    });
+
+    renderWithProviders(<DashboardPage />, { route: '/?period=2026-07' });
+
+    const settlement = await screen.findByRole('region', { name: 'Settlement' });
+    const household = screen.getByRole('region', { name: 'Household' });
+    const investments = screen.getByRole('region', { name: 'Investments' });
+    expect(settlement.compareDocumentPosition(household) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(household.compareDocumentPosition(investments) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Run audit' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Audit' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Subscriptions' })).toBeInTheDocument();
   });
 
   it('reads the metric view from ?view= and writes a new choice back, keeping the period', async () => {
@@ -82,8 +92,8 @@ describe('<DashboardPage />', () => {
     const group = await screen.findByRole('group', { name: 'Metric view' });
     expect(within(group).getByRole('button', { name: /Cash flow/ })).toHaveAttribute('aria-pressed', 'true');
 
-    await user.click(within(group).getByRole('button', { name: /Personal/ }));
-    expect(within(group).getByRole('button', { name: /Personal/ })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(within(group).getByRole('button', { name: /My share/ }));
+    expect(within(group).getByRole('button', { name: /My share/ })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('search')).toHaveTextContent('?period=2026-07&view=micro');
   });
 });
@@ -107,25 +117,32 @@ describe('<DashboardPage /> pending card across months', () => {
     );
   }
 
-  it('shows lines waiting in older months while the current month, on show, has none', async () => {
+  it('notes lines waiting in earlier months in one quiet line, without naming them, while the month on show has none', async () => {
     serve({ [current]: 0, [last]: 5, [before]: 3 });
 
     renderWithProviders(<DashboardPage />, { route: '/' });
 
-    const card = await screen.findByRole('region', { name: 'Waiting for review' });
-    expect(card).toHaveTextContent(`8 lines waiting for review in ${monthName(before)} and ${monthName(last)}`);
-    expect(card).toHaveTextContent('Figures for those months may change until they are approved.');
-    expect(within(card).getByRole('link', { name: 'Review now' })).toHaveAttribute('href', '/review');
+    const note = await screen.findByTestId('pending-elsewhere');
+    expect(note).toHaveTextContent('8 lines still to review in 2 earlier months');
+    expect(note).not.toHaveTextContent(monthName(last));
+    expect(within(note).getByRole('link', { name: 'Review them' })).toHaveAttribute('href', '/review');
+    expect(screen.queryByRole('region', { name: 'Waiting for review' })).not.toBeInTheDocument();
   });
 
-  it('counts the current month with the others when lines wait there too', async () => {
+  it('notes lines waiting in other months', async () => {
     serve({ [current]: 2, [last]: 1 });
 
     renderWithProviders(<DashboardPage />, { route: '/' });
 
-    const card = await screen.findByRole('region', { name: 'Waiting for review' });
-    expect(card).toHaveTextContent(`3 lines waiting for review in ${monthName(last)} and ${monthName(current)}`);
-    expect(card).toHaveTextContent('The figures below may change until they are approved.');
+    expect(await screen.findByTestId('pending-elsewhere')).toHaveTextContent('1 line still to review in 1 earlier month');
+  });
+
+  it('calls them other months when one of them is later than the month on show', async () => {
+    serve({ [current]: 4, [last]: 0, [before]: 0 });
+
+    renderWithProviders(<DashboardPage />, { route: `/?period=${last}` });
+
+    expect(await screen.findByTestId('pending-elsewhere')).toHaveTextContent('4 lines still to review in 1 other month');
   });
 
   it('shows no card when no month has anything waiting', async () => {
@@ -135,6 +152,7 @@ describe('<DashboardPage /> pending card across months', () => {
 
     expect(await screen.findByRole('option', { name: periodLabel(current) })).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Waiting for review' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('pending-elsewhere')).not.toBeInTheDocument();
   });
 });
 

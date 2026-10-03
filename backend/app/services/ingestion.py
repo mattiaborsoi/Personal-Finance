@@ -16,11 +16,16 @@ Design notes
   still the newest month for compatibility). Uploading *new* lines into a closed
   period is refused; lines that already exist (a re-upload) are simply skipped, so
   a statement overlapping an already-closed month still goes through.
-* **AI outages**: one :class:`~app.services.guesser.UploadState` is shared by the
-  file's ``classify`` calls. It memoises answers for duplicate lines and carries the
-  LLM circuit breaker; when the breaker trips (or a model answer was unusable) the
-  result says so in ``warnings`` so uncategorised lines are not a silent surprise.
-  No warning is raised when AI is switched off: that is the user's choice.
+* **AI calls**: the file's lines go through rules, payment patterns and memory one by
+  one, and the ones left over to the model in batches (``guesser.classify_many``),
+  a few requests at a time. One :class:`~app.services.guesser.UploadState` memoises
+  answers for duplicate lines and carries the LLM circuit breaker; when the breaker
+  trips (or a model answer was unusable) the result says so in ``warnings`` so
+  uncategorised lines are not a silent surprise. No warning is raised when AI is
+  switched off: that is the user's choice. The model's suggestion is kept on the row
+  (``suggested_category`` / ``suggested_claim_type``) so approvals can measure it.
+* **Learnt PDF layouts**: a PDF the parsers cannot read goes to the model once; the
+  layout it describes is kept (``app.services.layouts``) and replayed next time.
 * **Idempotency**: each line gets a fingerprint ``sha256(account|date|amount|raw|n)``
   where ``n`` is the occurrence index of identical lines within the same file, so
   re-uploading a statement inserts nothing new while two genuinely identical
@@ -60,8 +65,9 @@ from sqlalchemy.orm import Session
 from app.config import AccountConfig, AppConfig
 from app.models import LedgerPeriod, StatementUpload, Transaction, TransferBuffer
 from app.schemas import UploadResult
-from app.services import auto_approve, guesser, settlement, transfers
+from app.services import ai_usage, auto_approve, guesser, settlement, transfers
 from app.services.embeddings import EmbeddingClient
+from app.services.layouts import DbLayoutStore
 from app.services.llm import LLMClient
 from app.services.parsers.base import ParsedStatement, ParsedTransaction
 from app.services.parsers.registry import parse_statement
@@ -204,7 +210,9 @@ def ingest_statement(
     if account_id and explicit_account is None:
         raise AccountResolutionError(f"unknown account_id {account_id!r}", [a.id for a in config.accounts])
 
-    parsed = parse_statement(path, config, llm=extraction_llm or llm, filename=filename, account=explicit_account)
+    parsed = parse_statement(
+        path, config, llm=extraction_llm or llm, filename=filename, account=explicit_account, layouts=DbLayoutStore(db)
+    )
     warnings = list(parsed.warnings)
     default_account = _resolve_default_account(parsed, config, account_id)
 
@@ -280,8 +288,12 @@ def ingest_statement(
     inserted = pending = auto = 0
     waiting: list[Transaction] = []
     state = guesser.UploadState()
-    for line, acc, fp in new_lines:
-        cls = guesser.classify(db, config, embedder, llm, line.raw_text, acc, amount=line.amount, state=state)
+    # Rules, payment patterns and memory line by line; the lines left over go to the
+    # model in batches (see app.services.guesser.classify_many), then the rows are written.
+    classifications = guesser.classify_many(
+        db, config, embedder, llm, [(line.raw_text, acc, line.amount) for line, acc, _ in new_lines], state
+    )
+    for (line, acc, fp), cls in zip(new_lines, classifications, strict=True):
         # A line the classifier filed under Transfers:Internal is a transfer even when it
         # did not say so; a transfer's own claim type is always personal.
         internal = cls.is_internal_transfer or cls.category == guesser.INTERNAL_TRANSFER_CATEGORY
@@ -307,6 +319,10 @@ def ingest_statement(
             is_internal_transfer=internal,
             classification_source=cls.source,
             classification_confidence=Decimal(str(round(cls.confidence, 3))),
+            # What the model suggested, kept apart from the live fields so an approval can
+            # say whether it was accepted unchanged (Settings -> AI, "How the AI is doing").
+            suggested_category=cls.category if cls.source == "llm" else None,
+            suggested_claim_type=cls.claim_type if cls.source == "llm" else None,
             fingerprint=fp,
             source_file=filename[:255],
             upload_id=upload.id,
@@ -336,6 +352,7 @@ def ingest_statement(
     pending -= known
     auto += known
     warnings.extend(ai_warnings(state))
+    ai_usage.flush(db)
 
     upload.transaction_count = inserted
     db.flush()

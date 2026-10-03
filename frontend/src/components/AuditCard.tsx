@@ -1,32 +1,35 @@
 import { Sparkles } from 'lucide-react';
 import { useState } from 'react';
-import { api, errorMessage } from '../api';
-import { useAsync } from '../hooks/useAsync';
+import { api, errorMessage, type AuditReportOut } from '../api';
+import { useAsync, type AsyncResult } from '../hooks/useAsync';
 import { formatDateTime } from '../lib/dates';
-import { btnPrimary, btnSmall, cx, eyebrow } from '../lib/ui';
+import { btnSecondary, btnSmall, cx, eyebrow } from '../lib/ui';
 import { AuditAnomalies } from './AuditAnomalies';
 import { AuditComparisonTable } from './AuditComparisonTable';
 import { Card } from './Card';
-import { EmptyState } from './EmptyState';
 import { ErrorMessage } from './ErrorMessage';
 import { LoadingState } from './LoadingState';
 
-interface Props {
-  period: string;
-  refreshKey?: number;
+/**
+ * The latest report for the period. The server answers a period that has never
+ * been audited with a JSON null: an ordinary, successful "nothing yet", not an error.
+ */
+export function useAuditReport(period: string, refreshKey = 0): AsyncResult<AuditReportOut | null> {
+  return useAsync(() => api.getAudit(period), `audit:${period}:${refreshKey}`, period !== '');
 }
 
-export function AuditCard({ period, refreshKey = 0 }: Props) {
-  const audit = useAsync(() => api.getAudit(period), `audit:${period}:${refreshKey}`);
+interface ButtonProps {
+  period: string;
+  audit: AsyncResult<AuditReportOut | null>;
+}
+
+/** "Run audit" for the page header: runs it and hands the report to the shared loader; an error shows beside it. */
+export function RunAuditButton({ period, audit }: ButtonProps) {
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   /** Read out by the always-mounted status region once a run finishes. */
   const [announcement, setAnnouncement] = useState('');
-
   const report = audit.data;
-  // The server answers a period that has never been audited with a JSON null:
-  // an ordinary, successful "nothing yet", not an error.
-  const noAuditYet = !audit.loading && !audit.error && report === null;
 
   async function runAudit() {
     setRunning(true);
@@ -44,29 +47,41 @@ export function AuditCard({ period, refreshKey = 0 }: Props) {
   }
 
   return (
-    <Card
-      icon={Sparkles}
-      title="Audit"
-      description={report ? `Last run ${formatDateTime(report.created_at)}` : 'Compares this period against its baseline'}
-      actions={
-        <>
-          {audit.loading && <LoadingState inline />}
-          <button type="button" className={cx(btnPrimary, btnSmall)} onClick={runAudit} disabled={running}>
-            <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-            {running ? 'Running…' : report ? 'Run audit again' : 'Run audit'}
-          </button>
-        </>
-      }
-    >
+    <>
+      <button
+        type="button"
+        className={cx(btnSecondary, btnSmall)}
+        onClick={runAudit}
+        disabled={running}
+        title="Compares this month against its baseline"
+      >
+        <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+        {running ? 'Running…' : report ? 'Run audit again' : 'Run audit'}
+      </button>
       <p role="status" className="sr-only">
         {announcement}
       </p>
+      {runError && <ErrorMessage message={runError} onDismiss={() => setRunError(null)} className="basis-full" />}
+    </>
+  );
+}
+
+interface CardProps {
+  audit: AsyncResult<AuditReportOut | null>;
+}
+
+/** The audit report, shown only once one exists (or the request failed); "not run yet" is no card at all. */
+export function AuditCard({ audit }: CardProps) {
+  const report = audit.data;
+  if (!report && !audit.error) return null;
+  return (
+    <Card
+      icon={Sparkles}
+      title="Audit"
+      description={report ? `Last run ${formatDateTime(report.created_at)}` : 'Compares this month against its baseline'}
+      actions={audit.loading && <LoadingState inline />}
+    >
       {audit.error && <ErrorMessage message={audit.error.message} onRetry={audit.reload} />}
-      <ErrorMessage message={runError} onDismiss={() => setRunError(null)} className="mb-3" />
-      {audit.loading && !report && !audit.error && <LoadingState label="Loading audit" rows={3} />}
-      {noAuditYet && (
-        <EmptyState icon={Sparkles} title="No audit yet" hint="Run one to compare this period against its baseline." />
-      )}
       {report && (
         <div className="space-y-6">
           <blockquote className="border-l-2 border-brand pl-4 text-base leading-relaxed text-ink-2">
