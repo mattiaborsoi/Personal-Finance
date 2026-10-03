@@ -53,7 +53,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import CLAIM_TYPES, UNCATEGORIZED, AccountConfig, AppConfig
+from app.config import APPROVED_STATUSES, CLAIM_TYPES, UNCATEGORIZED, AccountConfig, AppConfig
 from app.models import Transaction
 from app.services import memory, rules
 from app.services.embeddings import EmbeddingClient
@@ -67,7 +67,6 @@ MAX_MERCHANT_LENGTH = 255  # transactions.cleaned_merchant is VARCHAR(255)
 MAX_PROMPT_TEXT_CHARS = 200  # statement text is quoted (JSON string) and clipped in prompts
 EXAMPLE_MIN_SIMILARITY = 0.5  # few-shot examples below this are noise (and an injection surface)
 CARD_HISTORY_LINES = 5  # a memory hit takes the claim type these recent same-card lines agree on
-APPROVED_STATUSES = ("manual_approved", "auto_approved")
 
 # One-line meaning of each claim type, as shown to the model.
 CLAIM_TYPE_MEANINGS: dict[str, str] = {

@@ -1,8 +1,8 @@
 """Synthetic statement fixtures.
 
 Nothing binary is committed: :mod:`tests.fixtures.generate` builds the PDF / CSV /
-XLSX files at runtime (``build_all(tmp_path)``) from the sanitised values in
-``docs/BLUEPRINT.md`` section 7.
+XLSX files at runtime (``build_all(tmp_path)``) from the sanitised values of
+``config.example.yaml`` (placeholder suppliers, randomised card digits).
 """
 
 from tests.fixtures.generate import (

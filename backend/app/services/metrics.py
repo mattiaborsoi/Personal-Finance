@@ -1,4 +1,4 @@
-"""Multi-view metrics and investment cash-basis tracking (blueprint §5).
+"""Multi-view metrics and investment cash-basis tracking.
 
 Three views of one period
 -------------------------
@@ -68,7 +68,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from app.config import TRANSFER_CATEGORY_PREFIX, AppConfig
+from app.config import APPROVED_STATUSES, TRANSFER_CATEGORY_PREFIX, AppConfig
 from app.models import Account, LedgerPeriod, PartnerClaim, Transaction
 from app.schemas import (
     CategoryAmount,
@@ -82,7 +82,6 @@ from app.schemas import (
 )
 from app.services.periods import period_bounds, period_key_for, previous_period_key
 
-APPROVED_STATUSES: tuple[str, ...] = ("auto_approved", "manual_approved")
 PARTNER_CLAIMS_CATEGORY = "Partner claims"
 INVESTMENT_ACCOUNT_TYPE = "investment_cash"
 INCOME_CATEGORY_PREFIX = "Income:"
@@ -202,8 +201,6 @@ class _CategoryTotals:
     """Σ |amount| over debits only - refunds are not netted."""
     credits: Decimal
     """Σ amount over credits only - refunds and other money back in a spend category."""
-    net_spend: Decimal
-    """Σ -amount - refunds and credits net off."""
     primary_net_spend: Decimal
     """Σ -allocated_primary_amount - the primary user's net share."""
 
@@ -243,7 +240,6 @@ def _spend_by_category(db: Session, period_key: str) -> list[_CategoryTotals]:
             Transaction.category,
             func.coalesce(func.sum(debit_abs), 0),
             func.coalesce(func.sum(credit), 0),
-            func.coalesce(func.sum(-Transaction.amount), 0),
             func.coalesce(func.sum(-Transaction.allocated_primary_amount), 0),
         )
         .where(*_approved_non_transfer(period_key))
@@ -254,10 +250,9 @@ def _spend_by_category(db: Session, period_key: str) -> list[_CategoryTotals]:
             category=category,
             gross_debits=quantize(gross),
             credits=quantize(credits),
-            net_spend=quantize(net),
             primary_net_spend=quantize(primary),
         )
-        for category, gross, credits, net, primary in db.execute(stmt)
+        for category, gross, credits, primary in db.execute(stmt)
     ]
 
 

@@ -1,6 +1,6 @@
 """Cross-ledger reconciliation & timing buffer (transfer matching engine).
 
-Algorithm (blueprint §4):
+Algorithm:
 
 1. A transaction whose description matches ``transfers.payment_patterns`` (or a
    deterministic rule with ``is_internal_transfer``) is flagged

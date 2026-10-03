@@ -26,7 +26,7 @@ Settlement
     + Σ secondary share of items paid by primary
     - Σ primary share of items paid by secondary
 
-which expands to the blueprint's four sums (secondary share of primary-paid shared,
+which expands to four sums (secondary share of primary-paid shared,
 primary share of secondary-paid shared, secondary personal on primary cards, primary
 personal on secondary cards). Internal transfers and ``Transfers:*`` categories never
 enter the settlement. Only ``auto_approved``/``manual_approved`` transactions count;
@@ -60,11 +60,10 @@ from decimal import ROUND_HALF_UP, Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import CLAIM_TYPES, TRANSFER_CATEGORY_PREFIX, AppConfig
+from app.config import APPROVED_STATUSES, CLAIM_TYPES, TRANSFER_CATEGORY_PREFIX, AppConfig
 from app.models import LedgerPeriod, PartnerClaim, Transaction
 from app.schemas import SettlementLine, SettlementSummary
 
-APPROVED_STATUSES: tuple[str, ...] = ("auto_approved", "manual_approved")
 SHARED_CLAIM_TYPES: tuple[str, ...] = ("shared_proportional", "shared_equal")
 SETTLEMENT_CATEGORY = "Transfers:Settlement"
 
@@ -216,7 +215,7 @@ def compute_settlement(db: Session, period_key: str, config: AppConfig) -> Settl
 
 @dataclass
 class _Buckets:
-    """The blueprint's four sums, each positive for an expense."""
+    """The four sums, each positive for an expense."""
 
     secondary_share_of_primary_paid_shared: Decimal = Decimal(0)
     primary_share_of_secondary_paid_shared: Decimal = Decimal(0)

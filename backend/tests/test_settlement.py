@@ -422,7 +422,7 @@ def test_account_outside_config_falls_back_to_row_owner(seeded_db, config: AppCo
 
 
 def test_end_to_end_period_settlement(seeded_db, config: AppConfig) -> None:
-    """Blueprint fixtures 1 and 2 plus partner claims, with every exclusion rule
+    """The card and current-account fixtures plus partner claims, with every exclusion rule
     exercised: pending review, internal transfers, Transfers:* categories, other
     periods, zero-effect items."""
     # --- primary card (paid by primary) ------------------------------------

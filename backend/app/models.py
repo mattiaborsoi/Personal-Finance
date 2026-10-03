@@ -177,10 +177,6 @@ class Transaction(Base):
         "Transaction", foreign_keys=[split_parent_id], remote_side=[id], back_populates="parts"
     )
 
-    @property
-    def is_split_part(self) -> bool:
-        return self.split_parent_id is not None
-
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Transaction {self.transaction_date} {self.account_id} {self.amount} {self.cleaned_merchant!r}>"
 

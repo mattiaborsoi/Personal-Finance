@@ -64,14 +64,6 @@ def get_settlement(
     return summary
 
 
-@router.post("/{period_key}/mark-settled", dependencies=[Depends(require_primary)])
-def mark_settled(period_key: str, db: Session = Depends(get_db)) -> dict[str, int]:
-    _validate(period_key)
-    settled = _mark_claims_settled(db, period_key)
-    db.commit()
-    return {"settled_claims": settled}
-
-
 def _closed_conflict(period_key: str) -> HTTPException:
     return HTTPException(status.HTTP_409_CONFLICT, f"period {period_key} is closed; reopen it first")
 

@@ -18,15 +18,14 @@ issue, even partially: describe the shape of the data instead.
 
    ```bash
    cd backend && ruff check . && pytest -v
-   ruff check --config backend/pyproject.toml updater && python -m py_compile updater/updater.py
+   ruff check --config backend/pyproject.toml updater && python -m py_compile updater/*.py
    cd frontend && npm ci && npm run lint && npx tsc --noEmit && npm test && npm run build
    ```
 
-   Most backend tests need PostgreSQL with pgvector: without a `DATABASE_URL` they
-   are skipped and `pytest` still exits 0, so a green run on a laptop without a
-   database is not the CI gate. Run them in the container instead
-   (`docker compose exec backend pytest -v`) or point `DATABASE_URL` at a pgvector
-   database (see docs/TECHNICAL.md, "Development setup").
+   Most backend tests need PostgreSQL with pgvector and are skipped without one, so
+   a green `pytest` on a laptop without a database is not the CI gate: run them in
+   the container (`docker compose exec backend pytest -v`) or as described in
+   docs/TECHNICAL.md, "Development setup".
 3. Keep pull requests focused: one change per PR, with a short description of
    what and why. The PR template asks for the same.
 4. Open the pull request against `main`. CI runs automatically; a maintainer

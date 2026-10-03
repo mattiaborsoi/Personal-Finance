@@ -107,11 +107,6 @@ def backfill_account_details(db: Session, config: AppConfig, rows: list[Account]
     return filled
 
 
-def sync_accounts(db: Session, config: AppConfig) -> int:
-    """Backwards-compatible alias for :func:`seed_accounts`."""
-    return seed_accounts(db, config)
-
-
 def _row_from_config(cfg: AccountConfig) -> Account:
     return Account(
         id=cfg.id,

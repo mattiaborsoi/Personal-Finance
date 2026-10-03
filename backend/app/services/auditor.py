@@ -41,7 +41,7 @@ from statistics import median, pstdev
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import TRANSFER_CATEGORY_PREFIX, AppConfig
+from app.config import APPROVED_STATUSES, TRANSFER_CATEGORY_PREFIX, AppConfig
 from app.models import AuditReport, Transaction
 from app.schemas import AnomalyOut, AuditReportOut, CategoryComparisonOut
 from app.services.llm import LLMClient, LLMError
@@ -49,7 +49,6 @@ from app.services.periods import get_or_create_period, previous_period_key
 
 log = logging.getLogger(__name__)
 
-APPROVED_STATUSES: tuple[str, ...] = ("auto_approved", "manual_approved")
 TWO_PLACES = Decimal("0.01")
 ZERO = Decimal("0.00")
 
@@ -206,8 +205,7 @@ def statistical_anomalies(db: Session, config: AppConfig, period_key: str) -> li
         baseline = _q2(median(prior_totals))
         if baseline <= 0:
             continue
-        # The blueprint asks for median and standard deviation; the median drives the
-        # flag and the (population) standard deviation is reported for context.
+        # The median drives the flag; the (population) standard deviation is reported for context.
         stddev = _q2(Decimal(str(pstdev(prior_totals)))) if len(prior_totals) >= 2 else None
         current = _q2(history.per_period[period_key])
         deviation = float((current - baseline) / baseline)

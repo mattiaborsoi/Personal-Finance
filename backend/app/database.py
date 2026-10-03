@@ -86,25 +86,3 @@ def init_db(engine: Engine | None = None) -> None:
     with engine.begin() as conn:
         for stmt in _split_sql(sql):
             conn.execute(text(stmt))
-
-
-def drop_all(engine: Engine) -> None:
-    """Drop every application object (used by the test-suite)."""
-    with engine.begin() as conn:
-        conn.execute(text("DROP VIEW IF EXISTS investment_position"))
-        for table in (
-            "settlement_entries",
-            "settlement_snapshots",
-            "audit_reports",
-            "transfer_buffer",
-            "partner_claims",
-            "merchant_memory",
-            "transactions",
-            "statement_uploads",
-            "ledger_periods",
-            "accounts",
-        ):
-            conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
-        for enum in ("account_type_enum", "claim_type_enum", "review_status_enum", "transfer_state_enum",
-                     "settlement_entry_kind"):
-            conn.execute(text(f"DROP TYPE IF EXISTS {enum} CASCADE"))

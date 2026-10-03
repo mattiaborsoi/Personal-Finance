@@ -44,12 +44,6 @@ export interface LoginResponse {
   display_name: string;
 }
 
-export interface MeResponse {
-  role: Role;
-  user_id: string;
-  display_name: string;
-}
-
 export interface UserRef {
   id: string;
   display_name: string;
@@ -139,11 +133,6 @@ export interface AccountUpdate {
   default_claim_type?: ClaimType;
   billed_to?: string | null;
   is_active?: boolean;
-}
-
-export interface HealthOut {
-  status: string;
-  database: string;
 }
 
 export interface PeriodOut {
@@ -506,10 +495,6 @@ export interface SettlementSnapshot {
   adjustments?: Money | null;
   balance_out?: Money | null;
   snapshot_at: string | null;
-}
-
-export interface MarkSettledResponse {
-  settled_claims: number;
 }
 
 export interface CategoryAmount {
@@ -1227,11 +1212,9 @@ export const api = {
   // Auth
   login: (password: string) =>
     request<LoginResponse>('POST', '/auth/login', { body: { password }, allow401: true }),
-  me: () => request<MeResponse>('GET', '/auth/me'),
 
   // Reference
   getConfig: () => request<AppConfig>('GET', '/config'),
-  health: () => request<HealthOut>('GET', '/health'),
 
   // Accounts (every account, archived included)
   listAccounts: () => request<AccountOut[]>('GET', '/accounts'),
@@ -1265,7 +1248,6 @@ export const api = {
   // Transactions
   listTransactions: (query: TransactionQuery) =>
     request<TransactionListResponse>('GET', '/transactions', { query: { ...query } }),
-  getTransaction: (id: string) => request<TransactionOut>('GET', `/transactions/${enc(id)}`),
   patchTransaction: (id: string, patch: TransactionPatch) =>
     request<TransactionOut>('PATCH', `/transactions/${enc(id)}`, { body: patch }),
   approveTransaction: (id: string, body: ApproveBody) =>
@@ -1299,8 +1281,6 @@ export const api = {
 
   // Settlement
   getSettlement: (periodKey: string) => request<SettlementOut>('GET', `/settlement/${enc(periodKey)}`),
-  markSettled: (periodKey: string) =>
-    request<MarkSettledResponse>('POST', `/settlement/${enc(periodKey)}/mark-settled`),
   /** 201. 409 for a payment or adjustment in a closed period; a checkpoint is allowed there and replaces the month's one. Recording a payment settles the month's claims. 422 for more than two decimals. */
   createSettlementEntry: (body: SettlementEntryCreate) =>
     request<SettlementEntry>('POST', '/settlement/entries', { body }),

@@ -41,14 +41,6 @@ export function applyTheme(theme: Theme): void {
   });
 }
 
-export function resolveTheme(theme: Theme): 'light' | 'dark' {
-  if (theme !== 'system') return theme;
-  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  }
-  return 'light';
-}
-
 export function nextTheme(theme: Theme): Theme {
   if (theme === 'system') return 'light';
   if (theme === 'light') return 'dark';

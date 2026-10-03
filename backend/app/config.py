@@ -48,7 +48,9 @@ CLAIM_TYPES: tuple[str, ...] = (
 AccountType = Literal["checking", "savings", "credit", "credit_supplementary", "investment_cash"]
 ACCOUNT_TYPES: tuple[str, ...] = ("checking", "savings", "credit", "credit_supplementary", "investment_cash")
 
-ReviewStatus = Literal["pending_review", "auto_approved", "manual_approved"]
+REVIEW_STATUSES: tuple[str, ...] = ("pending_review", "auto_approved", "manual_approved")
+APPROVED_STATUSES: tuple[str, ...] = ("auto_approved", "manual_approved")
+"""The statuses whose lines count: in the settlement, the metrics, the Auditor and as merchant history."""
 TransferState = Literal["unmatched", "matched", "ignored"]
 
 DEFAULT_TRANSFER_PATTERNS: list[str] = [
@@ -449,9 +451,6 @@ class AppConfig(BaseModel):
     def investment_account_ids(self) -> list[str]:
         return [a.id for a in self.accounts if a.account_type == "investment_cash"]
 
-    def active_accounts(self) -> list[AccountConfig]:
-        return [a for a in self.accounts if a.is_active]
-
     def with_accounts(self, accounts: list[AccountConfig]) -> AppConfig:
         """A copy of this configuration whose accounts are ``accounts``.
 
@@ -613,10 +612,6 @@ class Settings(BaseSettings):
     """Set to false to turn the scheduled (nightly) dumps off; manual and pre-update dumps still work."""
     backup_interval_hours: float = 24.0
     """A scheduled dump is taken when the newest nightly one is at least this old."""
-
-    @property
-    def sqlalchemy_url(self) -> str:
-        return normalise_database_url(self.database_url)
 
 
 def normalise_database_url(url: str) -> str:

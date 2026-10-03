@@ -20,11 +20,9 @@ from datetime import date
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import UNCATEGORIZED, AppConfig
+from app.config import APPROVED_STATUSES, UNCATEGORIZED, AppConfig
 from app.models import MerchantMemory, Transaction
 from app.schemas import CategoryCount, CategorySuggestionsOut
-
-APPROVED_STATUSES: tuple[str, ...] = ("auto_approved", "manual_approved")
 
 
 def _year_before(day: date) -> date:

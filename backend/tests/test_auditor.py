@@ -1,7 +1,7 @@
 """Tests for Agent 3 - the Auditor.
 
 DB tests use ``seeded_db`` with rows inserted through ``tests.factories``. The
-statistical step is exercised with Fixture 3 from the blueprint (Northwind Energy at
+statistical step is exercised with the recurring-bill fixture (Northwind Energy at
 £68.20 for three months, then £87.27) and the narrative step with the offline
 ``FakeLLMClient`` / ``NullLLMClient``.
 """

@@ -13,7 +13,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from app.services.parsers.amounts import AmountParts, extract_foreign_spend, parse_amount_parts, quantize
+from app.services.parsers.amounts import extract_foreign_spend, parse_amount_parts, quantize
 from app.services.parsers.base import ParsedTransaction
 from app.services.parsers.dates import DateContext
 
@@ -298,7 +298,3 @@ def parse_rows(
             if result.note and result.note != "header":
                 notes.append(result.note)
     return transactions, last_balance, notes
-
-
-def signed_from_parts(parts: AmountParts, plain_is_debit: bool) -> Decimal:
-    return parts.apply(plain_is_debit=plain_is_debit)

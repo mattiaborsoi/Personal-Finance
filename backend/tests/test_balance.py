@@ -286,9 +286,6 @@ def test_api_payment_marks_claims_settled(client, primary_headers, seeded_db, co
                  paid_by=PRIMARY).status_code == 201
     seeded_db.refresh(claim)
     assert claim.is_settled is True
-    assert client.post("/api/settlement/2026-08/mark-settled", headers=primary_headers).json() == {
-        "settled_claims": 0
-    }
 
 
 def test_api_validation(client, primary_headers, seeded_db):

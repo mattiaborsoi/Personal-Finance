@@ -2,7 +2,7 @@
 
 Used only when the deterministic parsers found no transactions. Each page's text
 (split into chunks of at most ~6000 characters) is sent to ``llm.complete_json``
-with a strict system prompt asking for exactly the blueprint JSON schema; the
+with a strict system prompt asking for exactly the :class:`ParsedStatement` JSON schema; the
 responses are validated, coerced (ISO dates, ``Decimal`` amounts, negative = money
 out) and merged.
 """

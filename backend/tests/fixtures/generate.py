@@ -1,4 +1,4 @@
-"""Build synthetic statement files at runtime (blueprint section 7).
+"""Build synthetic statement files at runtime.
 
 The generated PDFs/CSVs/XLSX are written into a caller-supplied directory (tests use
 ``tmp_path``); ``*.pdf``, ``*.csv`` and ``*.xlsx`` are git-ignored so nothing is ever

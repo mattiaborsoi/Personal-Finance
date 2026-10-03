@@ -60,7 +60,6 @@ _CELL_RE = re.compile(
 # numbers inside descriptions are not mistaken for money).
 _TRAILING_TOKEN = rf"{_MINUS}?\(?[£$€]?{_MINUS}?\d[\d,]*\.\d{{2}}\)?{_MINUS}?(?:\s*(?:CR|DR)(?![A-Za-z]))?"
 TRAILING_AMOUNT_RE = re.compile(rf"(?:^|(?<=\s))(?P<token>{_TRAILING_TOKEN})\s*$", re.IGNORECASE)
-AMOUNT_TOKEN_RE = re.compile(rf"(?:^|(?<=\s))(?P<token>{_TRAILING_TOKEN})(?=\s|$)", re.IGNORECASE)
 
 _FX_NUMBER = r"\d[\d,]*(?:\.\d{1,2})?"
 # Virgin Money writes the merchant's country (ISO 3166 alpha-3) after the rate, not

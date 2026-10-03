@@ -116,19 +116,14 @@ Everything else (updating, backups, running without an LLM, what goes where) is 
 
 Five containers on one box: the web front, the app, a database that doubles as the
 merchant memory, a small proxy to whichever AI provider you choose (or none, if you
-already run one), and an updater that pulls new versions. How they fit together, the
-settlement maths and the security model are in [docs/TECHNICAL.md](docs/TECHNICAL.md).
-
-**Private by design.** Settl runs on your machine and your statement files never leave
-it. The only things that ever go out: short merchant lines for the AI to categorise
-(if you use a hosted model), the page text of a PDF only when the built-in parsers
-cannot read it, and one request to GitHub to check for updates. Each of those can be
-switched off in Settings or `.env`.
+already run one), and an updater that pulls new versions. Besides what the AI is
+sent (above), the only other request that leaves the box is the update check
+against GitHub, and `UPDATE_CHECK=false` switches it off.
 
 * [docs/TECHNICAL.md](docs/TECHNICAL.md): architecture, deployment, the maths,
-  configuration, schema and development setup.
+  configuration, schema, security model and development setup.
 * [docs/API.md](docs/API.md): the REST contract.
-* [docs/BLUEPRINT.md](docs/BLUEPRINT.md): the original specification.
+* [frontend/DESIGN.md](frontend/DESIGN.md): the design system.
 
 ## Contributing
 

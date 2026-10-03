@@ -2,8 +2,7 @@
 
 Everything under the bonnet of Settl, for people running, extending or auditing it.
 The [README](../README.md) explains what the product does; [`API.md`](API.md) is the
-REST contract; [`BLUEPRINT.md`](BLUEPRINT.md) is the original specification that the
-"Design decisions" section at the end deviates from.
+REST contract; [`frontend/DESIGN.md`](../frontend/DESIGN.md) is the design system.
 
 Sign convention everywhere: **negative = money out, positive = money in**. Money is
 `Decimal`, quantised to two places with `ROUND_HALF_UP`.
@@ -30,15 +29,16 @@ Sign convention everywhere: **negative = money out, positive = money in**. Money
                  └──────────────────┘  └──────────────────┘  └──────────────────┘
 ```
 
-Five containers, defined in `docker-compose.yml`:
+Five containers and one one-shot service, defined in `docker-compose.yml`:
 
-| container  | image / build                         | role                                                                                    |
-|------------|---------------------------------------|-----------------------------------------------------------------------------------------|
-| `db`       | `pgvector/pgvector:pg16`              | PostgreSQL 16 with the `vector` extension; data in the `pgdata` volume                   |
-| `litellm`  | `ghcr.io/berriai/litellm`             | Local proxy; maps the logical names in `litellm/config.yaml` to providers and holds the provider keys. Optional: Compose profile `bundled-litellm`, on by default (see "Using your own LiteLLM") |
-| `backend`  | `backend/Dockerfile`                  | FastAPI app; mounts `config.yaml` read-only and `./uploads`; runs `schema.sql` at start  |
-| `frontend` | `frontend/Dockerfile`                 | Vite build served by nginx; the only port published beyond loopback                     |
-| `updater`  | `updater/Dockerfile`                  | Optional self-update sidecar (Settings → System → Update now): `git` plus the Docker CLI, with the host's Docker socket mounted; publishes no port (see "Updating") |
+| service       | image / build                         | role                                                                                    |
+|---------------|---------------------------------------|-----------------------------------------------------------------------------------------|
+| `db`          | `pgvector/pgvector:pg16`              | PostgreSQL 16 with the `vector` extension; data in the `pgdata` volume                   |
+| `litellm`     | `ghcr.io/berriai/litellm`             | Local proxy; maps the logical names in `litellm/config.yaml` to providers and holds the provider keys. Optional: Compose profile `bundled-litellm`, on by default (see "Using your own LiteLLM") |
+| `backend`     | `backend/Dockerfile`                  | FastAPI app; mounts `config.yaml` read-only and `./uploads`; runs `schema.sql` at start  |
+| `frontend`    | `frontend/Dockerfile`                 | The Vite build (`node:22-alpine`) served by `nginx:1.27-alpine` on port 80, the only port published beyond loopback: `/api/` is proxied to the backend, `/assets/` serves the hashed bundle cached for a year, every other path falls back to `index.html`, and `nginx-security-headers.conf` is included in every location (section 10) |
+| `updater`     | `updater/Dockerfile`                  | Optional self-update sidecar (Settings → System → Update now): `git` plus the Docker CLI, with the host's Docker socket mounted; publishes no port (see "Updating") |
+| `maintenance` | `updater/Dockerfile`                  | Runs once per rebuild to prune the images the previous build left behind, then exits (see "Updating") |
 
 The backend never sees provider API keys: it talks to a LiteLLM proxy (Settl's own,
 with `LITELLM_MASTER_KEY`, or one you already run, with the key saved in the app or
@@ -161,22 +161,12 @@ is saved there); switch to `equal_50_50` if you prefer a straight split.
 
 Compose refuses to start until `DB_PASSWORD`, `SECRET_KEY`, `PRIMARY_PASSWORD` and
 `SECONDARY_PASSWORD` are set, and the backend also refuses the placeholder values of
-the last three (the guard is in `app/auth.py`); replace the placeholder
-`DB_PASSWORD` too. The remaining rows configure the AI proxy; none of them stops
-Settl from starting:
-
-| variable                                 | rule                                                                                     |
-|------------------------------------------|------------------------------------------------------------------------------------------|
-| `DB_PASSWORD`                            | any password; it is baked into the database volume on first run (changing it later is a separate step, below) |
-| `SECRET_KEY`                             | at least 32 random characters (`openssl rand -hex 32`); rotating it logs everyone out    |
-| `PRIMARY_PASSWORD`, `SECONDARY_PASSWORD` | at least 8 characters each, not a placeholder, and different from each other             |
-| `COMPOSE_PROFILES`                       | `bundled-litellm` starts Settl's own LiteLLM proxy; leave it empty when you run your own (see "Using your own LiteLLM") |
-| `LITELLM_MASTER_KEY`                     | any long random string; it guards Settl's own LiteLLM                                    |
-| `LITELLM_URL` / `LITELLM_API_KEY`        | only when you run your own LiteLLM: its address and key, which then become the default under Settings → AI → Proxy |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`   | provider keys, read only by the LiteLLM container; leave them empty when running without an LLM |
-
-`LLM_PROVIDER`, `EMBEDDING_PROVIDER` and `KEEP_UPLOADED_FILES` are covered below and
-in section 11.
+the last three (the guard is in `app/auth.py`): `SECRET_KEY` needs at least 32 random
+characters (`openssl rand -hex 32`; rotating it logs everyone out), the two passwords
+at least 8 characters each and different from each other. Replace the placeholder
+`DB_PASSWORD` too: it is baked into the database volume on first run (changing it
+later is a separate step, below). Every variable, including the AI ones, is in the
+table in section 11; none of the others stops Settl from starting.
 
 ### First start and first login
 
@@ -254,10 +244,11 @@ From inside the containers a proxy on the same machine is `http://host.docker.in
 
 ### Updating
 
-From the app: **Settings → System** shows the commit that is running, the latest one
-on GitHub and, when they differ, every commit in between (the changelog of the
-updates you skipped, up to the last 30), and **Update now** pulls the branch and
-rebuilds the app containers.
+From the app: **Settings → System** shows the commit that is running (as a version
+named after its date, `YYYY.MM.DD`, linked to GitHub), the latest one on GitHub and,
+when they differ, every commit in between (the changelog of the updates you skipped,
+up to the last 30), and **Update now** pulls the branch and rebuilds the app
+containers.
 That button is served by the optional `updater` sidecar in `docker-compose.yml`, a
 small container holding `git`, the Docker CLI and the Compose plugin, with the
 host's Docker socket and the repository directory mounted (at the same path as on
@@ -424,12 +415,10 @@ under `./uploads`.
 
 ### Keep it private
 
-Settl speaks plain HTTP and is meant for your LAN. Only the web port (80) is
-reachable from other machines; the database, the LLM proxy and the API are bound to
-the host's loopback address. Do not expose the host to the internet. If you want to
-reach it from outside, put it behind a VPN or a reverse proxy that terminates TLS, and
-bind port 80 to a specific interface in `docker-compose.yml` if the host has a public
-one. The full security model is in section 10.
+Settl speaks plain HTTP and is meant for your LAN (section 10 has the security
+model). Do not expose the host to the internet: reach it from outside through a VPN
+or a reverse proxy that terminates TLS, and bind port 80 to a specific interface in
+`docker-compose.yml` if the host has a public one.
 
 ## 3. Ingestion pipeline
 
@@ -525,8 +514,8 @@ The **LLM layout extractor** (`llm_extractor.py`) is a fallback only:
   when an LLM is configured (never for spreadsheets, never raw bytes);
 * page text is chunked at ~6 000 characters; a document needing more than **20 LLM
   calls** is refused up front; **60 pages** is the hard document limit;
-* the model must return the blueprint JSON schema; every field is validated and
-  coerced (ISO dates, `Decimal` amounts, negative = money out), malformed items are
+* the model must return the parsers' own JSON schema (`ParsedStatement`); every field
+  is validated and coerced (ISO dates, `Decimal` amounts, negative = money out), malformed items are
   dropped with a warning.
 
 ### Agent 2: the Guesser (`app/services/guesser.py`)
@@ -663,7 +652,7 @@ the line is a transfer, `Uncategorized` or split.
 
 ## 4. Cross-ledger reconciliation and the transfer buffer
 
-`app/services/transfers.py` implements the blueprint's timing buffer:
+`app/services/transfers.py` implements the timing buffer:
 
 1. A transaction matching a payment pattern, or a rule with `is_internal_transfer`, is
    flagged `is_internal_transfer` and inserted into `transfer_buffer` as `unmatched`.
@@ -750,11 +739,11 @@ never enter `net_owed_by_secondary` and are reported, signed, as
 `settlement_payments_received` (see the payments rule below). The API also reports
 `pending_review_count` so the UI can warn that the figure may still move.
 
-**The running balance (`app/services/balance.py`).** Under the old spreadsheet the
-partner did not pay each month's net to the penny: they paid part of a big month and
-carried the rest, and what was agreed in the past does not match the ledger. So the
-month's net is only one input to a balance carried from month to month, all in
-"secondary owes primary" terms (negative = the primary owes):
+**The running balance (`app/services/balance.py`).** Nobody pays each month's net to
+the penny: part of a big month is paid and the rest carried, and a balance agreed in
+the past need not match the ledger. So the month's net is only one input to a balance
+carried from month to month, all in "secondary owes primary" terms (negative = the
+primary owes):
 
 ```
 carried_in(P)  = balance_out(previous calendar month)       (0 before the first month with data)
@@ -958,8 +947,8 @@ Reports are appended to `audit_reports`; closing a period runs one automatically
   detector, large-file and YAML checks and a guard that refuses to commit personal
   files. CI (`.github/workflows/ci.yml`) runs `ruff` and the backend suite against a
   pgvector service, `ruff` (with the backend's configuration) and a compile check on
-  `updater/updater.py`, the frontend lint / type-check / tests / build, and a
-  full-history gitleaks scan on every push.
+  `updater/*.py`, the frontend lint / type-check / tests / build, and a full-history
+  gitleaks scan on every push.
 
 ## 11. Configuration
 
@@ -1036,21 +1025,25 @@ Enums: `account_type_enum`, `claim_type_enum`, `review_status_enum`
 The file is re-run on every start; new columns are added with
 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, so there is no separate migration tool.
 
-## 13. Design decisions (deviations from the blueprint)
+## 13. Design decisions
+
+Settl was built from a written specification (`docs/BLUEPRINT.md` in the git history
+until October 2026). These are the places where what runs deliberately differs from
+it or goes beyond it, and why.
 
 * **`primary_personal` claim type** was added to the enum so that "primary personal
   items paid on secondary cards/claims" from the settlement formula can be recorded.
 * **Allocation rounding:** the primary share is rounded (half-up) and the secondary
   share is the exact remainder, so allocations always sum to the amount and no penny is
-  lost. The blueprint rounds both sides independently.
+  lost (the specification rounded both sides independently).
 * **Periods are calendar months** keyed by each transaction's own date, so a card
   statement closing on the 28th spills its late-July lines into July. The span of
   months a file touched is kept on the upload record for provenance (`period_from` /
   `period_to`; `period_key` still names the newest). This keeps the Auditor's rolling
   windows and the settlement month intuitive for both users.
 * **Closed periods are locked:** edits, approvals, splits and deletions in a closed
-  period return 409 (reopen first); the transfer buffer keeps matching across closes
-  as the blueprint requires. The settlement figure at close is stored in
+  period return 409 (reopen first); the transfer buffer keeps matching across closes.
+  The settlement figure at close is stored in
   `settlement_snapshots` (the persisted settlement ledger) and shown next to the live
   figure.
 * **Expense views exclude income:** Macro and Micro leave out `Income:*` categories as
@@ -1213,19 +1206,24 @@ stub or inject build-time settings for local verification.
 │   ├── Dockerfile, .dockerignore, nginx.conf, nginx-security-headers.conf
 │   ├── package.json, package-lock.json, vite.config.ts, tsconfig.json, eslint.config.js,
 │   │   tailwind.config.js, postcss.config.js, index.html
-│   ├── README.md               # scripts, production image, source layout
 │   ├── DESIGN.md               # the design system
-│   └── src/                    # main.tsx, App.tsx, api.ts, index.css; auth/, config/, test/
+│   └── src/                    # main.tsx, App.tsx (the routes), index.css (the colour tokens)
+│       ├── api.ts              # typed fetch wrapper for API.md: response types, the session (localStorage), 401 handling
+│       ├── auth/, config/      # auth and config contexts; config is fetched after login and again through
+│       │                       # useReloadConfig() after a Settings save
 │       ├── pages/              # one per route: Dashboard, Review, Transactions, Upload, Transfers,
 │       │                       # Claims, Claim (the partner's phone form), Memory, Settings, Login
 │       ├── components/         # UI pieces, *.test.tsx alongside; the Settings tabs (AccountsPanel,
 │       │                       # HouseholdPanel, CategoriesPanel, RulesPanel, AiPanel, SystemPanel
 │       │                       # with DangerZone), UploadHistory, the form primitives Field, RadioOption
-│       ├── hooks/              # useAsync; reviewBadge (keeps the Review count in the navigation current)
-│       └── lib/                # ui, theme, money, dates, format, splits, views ...; household,
-│                               # categories, rules (Settings tab logic), review, reset, navNotice
-└── docs/                       # TECHNICAL.md (this file), API.md, BLUEPRINT.md,
-                                # images/ (the README screenshots)
+│       ├── hooks/              # useAsync (keyed loader that keeps data while a reload runs), reviewBadge
+│       │                       # (the Review count in the navigation), useSetupSteps, useInlineEdit,
+│       │                       # useUnsavedChanges, useFocusFirstProblem
+│       ├── lib/                # ui (the design-system class strings), theme, money, dates, format,
+│       │                       # settlement phrasing, splits, claims, transfers, views; household,
+│       │                       # categories, rules (Settings tab logic), review, reset, navNotice
+│       └── test/               # vitest setup, renderWithProviders / mockFetch, typed response fixtures
+└── docs/                       # TECHNICAL.md (this file), API.md, images/ (the README screenshots)
 ```
 
 ## 16. Frontend design system

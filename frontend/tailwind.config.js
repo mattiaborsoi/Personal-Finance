@@ -47,13 +47,9 @@ export default {
       borderRadius: {
         xl: '0.875rem',
         '2xl': '1.125rem',
-        '3xl': '1.5rem',
       },
       fontSize: {
         '2xs': ['0.6875rem', { lineHeight: '1rem', letterSpacing: '0.06em' }],
-      },
-      transitionTimingFunction: {
-        out: 'cubic-bezier(0.2, 0.7, 0.2, 1)',
       },
     },
   },

@@ -286,7 +286,8 @@ All money is a string with two decimals, in "secondary owes primary" terms unles
     "carried_in", "net", "payments_ledger", "payments_manual", "adjustments", "balance_out",
     "from_period",
     "checkpoint": null | { "id", "amount", "entry_date", "note", "net_at_checkpoint", "drift", "drifted" },
-    "before_checkpoint"
+    "before_checkpoint", "later_checkpoint_period",
+    "anchored_on": null | { "period_key", "entry_date", "amount" }
   },
   "entries": [ {id, period_key, kind, entry_date, amount, paid_by, note, net_at_checkpoint, created_by, created_at} ],
   "ledger_payments": [ {transaction_id, date, amount, account_id, description, effect} ]
@@ -304,21 +305,20 @@ All money is a string with two decimals, in "secondary owes primary" terms unles
 * `payments_manual` is the month's `payment` entries: `+amount` when paid by the secondary, `-amount` when paid by the primary. `adjustments` is the signed sum of the `adjustment` entries.
 * When the month holds a checkpoint (an agreed balance), `balance_out` is its `amount` and `carried_in` is `0`: nothing earlier is looked at, and payments, adjustments and approvals in that month no longer move it. `checkpoint.drift` is the month's `net` now minus `net_at_checkpoint` (the net when the balance was set); `drifted` is `drift != 0`, so the UI can say "£x approved since the balance was set".
 * `from_period` is where the walk started: the nearest checkpoint month at or before this one, or the first month with data.
-* `before_checkpoint` is `true` when a later month holds a checkpoint: this month is history and its balance is not carried forward.
+* `before_checkpoint` is `true` when a later month holds a checkpoint: this month is history and its balance is not carried forward; `later_checkpoint_period` names the first such month (`null` otherwise).
+* `anchored_on` is the checkpoint in an earlier month that the walk started from (its month, date and amount), `null` when it started from the first month with data or this month holds the checkpoint itself.
 
 `entries` are the month's settlement entries (all kinds), oldest `entry_date` first.
 
 `POST /api/settlement/entries` (primary) body `{ kind, entry_date, amount, paid_by?, note? }` → **201** entry (the `entries` item shape). `period_key` is the month of `entry_date` (the period row is created if missing).
 
-* `kind: "payment"`: money changing hands outside the ledger. `paid_by` must be one of the two configured user ids and `amount` > 0 (the sum paid). Also marks the month's partner claims settled, as `mark-settled` does.
+* `kind: "payment"`: money changing hands outside the ledger. `paid_by` must be one of the two configured user ids and `amount` > 0 (the sum paid). Also marks the month's partner claims settled.
 * `kind: "adjustment"`: `amount` is the signed change to what the secondary owes; it must not be 0.
 * `kind: "checkpoint"`: `amount` is the agreed `balance_out` for the month (0 and negative allowed). A month has at most one: posting another replaces its date, amount and note. `net_at_checkpoint` is set to the month's current net.
 
 `amount` has at most two decimals; `paid_by` on anything but a payment is **422**; `note` is trimmed, at most 500 characters. **422** on any of these, an unknown `kind` or a bad date. **409** `period 2026-08 is closed; reopen it first` for a payment or adjustment dated in a closed period; a checkpoint may be set on a closed period (it does not change the snapshot already recorded). **403** for a secondary session.
 
 `DELETE /api/settlement/entries/{id}` (primary) → **204**. **404** for an unknown id; **409** for a payment or adjustment in a closed period (a checkpoint may be removed). When the entry was the only thing filed under its month and the period is open, the empty period is removed with it.
-
-`POST /api/settlement/{period_key}/mark-settled` (primary) → `{ settled_claims }` marks the period's claims `is_settled`. It records no money; use a `payment` entry or an approved `Transfers:Settlement` line for that.
 
 ## Metrics
 

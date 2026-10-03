@@ -20,7 +20,7 @@ Continuation lines (no leading date) are appended to the previous transaction's
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -272,7 +272,6 @@ class _Entry:
     credit_hint: bool = False
     card_last4: str | None = None
     foreign: ForeignSpend | None = None
-    words_left: list[str] = field(default_factory=list)
 
 
 class PdfTextParser:

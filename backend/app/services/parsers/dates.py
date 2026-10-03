@@ -47,7 +47,6 @@ DATE_PATTERN = (
     r"|\d{1,2}[/.]\d{1,2}(?![\d/.])"  # 31/07
     r")"
 )
-DATE_RE = re.compile(DATE_PATTERN, re.IGNORECASE)
 LEADING_DATE_RE = re.compile(rf"^\s*(?P<date>{DATE_PATTERN})(?=\s|$)", re.IGNORECASE)
 
 _ISO_RE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T].*)?$")

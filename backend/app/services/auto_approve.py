@@ -47,7 +47,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import UNCATEGORIZED, AppConfig
+from app.config import APPROVED_STATUSES, UNCATEGORIZED, AppConfig
 from app.models import LedgerPeriod, Transaction
 
 REASONS: tuple[str, ...] = (
@@ -62,7 +62,6 @@ REASONS: tuple[str, ...] = (
     "split",
     "closed_period",
 )
-APPROVED_STATUSES = ("manual_approved", "auto_approved")
 MIN_HISTORY = 2
 LOW_FACTOR = Decimal("0.5")
 HIGH_FACTOR = Decimal("1.5")

@@ -173,11 +173,6 @@ export function amountProblem(raw: string): string | null {
   return null;
 }
 
-/** A month with an agreed balance: the balance replaces the sum, so carried in, payments and adjustments do not move it. */
-export function isCheckpointMonth(balance: Pick<SettlementBalance, 'checkpoint'>): boolean {
-  return balance.checkpoint !== null;
-}
-
 /**
  * The one line of working under the headline:
  * "Carried in £120.00 owed by Sam · this month £45.90 owed by Sam · Sam paid £100.00",

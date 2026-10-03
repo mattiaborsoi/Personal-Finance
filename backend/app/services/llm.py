@@ -70,19 +70,6 @@ def unreachable_reason(exc: httpx.TransportError, timeout: float | None) -> str:
     return "network error"
 
 
-@dataclass
-class LLMUsage:
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    calls: int = 0
-
-    def add(self, usage: dict[str, Any] | None) -> None:
-        self.calls += 1
-        if usage:
-            self.prompt_tokens += int(usage.get("prompt_tokens") or 0)
-            self.completion_tokens += int(usage.get("completion_tokens") or 0)
-
-
 class LLMClient(Protocol):
     """Minimal contract used by the Guesser and Auditor agents."""
 
@@ -138,7 +125,6 @@ class LiteLLMClient:
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
-        self.usage = LLMUsage()
         self._client = client
 
     @property
@@ -183,7 +169,6 @@ class LiteLLMClient:
             raise LLMError(f"LiteLLM returned a non-JSON body: {resp.text[:300]}") from exc
         if not isinstance(data, dict):
             raise LLMError(f"unexpected LiteLLM response shape: {str(data)[:300]}")
-        self.usage.add(data.get("usage"))
         try:
             content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:

@@ -8,7 +8,7 @@ from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth import require_primary
-from app.config import CLAIM_TYPES, UNCATEGORIZED, AppConfig
+from app.config import CLAIM_TYPES, REVIEW_STATUSES, UNCATEGORIZED, AppConfig
 from app.database import get_db
 from app.deps import get_effective_config
 from app.models import LedgerPeriod, Transaction, TransferBuffer
@@ -32,7 +32,6 @@ from app.services.providers import get_embedder
 
 router = APIRouter(prefix="/transactions", tags=["transactions"], dependencies=[Depends(require_primary)])
 
-REVIEW_STATUSES = ("pending_review", "auto_approved", "manual_approved")
 NOTE_MAX_LENGTH = 500
 
 

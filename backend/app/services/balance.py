@@ -33,7 +33,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import AppConfig
+from app.config import APPROVED_STATUSES, AppConfig
 from app.models import PartnerClaim, SettlementEntry, Transaction
 from app.schemas import (
     LedgerPaymentLine,
@@ -79,7 +79,7 @@ def _settlement_lines(db: Session, period_key: str) -> list[Transaction]:
         select(Transaction)
         .where(
             Transaction.period_key == period_key,
-            Transaction.review_status.in_(settlement.APPROVED_STATUSES),
+            Transaction.review_status.in_(APPROVED_STATUSES),
             Transaction.is_split.is_not(True),
             Transaction.category == settlement.SETTLEMENT_CATEGORY,
         )

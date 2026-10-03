@@ -197,7 +197,7 @@ def test_upload_amex_statement_end_to_end(client, primary_headers, llm_stub, fix
     assert payment["category"].startswith("Transfers:")
     assert Decimal(payment["amount"]) == Decimal("3384.21")
 
-    # Blueprint fixture 1: every line lands with the expected category and claim type
+    # Fixture 1: every line lands with the expected category and claim type
     # (the LLM stub is the oracle; this proves the pipeline preserves its answer).
     everything = aug + jul
     expected = {
@@ -636,9 +636,10 @@ def test_claims_and_settlement(client, primary_headers, secondary_headers, llm_s
     claims = client.get("/api/claims", headers=primary_headers, params={"period": "2026-08"}).json()
     assert len(claims) == 2
 
-    settled = client.post("/api/settlement/2026-08/mark-settled", headers=primary_headers).json()
-    assert settled["settled_claims"] == 2
-    assert client.post("/api/settlement/2026-08/mark-settled", headers=secondary_headers).status_code == 403
+    # Recording a payment settles the month's claims.
+    payment = {"kind": "payment", "entry_date": "2026-08-20", "amount": "50.00", "paid_by": "user_secondary"}
+    assert client.post("/api/settlement/entries", headers=primary_headers, json=payment).status_code == 201
+    assert client.get("/api/settlement/2026-08", headers=primary_headers).json()["unsettled_claim_count"] == 0
 
     # Secondary may not delete a settled claim, primary may.
     assert client.delete(f"/api/claims/{claim['id']}", headers=secondary_headers).status_code == 403
