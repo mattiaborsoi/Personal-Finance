@@ -125,6 +125,7 @@ export function ApprovalRow({
               <p className="mt-1 text-xs text-ink-3">
                 <span className={chipSoft}>{accountLabel(config.accounts, tx.account_id)}</span>
               </p>
+              <UnusualBadge unusual={tx.unusual} />
             </div>
           </div>
         </td>
@@ -156,10 +157,7 @@ export function ApprovalRow({
           <TransferToggle transaction={tx} merchant={merchant} disabled={locked} title={closedTitle} onChange={onTransferChange} />
         </td>
         <td className="px-2 py-3 align-middle">
-          <div className="flex flex-col items-start gap-1">
-            <SourceBadge source={tx.classification_source} confidence={tx.classification_confidence} />
-            <UnusualBadge unusual={tx.unusual} />
-          </div>
+          <SourceBadge source={tx.classification_source} confidence={tx.classification_confidence} />
         </td>
         <td className="whitespace-nowrap px-2 py-3 text-right align-middle">
           <span className="inline-flex items-center justify-end gap-1">

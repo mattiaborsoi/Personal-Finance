@@ -148,6 +148,7 @@ export function TransactionRow({
                 <span aria-hidden="true">·</span>
                 <span className={cx(chipSoft, 'min-w-0')}>{accountLabel(config.accounts, tx.account_id)}</span>
               </p>
+              <UnusualBadge unusual={tx.unusual} />
               {hasRawLine && (
                 <p
                   className={cx('mt-0.5 w-0 min-w-full max-w-[22rem] font-mono text-xs text-ink-3', showRaw ? 'break-all' : 'truncate')}
@@ -166,7 +167,6 @@ export function TransactionRow({
               {reviewStatusLabel(tx.review_status)}
             </Badge>
             <SourceBadge source={tx.classification_source} confidence={tx.classification_confidence} />
-            <UnusualBadge unusual={tx.unusual} />
             {tx.is_internal_transfer && <Badge tone="neutral">Transfer</Badge>}
             {readOnly && (
               <Badge tone="neutral" title="This period is closed; reopen it to make changes">
