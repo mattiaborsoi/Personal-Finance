@@ -14,6 +14,9 @@ from app.deps import get_effective_config
 from app.models import LedgerPeriod, Transaction, TransferBuffer
 from app.schemas import (
     ApproveRequest,
+    AutoApproveItem,
+    AutoApproveOut,
+    AutoApproveRequest,
     BatchApproveOut,
     BatchApproveRequest,
     SplitRequest,
@@ -21,7 +24,7 @@ from app.schemas import (
     TransactionOut,
     TransactionUpdate,
 )
-from app.services import ingestion, memory, rules, settlement, splits, transfers
+from app.services import auto_approve, ingestion, memory, rules, settlement, splits, transfers
 from app.services.embeddings import EmbeddingClient
 from app.services.guesser import INTERNAL_TRANSFER_CATEGORY
 from app.services.periods import PERIOD_KEY_RE
@@ -125,7 +128,7 @@ def _flag_as_transfer(db: Session, txn: Transaction, config: AppConfig) -> None:
     entry = transfers.register_transfer(db, txn)
     if txn.claim_type != "personal":
         txn.claim_type = "personal"
-    rule = rules.match_rule(txn.raw_description, config)
+    rule = rules.match_rule(txn.raw_description, config, txn.amount)
     if rule is not None and rule.transfer_to_account:
         ingestion.create_mirror(db, config, txn, rule.transfer_to_account, txn.source_file or "", entry)
     transfers.match_pending(db, config)
@@ -343,6 +346,39 @@ def approve_batch(
     for txn in rows:
         db.refresh(txn)
     return BatchApproveOut(approved=len(rows), items=[TransactionOut.model_validate(r) for r in rows])
+
+
+@router.post("/auto-approve", response_model=AutoApproveOut)
+def auto_approve_known(
+    body: AutoApproveRequest,
+    db: Session = Depends(get_db),
+    config: AppConfig = Depends(get_effective_config),
+) -> AutoApproveOut:
+    """Approve pending lines from merchants always filed one way (see :mod:`app.services.auto_approve`).
+
+    ``period`` limits the run to one month; ``null`` takes every month with lines
+    waiting. ``dry_run`` decides without writing anything. Either way the answer lists
+    the lines approved (or that would be) and counts why the others stay pending.
+    """
+    lines = auto_approve.pending_lines(db, body.period)
+    outcome = auto_approve.run(db, config, lines, dry_run=body.dry_run)
+    if not body.dry_run:
+        db.commit()
+    return AutoApproveOut(
+        approved=len(outcome.approved),
+        considered=outcome.considered,
+        skipped=dict(outcome.skipped),
+        items=[
+            AutoApproveItem(
+                id=txn.id,
+                cleaned_merchant=txn.cleaned_merchant,
+                amount=txn.amount,
+                category=decision.category or txn.category,
+                claim_type=decision.claim_type or txn.claim_type,
+            )
+            for txn, decision in outcome.approved
+        ],
+    )
 
 
 @router.post("/{txn_id}/approve", response_model=TransactionOut)

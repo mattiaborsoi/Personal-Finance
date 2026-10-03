@@ -12,7 +12,13 @@ from app.models import LedgerPeriod, Transaction
 from app.schemas import PeriodOut
 from app.services import auditor, settlement_snapshots
 from app.services.llm import LLMClient
-from app.services.periods import PERIOD_KEY_RE, close_period, get_or_create_period, reopen_period
+from app.services.periods import (
+    PERIOD_KEY_RE,
+    close_period,
+    get_or_create_period,
+    listed_periods,
+    reopen_period,
+)
 from app.services.providers import get_audit_llm
 
 router = APIRouter(prefix="/periods", tags=["periods"], dependencies=[Depends(require_primary)])
@@ -52,9 +58,10 @@ def _to_out(period: LedgerPeriod, counts: dict[str, tuple[int, int]]) -> PeriodO
 
 @router.get("", response_model=list[PeriodOut])
 def list_periods(db: Session = Depends(get_db)) -> list[PeriodOut]:
+    """Newest first. Open months with nothing in them are left out, except the current one;
+    closed months always stay (see :func:`app.services.periods.listed_periods`)."""
     counts = _counts(db)
-    periods = db.scalars(select(LedgerPeriod).order_by(LedgerPeriod.period_key.desc())).all()
-    return [_to_out(p, counts) for p in periods]
+    return [_to_out(p, counts) for p in listed_periods(db)]
 
 
 @router.post("/{period_key}/close", response_model=PeriodOut)

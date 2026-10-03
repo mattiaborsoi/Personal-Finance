@@ -113,7 +113,7 @@ def delete_upload(upload_id: uuid.UUID, db: Session = Depends(get_db)) -> Respon
 
     Its lines, their split parts and mirror legs go with their transfer-buffer rows;
     a counterpart matched to one of them is unlinked and waits in the buffer again.
-    Periods stay. **409** when any of those lines sits in a closed period, or for an
+    Open periods left with nothing in them go too. **409** when any of those lines sits in a closed period, or for an
     upload recorded before lines were linked whose filename another such upload
     shares (``deletable: false`` in the listing).
     """

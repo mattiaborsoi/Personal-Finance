@@ -131,8 +131,9 @@ def classify(
 ) -> Classification:
     """Classify one raw statement line for ``account``.
 
-    ``amount`` (optional, ledger sign: negative = money out) is only shown to the
-    model as context. After rules and payment patterns the merchant key is tried
+    ``amount`` (optional, ledger sign: negative = money out) lets a rule with an
+    amount range match (its absolute value is compared) and is shown to the model
+    as context. After rules and payment patterns the merchant key is tried
     (:func:`memory.lookup_by_key`); failing that, vector memory is queried once
     with ``threshold=0`` and ``k=llm.top_k``: if the best hit reaches
     ``llm.similarity_threshold`` it is used directly, otherwise the hits become the
@@ -155,11 +156,30 @@ def classify(
     raw = raw_description or ""
     if state is None:
         return _classify(db, config, embedder, llm, raw, account, amount, None)
+    # Rules first and never memoised: a rule with an amount range can file one line
+    # of a description and leave the next (another amount) to memory or the AI.
+    match = rules.match_rule(raw, config, amount)
+    if match is not None:
+        return _from_rule(match)
     key: MemoKey = (memory.memory_key(raw), account.id)
     cached = state.recall(key)
     if cached is not None:
         return cached
     return _classify(db, config, embedder, llm, raw, account, amount, (state, key))
+
+
+def _from_rule(match: rules.RuleMatch) -> Classification:
+    return Classification(
+        cleaned_merchant=match.merchant,
+        category=match.category,
+        claim_type=match.claim_type,
+        source="rule",
+        confidence=1.0,
+        subcategory=match.subcategory,
+        is_internal_transfer=match.is_internal_transfer,
+        transfer_to_account=match.transfer_to_account,
+        review_status="auto_approved",
+    )
 
 
 def _classify(
@@ -178,21 +198,9 @@ def _classify(
         state, key = memo
         return state.remember(key, cls, outage=outage)
 
-    match = rules.match_rule(raw, config)
+    match = rules.match_rule(raw, config, amount)
     if match is not None:
-        return keep(
-            Classification(
-                cleaned_merchant=match.merchant,
-                category=match.category,
-                claim_type=match.claim_type,
-                source="rule",
-                confidence=1.0,
-                subcategory=match.subcategory,
-                is_internal_transfer=match.is_internal_transfer,
-                transfer_to_account=match.transfer_to_account,
-                review_status="auto_approved",
-            )
-        )
+        return keep(_from_rule(match))
 
     if config.transfers.is_payment(raw):
         return keep(

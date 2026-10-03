@@ -497,7 +497,8 @@ def test_memo_covers_rules_transfers_and_memory(db, config, embedder, fake_llm, 
     for raw in ("AQUANORTH WATER", "AMEX PAYMENT", "WAITROSE 4321 LONDON"):
         first = classify(db, config, embedder, fake_llm, raw, amex, state=state)
         assert classify(db, config, embedder, fake_llm, raw, amex, state=state) == first
-    assert [c.source for c in state.memo.values()] == ["rule", "transfer", "memory"]
+    # Rules are cheap and may depend on the amount, so they are tried afresh and never memoised.
+    assert [c.source for c in state.memo.values()] == ["transfer", "memory"]
     assert fake_llm.calls == []
 
 

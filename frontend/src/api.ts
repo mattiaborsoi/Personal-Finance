@@ -169,6 +169,8 @@ export interface UploadResult {
   pending_review: number;
   auto_approved: number;
   transfers_matched: number;
+  /** Of `auto_approved`: lines from merchants always filed one way, approved without review. */
+  auto_approved_known?: number;
   warnings: string[];
 }
 
@@ -305,6 +307,39 @@ export interface ApproveBatchBody {
 export interface ApproveBatchResponse {
   approved: number;
   items: TransactionOut[];
+}
+
+/** Why a line stays in the queue when known merchants are approved. */
+export type AutoApproveReason =
+  | 'new_merchant'
+  | 'few_approvals'
+  | 'mixed_history'
+  | 'unusual_amount'
+  | 'other_sign'
+  | 'transfer'
+  | 'split'
+  | 'closed_period';
+
+export interface AutoApproveBody {
+  /** One month (YYYY-MM), or null for every month with lines waiting. */
+  period: string | null;
+  dry_run: boolean;
+}
+
+export interface AutoApproveItem {
+  id: string;
+  cleaned_merchant: string;
+  amount: Money;
+  category: string;
+  claim_type: ClaimType;
+}
+
+export interface AutoApproveResponse {
+  approved: number;
+  considered: number;
+  skipped: Partial<Record<AutoApproveReason, number>>;
+  /** The lines approved or, on a dry run, that would be. */
+  items: AutoApproveItem[];
 }
 
 export interface TransferBufferOut {
@@ -893,6 +928,13 @@ export interface Rule {
   is_internal_transfer: boolean;
   /** The account that receives the money; a mirror transaction is written there. */
   transfer_to_account: string | null;
+  /**
+   * Smallest and largest line amount the rule applies to, ignoring the sign, both
+   * inclusive, as decimal strings; null (or absent) leaves that side open. A rule
+   * with either bound only matches a line whose amount is known and inside them.
+   */
+  amount_min?: Money | null;
+  amount_max?: Money | null;
 }
 
 export interface RulesOut {
@@ -917,6 +959,8 @@ export interface RulesUpdate {
 /** `rules` and `payment_patterns` test the unsaved lists when given; otherwise the saved ones. */
 export interface RuleTestBody {
   description: string;
+  /** The line's amount, either sign; without it a rule with an amount range is skipped. */
+  amount?: Money;
   rules?: Rule[];
   payment_patterns?: string[];
 }
@@ -1221,6 +1265,9 @@ export const api = {
     request<TransactionOut>('POST', `/transactions/${enc(id)}/approve`, { body }),
   approveBatch: (body: ApproveBatchBody) =>
     request<ApproveBatchResponse>('POST', '/transactions/approve-batch', { body }),
+  /** Approves (or, with `dry_run`, lists) pending lines from merchants always filed one way. */
+  autoApprove: (body: AutoApproveBody) =>
+    request<AutoApproveResponse>('POST', '/transactions/auto-approve', { body }),
   deleteTransaction: (id: string) => request<void>('DELETE', `/transactions/${enc(id)}`),
   /** Splits (or re-splits) a transaction; the parent comes back approved with `parts` filled. */
   splitTransaction: (id: string, parts: SplitPartInput[]) =>

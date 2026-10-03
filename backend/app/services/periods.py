@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import calendar
 import re
+from collections.abc import Iterable
 from datetime import UTC, date, datetime
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, select, union
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -21,6 +22,8 @@ from app.models import (
 
 # Every table with a foreign key to ``ledger_periods`` (keep in step with schema.sql).
 _REFERENCING_MODELS = (Transaction, PartnerClaim, StatementUpload, AuditReport, SettlementSnapshot, SettlementEntry)
+# What makes a month worth listing: an upload's provenance month alone does not.
+_CONTENT_MODELS = (Transaction, PartnerClaim, SettlementEntry, SettlementSnapshot, AuditReport)
 
 PERIOD_KEY_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
@@ -57,6 +60,16 @@ def next_period_key(period_key: str) -> str:
     if start.month == 12:
         return f"{start.year + 1:04d}-01"
     return f"{start.year:04d}-{start.month + 1:02d}"
+
+
+def months_between(first: str | None, last: str | None) -> list[str]:
+    """Every period key from ``first`` to ``last`` inclusive; ``[]`` when either is missing or invalid."""
+    if not first or not last or not PERIOD_KEY_RE.match(first) or not PERIOD_KEY_RE.match(last) or last < first:
+        return []
+    keys = [first]
+    while keys[-1] < last:
+        keys.append(next_period_key(keys[-1]))
+    return keys
 
 
 def get_or_create_period(db: Session, period_key: str) -> LedgerPeriod:
@@ -114,3 +127,29 @@ def delete_if_unreferenced(db: Session, period_key: str) -> bool:
     db.delete(period)
     db.flush()
     return True
+
+
+def delete_unreferenced(db: Session, period_keys: Iterable[str | None]) -> list[str]:
+    """:func:`delete_if_unreferenced` for each key; returns the keys whose row went."""
+    return sorted(key for key in {k for k in period_keys if k} if delete_if_unreferenced(db, key))
+
+
+def keys_with_content(db: Session) -> set[str]:
+    """Period keys that a transaction, claim, settlement entry, snapshot or audit report files under."""
+    db.flush()
+    stmt = union(*(select(model.period_key).where(model.period_key.is_not(None)) for model in _CONTENT_MODELS))
+    return set(db.scalars(stmt))
+
+
+def listed_periods(db: Session, today: date | None = None) -> list[LedgerPeriod]:
+    """The periods a period selector offers, newest first.
+
+    An open period with nothing in it (no transaction, claim, settlement entry,
+    snapshot or audit report) is left out: a statement spanning two months can
+    create the earlier month's row without a line landing in it. The current
+    calendar month and every closed period are always listed.
+    """
+    current = period_key_for(today or date.today())
+    content = keys_with_content(db)
+    rows = db.scalars(select(LedgerPeriod).order_by(LedgerPeriod.period_key.desc())).all()
+    return [p for p in rows if p.is_closed or p.period_key == current or p.period_key in content]

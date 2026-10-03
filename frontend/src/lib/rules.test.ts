@@ -6,6 +6,8 @@ import {
   buildRulesUpdate,
   matchText,
   offendingItem,
+  parseAmountBound,
+  parseTryAmount,
   ruleFieldFor,
   rulesFormChanged,
   rulesFormFrom,
@@ -116,5 +118,25 @@ describe('rules form', () => {
     expect(ruleFieldFor('rule 1: category must not be empty')).toBe('category');
     // The subcategory has no control here, so the row's pattern carries it.
     expect(ruleFieldFor('rule 1: subcategory is longer than 64 characters')).toBe('pattern');
+  });
+
+  it('reads an amount bound as typed into the wire’s two-decimal shape', () => {
+    expect(parseAmountBound('')).toBeNull();
+    expect(parseAmountBound('  ')).toBeNull();
+    expect(parseAmountBound('40')).toBe('40.00');
+    expect(parseAmountBound('£40.5')).toBe('40.50');
+    expect(parseAmountBound(' £ 1,250.00 ')).toBe('1250.00');
+    expect(parseAmountBound('0')).toBe('0.00');
+    expect(parseAmountBound('.5')).toBe('0.50');
+    expect(parseAmountBound('007.10')).toBe('7.10');
+    for (const bad of ['-1', '1.234', 'abc', '1e3', '1.2.3']) expect(parseAmountBound(bad)).toBeUndefined();
+  });
+
+  it('reads the tester’s amount with either sign', () => {
+    expect(parseTryAmount('')).toBeNull();
+    expect(parseTryAmount('-8.5')).toBe('-8.50');
+    expect(parseTryAmount('£40')).toBe('40.00');
+    expect(parseTryAmount('-')).toBeUndefined();
+    expect(parseTryAmount('8.555')).toBeUndefined();
   });
 });

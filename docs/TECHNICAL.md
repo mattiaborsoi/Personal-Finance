@@ -439,6 +439,7 @@ one. The full security model is in section 10.
 parse (Agent 1) → per-line account resolution → fingerprint / dedupe
   → classify (rules / transfer pattern / Agent 2) → insert (pending_review | auto_approved)
   → transfer buffer registration (+ mirror rows) → cross-ledger matching
+  → known merchants approved (app/services/auto_approve.py)
 ```
 
 * **File-level dedupe:** the upload's sha256 is stored in `statement_uploads`; the same
@@ -481,7 +482,9 @@ in: its lines, their split parts and mirror legs, and their transfer-buffer rows
 counterpart outside the upload that was matched to one of them is unlinked and goes
 back to `unmatched` in the buffer (a mirror leg goes with its source). The
 `statement_uploads` row is dropped too, so the same file can be uploaded again;
-periods stay. The delete is refused with 409, changing nothing, when any of those
+open periods left empty go too (the deleted lines' months and the upload's
+`period_from`..`period_to` span are checked with `periods.delete_if_unreferenced`;
+the span is only a list of candidates, not a reference). Closed periods stay. The delete is refused with 409, changing nothing, when any of those
 lines sits in a closed period (reopen it first). Claims and settlement snapshots are
 not checked: they do not reference transactions.
 
@@ -532,7 +535,15 @@ Precedence for each raw description:
 
 1. **Deterministic rule** (Settings → Rules, seeded from `config.yaml`; first match
    wins) → `source=rule`, `auto_approved`; may carry `is_internal_transfer` /
-   `transfer_to_account`.
+   `transfer_to_account`. A rule may also carry `amount_min` / `amount_max`
+   (inclusive bounds on the line's absolute amount, either side optional): it then
+   only matches a line whose amount is inside them, so a gym rule limited to the
+   £40.00 locker fee leaves an £8.50 smoothie at the same gym to memory and the AI.
+   `rules.match_rule(description, config, amount)` gets the amount from every caller
+   that has one (classification, `transfers.is_transfer_description` at ingestion,
+   re-flagging a transfer, the Settings tester); without an amount a ranged rule
+   never matches. Rule answers are not memoised per upload, since two lines with the
+   same description can have different amounts.
 2. **Card-payment pattern** (`transfers.payment_patterns`) → `Transfers:Internal`,
    `is_internal_transfer`, `source=transfer`, `auto_approved`.
 3. **Merchant-key memory match** (`memory.lookup_by_key`): the *merchant key* is the
@@ -585,6 +596,41 @@ review" card linking there, and Review in the navigation carries the pending cou
 of the month it opens on (from `GET /api/periods`, refreshed after an upload, a
 delete or a reset rather than polled).
 
+#### Approving known merchants (`app/services/auto_approve.py`)
+
+Most of a busy queue is merchants the owner has filed the same way many times. The
+queue header's **Approve known merchants** button (primary only) opens a dialog that
+runs `POST /api/transactions/auto-approve` as a dry run for this month or for every
+month with lines waiting, says how many lines can be approved and what stays (new
+merchants, merchants filed different ways, unusual amounts, the other sign), lists the
+lines on request and approves them on confirm. Every upload runs the same decision on
+its lines that ended `pending_review` (rule-classified lines keep their own
+behaviour), and the result card says "12 lines from merchants you know were
+approved".
+
+A line's history is every approved line (`manual_approved` or `auto_approved`) of the
+same merchant, compared as `upper(trim(cleaned_merchant))`: split parts count, split
+parents, internal transfers, `Uncategorized` lines and categories no longer configured
+do not. Transfers, split lines and lines in closed months are never touched. Then:
+
+* fewer than two history lines: stays (`new_merchant`, `few_approvals`);
+* the sign differs from the majority of history, e.g. a refund: stays (`other_sign`);
+  the rest of the check uses only history lines of the same sign;
+* every history line has the same category and claim type: approved when the amount
+  is within half the smallest and one and a half times the largest (`unusual_amount`
+  otherwise);
+* history is mixed (a gym that files fees as Health:Gym, smoothies as Dining and
+  massages as Personal:Care, with overlapping ranges): approved only when the amount
+  repeats, within a penny, an amount history has seen at least twice and always filed
+  the same way, such as the monthly £40.00 locker fee (`mixed_history` otherwise).
+
+An approval goes through the same `apply_update` as an edit (allocations recomputed,
+the guess's subcategory cleared when the category changes) and marks the line
+`auto_approved`, source `memory`, confidence 0.950. Nothing is written to merchant
+memory: the approved history is already the evidence. The endpoint makes one query
+for the pending lines in scope, one for the closed months and one for the history of
+their merchants, and commits once.
+
 On the Transactions page the merchant name can be renamed inline
 (`PATCH /api/transactions/{id}` with `cleaned_merchant`). On a split parent the new
 name is copied to its parts; a part cannot be renamed on its own (409). As with any
@@ -628,6 +674,12 @@ Reopening lifts the lock; the snapshot stays and is shown next to the live figur
 Because the running balance (section 6) is always recomputed, reopening a month and
 changing it moves the live `carried_in` and `balance_out` of every later month up to
 the next checkpoint; their snapshots keep the figures recorded when they were closed.
+
+`GET /api/periods` (every period selector) leaves out an open month that nothing
+files under: no transaction, partner claim, settlement entry, snapshot or audit
+report (`periods.listed_periods`). A statement spanning December into January can
+leave an empty December row behind; it is hidden rather than deleted. The current
+calendar month and every closed month are always listed.
 
 A settlement entry files under the month of its `entry_date` and keeps that
 `ledger_periods` row alive (`periods._REFERENCING_MODELS`). Settings → System → Reset
@@ -901,7 +953,7 @@ the standard categories and card-payment patterns, no rules and no accounts.
 | `users`               | `primary` / `secondary`: `id`, `display_name`, `base_salary_pa`, `additional_income_pa`; the income ratio is derived at load time |
 | `settlement`          | `split_strategy` (`salary_proportional` \| `equal_50_50`), `rounding_decimals`, `settlement_day_of_month` (1–28) |
 | `accounts`            | `id`, `institution` (as printed on statements; used to map uploads), optional `label` (a friendlier display name shown in the app in place of institution and account type, e.g. `HSBC Premier ··4471`; the last four digits are always appended), `account_type` (`checking`, `savings`, `credit`, `credit_supplementary`, `investment_cash`), `owner` (the spender), `identifier_last4`, `default_claim_type`, optional `billed_to` |
-| `deterministic_rules` | ordered regex → `category`, `claim_type`, optional `merchant`, `subcategory`, `is_internal_transfer`, `transfer_to_account` |
+| `deterministic_rules` | ordered regex → `category`, `claim_type`, optional `merchant`, `subcategory`, `is_internal_transfer`, `transfer_to_account`, `amount_min` / `amount_max` (inclusive bounds on the absolute amount) |
 | `transfers`           | `payment_patterns` (card-payment regexes), `match_window_days`, `amount_tolerance`          |
 | `llm`                 | `chat_model`, `embedding_model` (logical names from `litellm/config.yaml`), optional `extraction_model` and `audit_model` (the models for PDF layout extraction and the monthly summary; both default to `chat_model`), `similarity_threshold`, `top_k` |
 | `auditor`             | `deviation_threshold`, `lookback_periods`                                                   |

@@ -68,6 +68,7 @@ MAX_MERCHANT_LENGTH = 255  # transactions.cleaned_merchant is VARCHAR(255)
 MAX_SUBCATEGORY_LENGTH = 128
 MAX_PATTERN_LENGTH = 512
 MAX_EMOJI_LENGTH = 8
+_CENT = Decimal("0.01")
 
 
 class SiteSettingsError(ValueError):
@@ -144,6 +145,10 @@ class Rule(BaseModel):
     subcategory: str | None = None
     is_internal_transfer: bool = False
     transfer_to_account: str | None = None
+    amount_min: Decimal | None = None
+    """Inclusive bounds on the line's absolute amount; ``None`` leaves that side open.
+    A rule with either bound only matches a line whose amount is known and inside."""
+    amount_max: Decimal | None = None
 
 
 class Rules(BaseModel):
@@ -206,6 +211,8 @@ class RuleIn(BaseModel):
     subcategory: str | None = None
     is_internal_transfer: bool = False
     transfer_to_account: str | None = None
+    amount_min: Decimal | None = None
+    amount_max: Decimal | None = None
 
 
 class RulesUpdate(BaseModel):
@@ -221,6 +228,8 @@ class RuleTest(BaseModel):
     """``POST /settings/rules/test``: ``rules`` / ``payment_patterns`` given are tried instead of the saved ones."""
 
     description: str
+    amount: Decimal | None = None
+    """Optional line amount (either sign): without it a rule with an amount range is skipped."""
     rules: list[RuleIn] | None = None
     payment_patterns: list[str] | None = None
 
@@ -405,14 +414,26 @@ def _compile(pattern: str, where: str) -> None:
         raise SiteSettingsError(f"{where}: invalid regex {pattern!r}: {exc}") from exc
 
 
+def _amount_bound(value: Decimal | None, what: str, where: str) -> Decimal | None:
+    """A rule's amount bound as a two-decimal money value, or ``None`` when unset."""
+    if value is None:
+        return None
+    if not value.is_finite() or value < 0:
+        raise SiteSettingsError(f"{where}: {what} must be a non-negative amount")
+    if value != value.quantize(_CENT):
+        raise SiteSettingsError(f"{where}: {what} must have at most 2 decimal places")
+    return value.quantize(_CENT)
+
+
 def validate_rules(doc: Rules, config: AppConfig | None = None) -> Rules:
     """A normalised copy of ``doc``, or :class:`SiteSettingsError` naming the offending item.
 
     Patterns must compile, claim types must be known and the numbers must be in
-    range. With ``config`` (the effective configuration) every rule's category must
-    also be in the taxonomy (it is stored in the configured spelling) and its
-    ``transfer_to_account`` must be an account, archived ones included. Without it
-    (loading a stored document) the references are left alone: an account or a
+    range; a rule's ``amount_min`` / ``amount_max`` must be non-negative, have at
+    most two decimals and not be the wrong way round. With ``config`` (the effective
+    configuration) every rule's category must also be in the taxonomy (it is stored
+    in the configured spelling) and its ``transfer_to_account`` must be an account,
+    archived ones included. Without it (loading a stored document) the references are left alone: an account or a
     category may legitimately have gone since the document was saved.
     """
     rules: list[Rule] = []
@@ -432,6 +453,10 @@ def validate_rules(doc: Rules, config: AppConfig | None = None) -> Rules:
             category = canonical
             if transfer_to and config.get_account(transfer_to) is None:
                 raise SiteSettingsError(f"{where}: transfer_to_account {transfer_to!r} is not an account")
+        amount_min = _amount_bound(rule.amount_min, "amount_min", where)
+        amount_max = _amount_bound(rule.amount_max, "amount_max", where)
+        if amount_min is not None and amount_max is not None and amount_max < amount_min:
+            raise SiteSettingsError(f"{where}: amount_max must not be less than amount_min")
         rules.append(
             Rule(
                 pattern=rule.pattern,
@@ -441,6 +466,8 @@ def validate_rules(doc: Rules, config: AppConfig | None = None) -> Rules:
                 subcategory=_clean(rule.subcategory, MAX_SUBCATEGORY_LENGTH, "subcategory", where),
                 is_internal_transfer=bool(rule.is_internal_transfer),
                 transfer_to_account=transfer_to,
+                amount_min=amount_min,
+                amount_max=amount_max,
             )
         )
     for position, pattern in enumerate(doc.payment_patterns, 1):
@@ -856,11 +883,14 @@ def update_rules(db: Session, base: AppConfig, effective: AppConfig, body: Rules
     return proposed
 
 
-def test_rules(rules: Rules, description: str) -> RuleTestOut:
-    """Which rule (first match) and whether the card-payment patterns match ``description``."""
+def test_rules(rules: Rules, description: str, amount: Decimal | None = None) -> RuleTestOut:
+    """Which rule (first match) and whether the card-payment patterns match ``description``.
+
+    Without ``amount`` a rule with an amount range is skipped, as it is for any
+    caller that only knows the description."""
     transfers = TransfersSection(payment_patterns=list(rules.payment_patterns))
     for index, rule in enumerate(rules.rules):
-        if DeterministicRule.model_validate(rule.model_dump()).matches(description):
+        if DeterministicRule.model_validate(rule.model_dump()).matches(description, amount):
             return RuleTestOut(rule_index=index, rule=rule, is_payment=transfers.is_payment(description))
     return RuleTestOut(rule_index=None, rule=None, is_payment=transfers.is_payment(description))
 
@@ -871,4 +901,6 @@ def try_rules(db: Session, base: AppConfig, effective: AppConfig, body: RuleTest
     doc = merged_rules(current, RulesUpdate(rules=body.rules, payment_patterns=body.payment_patterns))
     if body.rules is not None or body.payment_patterns is not None:
         doc = validate_rules(doc, effective)
-    return test_rules(doc, body.description)
+    if body.amount is not None and not body.amount.is_finite():
+        raise SiteSettingsError("amount must be a number")
+    return test_rules(doc, body.description, body.amount)

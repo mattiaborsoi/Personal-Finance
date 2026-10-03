@@ -7,7 +7,8 @@ upload deletes those rows with their transfer-buffer rows, unlinks any counterpa
 that was matched to one of them (the counterpart's buffer row goes back to
 ``unmatched``, as un-flagging a transfer does; a mirror leg outside the upload goes
 with its source), and removes the ``statement_uploads`` row so the same file can be
-uploaded again. Periods are left in place.
+uploaded again. Open periods that nothing refers to any more (the months of the
+deleted lines and of the upload's span) are removed with it; a closed period stays.
 
 Uploads recorded before lines were linked ("legacy" uploads) have no transaction
 carrying their id. Their lines are found by ``source_file`` (the filename) among the
@@ -31,7 +32,7 @@ from sqlalchemy.orm import Session
 
 from app.models import LedgerPeriod, StatementUpload, Transaction, TransferBuffer
 from app.services import ingestion, transfers
-from app.services.periods import PeriodClosedError
+from app.services.periods import PeriodClosedError, delete_unreferenced, months_between
 
 LEGACY_AMBIGUOUS = (
     "this upload was recorded before lines were linked to uploads; delete its transactions from the Transactions page"
@@ -128,6 +129,9 @@ def delete_upload(db: Session, upload: StatementUpload) -> int:
     if closed:
         raise PeriodClosedError(f"period {closed[0]} is closed; reopen it first")
 
+    # The months it may have created: its lines' and its span's. The span is only a
+    # list of candidates; whether a month stays depends on what still files under it.
+    months: set[str | None] = {upload.period_key, *months_between(upload.period_from, upload.period_to)}
     ids = {row.id for row in rows}
     doomed = list(rows)
     if ids:
@@ -150,6 +154,7 @@ def delete_upload(db: Session, upload: StatementUpload) -> int:
             row.linked_transfer_id = None
         db.flush()
 
+        months.update(row.period_key for row in doomed)
         doomed_ids = [row.id for row in doomed]
         for entry in db.scalars(select(TransferBuffer).where(TransferBuffer.transaction_id.in_(doomed_ids))).all():
             db.delete(entry)
@@ -161,4 +166,5 @@ def delete_upload(db: Session, upload: StatementUpload) -> int:
 
     db.delete(upload)
     db.flush()
+    delete_unreferenced(db, months)
     return len(doomed)

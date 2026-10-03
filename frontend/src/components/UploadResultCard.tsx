@@ -2,6 +2,7 @@ import { ArrowRight, CircleCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { UploadResult } from '../api';
 import { useConfig } from '../config/ConfigContext';
+import { knownMerchantsSentence } from '../lib/autoApprove';
 import { periodRangeLabel } from '../lib/dates';
 import { accountLabel } from '../lib/format';
 import { reviewPath } from '../lib/review';
@@ -22,6 +23,7 @@ export function UploadResultCard({ result }: Props) {
     { label: 'Auto-approved', value: result.auto_approved },
     { label: 'Transfers matched', value: result.transfers_matched },
   ];
+  const known = result.auto_approved_known ?? 0;
   return (
     <div role="status" className="rounded-2xl border border-good/20 bg-good/10 p-5">
       <div className="flex items-start gap-3">
@@ -42,6 +44,7 @@ export function UploadResultCard({ result }: Props) {
           <StatTile key={s.label} as="dl-item" surface="raised" label={s.label} value={s.value} />
         ))}
       </dl>
+      {known > 0 && <p className="mt-3 text-sm text-ink-2">{knownMerchantsSentence(known, true)}.</p>}
       {result.warnings.length > 0 && (
         <Notice tone="warning" className="mt-3">
           <ul className="list-inside list-disc space-y-0.5" aria-label="Warnings">

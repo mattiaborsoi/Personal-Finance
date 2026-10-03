@@ -1,11 +1,15 @@
-import { ListChecks, Lock } from 'lucide-react';
+import { ListChecks, Lock, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, editErrorMessage, INTERNAL_TRANSFER_CATEGORY, type TransactionOut, type TransactionPatch } from '../api';
+import { api, editErrorMessage, INTERNAL_TRANSFER_CATEGORY, type AutoApproveResponse, type TransactionOut, type TransactionPatch } from '../api';
+import { useAuth } from '../auth/AuthContext';
 import { useConfig } from '../config/ConfigContext';
+import { useRefreshReviewBadge } from '../hooks/reviewBadge';
 import { useAsync } from '../hooks/useAsync';
+import { knownMerchantsSentence } from '../lib/autoApprove';
 import { accountLabel, plural } from '../lib/format';
 import { btnPrimary, btnSecondary, btnSmall, cardBase, checkboxBase, cx, selectCompact, tableBase, tableFlush, thBase } from '../lib/ui';
 import { ApprovalRow, type ApprovalDraft } from './ApprovalRow';
+import { AutoApproveDialog } from './AutoApproveDialog';
 import { ClaimTypeHelp } from './ClaimTypeHelp';
 import { EmptyState } from './EmptyState';
 import { ErrorMessage } from './ErrorMessage';
@@ -29,6 +33,8 @@ const NO_DRAFT: ApprovalDraft = {};
 
 export function ApprovalQueue({ period, closed = false, onChanged, account = '', onAccountChange }: Props) {
   const config = useConfig();
+  const { session } = useAuth();
+  const refreshBadge = useRefreshReviewBadge();
   const queue = useAsync(
     () => api.listTransactions({ period, status: 'pending_review', limit: 200, offset: 0 }),
     `approval-queue:${period}`,
@@ -38,6 +44,8 @@ export function ApprovalQueue({ period, closed = false, onChanged, account = '',
   const [drafts, setDrafts] = useState<Record<string, ApprovalDraft>>({});
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [batchError, setBatchError] = useState<string | null>(null);
+  /** The "Approve known merchants" dialog is open. */
+  const [autoOpen, setAutoOpen] = useState(false);
   /** The transaction whose split dialog is open. */
   const [splitting, setSplitting] = useState<TransactionOut | null>(null);
   /** Read out by the always-mounted status region after an approval succeeds. */
@@ -208,6 +216,20 @@ export function ApprovalQueue({ period, closed = false, onChanged, account = '',
     onChanged?.();
   }
 
+  /** Known merchants were approved (possibly in other months too): load the queue and the counts again. */
+  function autoApproved(result: AutoApproveResponse) {
+    setAutoOpen(false);
+    setAnnouncement(knownMerchantsSentence(result.approved, true));
+    if (result.approved > 0) {
+      const done = new Set(result.items.map((i) => i.id));
+      setSelected((prev) => new Set([...prev].filter((id) => !done.has(id))));
+      clearDrafts([...done]);
+      queue.reload();
+      onChanged?.();
+      refreshBadge();
+    }
+  }
+
   function toggle(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -291,6 +313,12 @@ export function ApprovalQueue({ period, closed = false, onChanged, account = '',
               </label>
             )}
             {selectedCount > 0 && <span className="text-xs text-ink-3 tabular">{selectedCount} selected</span>}
+            {session?.role === 'primary' && queue.data && (
+              <button type="button" className={cx(btnSecondary, btnSmall)} onClick={() => setAutoOpen(true)}>
+                <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+                Approve known merchants
+              </button>
+            )}
             <button
               type="button"
               className={cx(btnPrimary, btnSmall)}
@@ -404,6 +432,14 @@ export function ApprovalQueue({ period, closed = false, onChanged, account = '',
             </tbody>
           </table>
         </div>
+      )}
+      {autoOpen && (
+        <AutoApproveDialog
+          period={period}
+          defaultScope={closed ? 'all' : 'month'}
+          onClose={() => setAutoOpen(false)}
+          onApproved={autoApproved}
+        />
       )}
       {splitting && (
         <SplitDialog

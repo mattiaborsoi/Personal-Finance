@@ -6,6 +6,7 @@
     -> insert into the master ledger (pending_review or auto_approved)
     -> transfer buffer registration (+ mirror rows for configured transfer targets)
     -> cross-ledger matching
+    -> known merchants approved (app.services.auto_approve)
 
 Design notes
 ------------
@@ -59,7 +60,7 @@ from sqlalchemy.orm import Session
 from app.config import AccountConfig, AppConfig
 from app.models import LedgerPeriod, StatementUpload, Transaction, TransferBuffer
 from app.schemas import UploadResult
-from app.services import guesser, settlement, transfers
+from app.services import auto_approve, guesser, settlement, transfers
 from app.services.embeddings import EmbeddingClient
 from app.services.llm import LLMClient
 from app.services.parsers.base import ParsedStatement, ParsedTransaction
@@ -277,6 +278,7 @@ def ingest_statement(
     db.flush()
 
     inserted = pending = auto = 0
+    waiting: list[Transaction] = []
     state = guesser.UploadState()
     for line, acc, fp in new_lines:
         cls = guesser.classify(db, config, embedder, llm, line.raw_text, acc, amount=line.amount, state=state)
@@ -314,10 +316,12 @@ def ingest_statement(
         inserted += 1
         if txn.review_status == "pending_review":
             pending += 1
+            if cls.source != "rule":  # rules keep their own behaviour
+                waiting.append(txn)
         else:
             auto += 1
 
-        is_transfer = internal or transfers.is_transfer_description(line.raw_text, config)
+        is_transfer = internal or transfers.is_transfer_description(line.raw_text, config, line.amount)
         if is_transfer and txn.amount != 0:
             entry = transfers.register_transfer(db, txn)
             if cls.transfer_to_account:
@@ -326,6 +330,11 @@ def ingest_statement(
             warnings.append(f"{line.date}: zero-amount transfer line {line.raw_text!r} left out of the buffer")
 
     matched = transfers.match_pending(db, config)
+    # Lines from merchants always filed one way skip the queue, as the Review page's
+    # "Approve known merchants" would do; new merchants and anything unusual still wait.
+    known = len(auto_approve.run(db, config, waiting).approved)
+    pending -= known
+    auto += known
     warnings.extend(ai_warnings(state))
 
     upload.transaction_count = inserted
@@ -343,6 +352,7 @@ def ingest_statement(
         pending_review=pending,
         auto_approved=auto,
         transfers_matched=matched,
+        auto_approved_known=known,
         warnings=warnings,
     )
 

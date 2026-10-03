@@ -38,17 +38,18 @@ IGNORED = "ignored"
 _CENT = Decimal("0.01")
 
 
-def is_transfer_description(raw_description: str, config: AppConfig) -> bool:
+def is_transfer_description(raw_description: str, config: AppConfig, amount: Decimal | None = None) -> bool:
     """True when the description looks like a card payment / internal transfer.
 
     Either a ``transfers.payment_patterns`` regex matches, or the first matching
     deterministic rule carries ``is_internal_transfer`` (a ``transfer_to_account``
-    implies it).
+    implies it). ``amount`` lets a rule with an amount range match; without it
+    such a rule is skipped.
     """
     raw = raw_description or ""
     if config.transfers.is_payment(raw):
         return True
-    rule = match_rule(raw, config)
+    rule = match_rule(raw, config, amount)
     return rule is not None and rule.is_internal_transfer
 
 

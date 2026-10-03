@@ -204,6 +204,10 @@ class DeterministicRule(BaseModel):
     subcategory: str | None = None
     is_internal_transfer: bool = False
     transfer_to_account: str | None = None
+    amount_min: Decimal | None = None
+    """Smallest absolute line amount the rule applies to (inclusive); ``None``: no lower bound."""
+    amount_max: Decimal | None = None
+    """Largest absolute line amount the rule applies to (inclusive); ``None``: no upper bound."""
 
     _regex: re.Pattern[str] = PrivateAttr()
 
@@ -216,6 +220,20 @@ class DeterministicRule(BaseModel):
             raise ConfigError(f"invalid regex {v!r}: {exc}") from exc
         return v
 
+    @model_validator(mode="after")
+    def _amount_range(self) -> DeterministicRule:
+        for name in ("amount_min", "amount_max"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if not value.is_finite() or value < 0:
+                raise ConfigError(f"rule {self.pattern!r}: {name} must be a non-negative amount")
+            if value != value.quantize(Decimal("0.01")):
+                raise ConfigError(f"rule {self.pattern!r}: {name} must have at most 2 decimal places")
+        if self.amount_min is not None and self.amount_max is not None and self.amount_max < self.amount_min:
+            raise ConfigError(f"rule {self.pattern!r}: amount_max must not be less than amount_min")
+        return self
+
     def model_post_init(self, __context: object) -> None:
         self._regex = re.compile(self.pattern)
 
@@ -223,8 +241,27 @@ class DeterministicRule(BaseModel):
     def regex(self) -> re.Pattern[str]:
         return self._regex
 
-    def matches(self, description: str) -> bool:
-        return bool(self._regex.search(description or ""))
+    @property
+    def has_amount_range(self) -> bool:
+        return self.amount_min is not None or self.amount_max is not None
+
+    def matches(self, description: str, amount: Decimal | int | float | str | None = None) -> bool:
+        """The pattern finds ``description`` and, for a rule with an amount range, the
+        absolute ``amount`` is inside it (bounds inclusive). A ranged rule never matches
+        without an amount: a caller that only knows the description cannot tell."""
+        if not self._regex.search(description or ""):
+            return False
+        if not self.has_amount_range:
+            return True
+        if amount is None:
+            return False
+        try:
+            value = abs(Decimal(str(amount)))
+        except ArithmeticError:
+            return False
+        if self.amount_min is not None and value < self.amount_min:
+            return False
+        return self.amount_max is None or value <= self.amount_max
 
 
 class TransfersSection(BaseModel):

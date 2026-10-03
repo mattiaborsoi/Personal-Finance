@@ -3,7 +3,14 @@ import userEvent, { type UserEvent } from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { CONFIG_DEFAULTS_MESSAGE, type Rule, type RuleTestBody, type RuleTestResult, type RulesOut, type RulesUpdate } from '../api';
 import { ConfigProvider } from '../config/ConfigProvider';
-import { BLANK_PATTERN_MESSAGE, MISSING_ACCOUNT_MESSAGE, WINDOW_MESSAGE } from '../lib/rules';
+import {
+  AMOUNT_BOUND_MESSAGE,
+  AMOUNT_ORDER_MESSAGE,
+  BLANK_PATTERN_MESSAGE,
+  MISSING_ACCOUNT_MESSAGE,
+  TRY_AMOUNT_MESSAGE,
+  WINDOW_MESSAGE,
+} from '../lib/rules';
 import { rule, rules } from '../test/fixtures';
 import { categoryValue, fixtureConfig, jsonResponse, mockFetch, pickCategory, renderWithProviders, type RecordedCall } from '../test/utils';
 import {
@@ -553,5 +560,112 @@ describe('<RulesPanel />', () => {
 
     expect(await screen.findByLabelText('Pattern for rule 1')).toBeInTheDocument();
     expect(calls.filter((c) => c.url === URL)).toHaveLength(2);
+  });
+
+  it('narrows a rule to an amount range, sent with the rule and shown in the phone layout too', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockRules(rules());
+
+    await renderPanel();
+    const from1 = screen.getByLabelText('Smallest amount for rule 1');
+    const to1 = screen.getByLabelText('Largest amount for rule 1');
+    expect(from1).toHaveValue('');
+    expect(to1).toHaveValue('');
+    // One pair per rule, inside the rule's own block, with the stacked view's label hidden from assistive tech.
+    const row = from1.closest('tr') as HTMLTableRowElement;
+    expect(within(row).getByText('Amount (optional)')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getAllByLabelText('Smallest amount for rule 2')).toHaveLength(1);
+
+    await user.type(from1, '£40');
+    await user.type(to1, '40.5');
+    await user.click(saveButton());
+
+    await screen.findByText(RULES_SAVED_MESSAGE);
+    expect(puts(calls)).toHaveLength(1);
+    expect(puts(calls)[0].body).toEqual({ rules: [{ ...WATER, amount_min: '40.00', amount_max: '40.50' }, ROBINHOOD] });
+    // The saved values come back in the server's shape.
+    expect(screen.getByLabelText('Smallest amount for rule 1')).toHaveValue('40.00');
+    expect(screen.getByLabelText('Largest amount for rule 1')).toHaveValue('40.50');
+
+    // Clearing a bound leaves that side open: it is no longer sent.
+    await user.clear(screen.getByLabelText('Largest amount for rule 1'));
+    await user.click(saveButton());
+    await waitFor(() => expect(puts(calls)).toHaveLength(2));
+    expect(puts(calls)[1].body).toEqual({ rules: [{ ...WATER, amount_min: '40.00' }, ROBINHOOD] });
+  });
+
+  it('refuses an amount that is not one, or a range the wrong way round, before sending', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockRules(rules());
+
+    await renderPanel();
+    const from2 = screen.getByLabelText('Smallest amount for rule 2');
+    const to2 = screen.getByLabelText('Largest amount for rule 2');
+    await user.type(from2, '-5');
+    await user.click(saveButton());
+    expect(from2).toHaveAttribute('aria-invalid', 'true');
+    expect(from2).toHaveAccessibleDescription(AMOUNT_BOUND_MESSAGE);
+    expect(from2).toHaveFocus();
+
+    await user.clear(from2);
+    await user.type(from2, '50');
+    await user.type(to2, '12.345');
+    expect(to2).toHaveAccessibleDescription(AMOUNT_BOUND_MESSAGE);
+    await user.clear(to2);
+    await user.type(to2, '40');
+    expect(to2).toHaveAttribute('aria-invalid', 'true');
+    expect(to2).toHaveAccessibleDescription(AMOUNT_ORDER_MESSAGE);
+    expect(from2).not.toHaveAttribute('aria-invalid');
+    expect(puts(calls)).toHaveLength(0);
+
+    await user.clear(to2);
+    await user.type(to2, '50');
+    expect(to2).not.toHaveAttribute('aria-invalid');
+  });
+
+  it('puts the server’s refusal of an amount on that control', async () => {
+    const user = userEvent.setup();
+    const detail = 'rule 1: amount_max must not be less than amount_min';
+    mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === URL) return jsonResponse(rules());
+      if (method === 'PUT' && url === URL) return jsonResponse({ detail }, 422);
+      return undefined;
+    });
+
+    await renderPanel();
+    await user.type(screen.getByLabelText('Smallest amount for rule 1'), '1');
+    await user.click(saveButton());
+    const to1 = screen.getByLabelText('Largest amount for rule 1');
+    await waitFor(() => expect(to1).toHaveAttribute('aria-invalid', 'true'));
+    expect(to1).toHaveAccessibleDescription(detail);
+  });
+
+  it('tries a description with an optional amount', async () => {
+    const user = userEvent.setup();
+    const ranged = rule({ amount_min: '40.00', amount_max: '40.00' });
+    const { calls } = mockRules(rules({ rules: [ranged] }), (body) => {
+      const hit = body.amount !== undefined && Math.abs(Number(body.amount)) === 40;
+      return { rule_index: hit ? 0 : null, rule: hit ? (body.rules?.[0] ?? null) : null, is_payment: false };
+    });
+
+    await renderPanel();
+    const description = screen.getByLabelText('Statement description');
+    const amount = screen.getByLabelText('Amount (optional)');
+    await user.type(description, 'AQUANORTH WATER{Enter}');
+    expect(await screen.findByRole('status', { name: 'Test result' })).toHaveTextContent(NO_MATCH_MESSAGE);
+    // Without an amount none is sent.
+    expect(tests(calls)[0].body).toEqual({ description: 'AQUANORTH WATER', rules: [ranged], payment_patterns: rules().payment_patterns });
+
+    await user.type(amount, '-40{Enter}');
+    expect(await screen.findByRole('status', { name: 'Test result' })).toHaveTextContent('Matches rule 1');
+    expect((tests(calls)[1].body as RuleTestBody).amount).toBe('-40.00');
+
+    // An amount that is not one blocks the test and says why.
+    await user.clear(amount);
+    await user.type(amount, '4.005');
+    expect(amount).toHaveAttribute('aria-invalid', 'true');
+    expect(amount).toHaveAccessibleDescription(TRY_AMOUNT_MESSAGE);
+    expect(testButton()).toBeDisabled();
+    expect(tests(calls)).toHaveLength(2);
   });
 });

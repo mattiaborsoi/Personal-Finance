@@ -20,6 +20,10 @@ export interface RuleRow {
   is_internal_transfer: boolean;
   /** Blank means none; only sent while `is_internal_transfer` is on. */
   transfer_to_account: string;
+  /** Smallest amount the rule applies to, as typed; blank means no lower bound. */
+  amount_min: string;
+  /** Largest amount the rule applies to, as typed; blank means no upper bound. */
+  amount_max: string;
 }
 
 export interface PatternRow {
@@ -49,6 +53,34 @@ export const BLANK_PATTERN_MESSAGE = 'Enter a pattern.';
 export const MISSING_ACCOUNT_MESSAGE = 'Choose the account the money goes to.';
 export const WINDOW_MESSAGE = `Enter a whole number of days between ${WINDOW_MIN} and ${WINDOW_MAX}.`;
 export const TOLERANCE_MESSAGE = 'Enter an amount of 0 or more, e.g. 0.01.';
+export const AMOUNT_BOUND_MESSAGE = 'Enter an amount of 0 or more with at most 2 decimals, e.g. 40.00, or leave it blank.';
+export const AMOUNT_ORDER_MESSAGE = 'The largest amount must not be less than the smallest.';
+export const TRY_AMOUNT_MESSAGE = 'Enter an amount with at most 2 decimals, e.g. 40.00, or leave it blank.';
+
+/**
+ * A rule's amount bound as typed ("40", "£40.5", " 1,250.00 ") in the wire's
+ * shape ("40.00", "40.50", "1250.00"); null when blank, undefined when it is not
+ * an amount of 0 or more with at most two decimals. The sign is never typed: the
+ * bounds apply to the line's amount whichever way the money went.
+ */
+export function parseAmountBound(raw: string): string | null | undefined {
+  const trimmed = raw.trim().replace(/^£\s*/, '').replace(/,/g, '');
+  if (!trimmed) return null;
+  const m = /^(\d+)(?:\.(\d{0,2}))?$/.exec(trimmed) ?? /^()\.(\d{1,2})$/.exec(trimmed);
+  if (!m) return undefined;
+  const whole = (m[1] || '0').replace(/^0+(?=\d)/, '');
+  return `${whole}.${(m[2] ?? '').padEnd(2, '0')}`;
+}
+
+/** The tester's optional amount: either sign, at most two decimals; null when blank, undefined when unusable. */
+export function parseTryAmount(raw: string): string | null | undefined {
+  const trimmed = raw.trim();
+  const negative = /^[-−]/.test(trimmed);
+  const bound = parseAmountBound(negative ? trimmed.slice(1) : trimmed);
+  if (bound === null) return negative ? undefined : null;
+  if (bound === undefined) return undefined;
+  return negative ? `-${bound}` : bound;
+}
 
 export function ruleRowFrom(rule: Rule): RuleRow {
   return {
@@ -60,6 +92,8 @@ export function ruleRowFrom(rule: Rule): RuleRow {
     subcategory: rule.subcategory,
     is_internal_transfer: rule.is_internal_transfer,
     transfer_to_account: rule.transfer_to_account ?? '',
+    amount_min: rule.amount_min ?? '',
+    amount_max: rule.amount_max ?? '',
   };
 }
 
@@ -74,6 +108,8 @@ export function blankRule(category: string, claimType: ClaimType): RuleRow {
     subcategory: null,
     is_internal_transfer: false,
     transfer_to_account: '',
+    amount_min: '',
+    amount_max: '',
   };
 }
 
@@ -90,8 +126,14 @@ export function rulesFormFrom(saved: RulesOut): RulesForm {
   };
 }
 
-/** The row in the wire's shape: trimmed, blanks as null, and no target account unless it is a transfer. */
+/**
+ * The row in the wire's shape: trimmed, blanks as null, and no target account
+ * unless it is a transfer. An amount bound is only sent when set (an absent one
+ * is an open side, and a list sent replaces the saved one).
+ */
 export function toRule(row: RuleRow): Rule {
+  const amountMin = parseAmountBound(row.amount_min);
+  const amountMax = parseAmountBound(row.amount_max);
   return {
     pattern: row.pattern.trim(),
     category: row.category,
@@ -100,6 +142,8 @@ export function toRule(row: RuleRow): Rule {
     subcategory: row.subcategory,
     is_internal_transfer: row.is_internal_transfer,
     transfer_to_account: row.is_internal_transfer ? row.transfer_to_account || null : null,
+    ...(amountMin ? { amount_min: amountMin } : {}),
+    ...(amountMax ? { amount_max: amountMax } : {}),
   };
 }
 
@@ -118,9 +162,17 @@ export function parseTolerance(raw: string): string | null {
 }
 
 /** The control in a rule's row that a problem is about. */
-export type RuleField = 'pattern' | 'category' | 'claim_type' | 'merchant' | 'transfer_to_account';
+export type RuleField = 'pattern' | 'category' | 'claim_type' | 'merchant' | 'transfer_to_account' | 'amount_min' | 'amount_max';
 
-const RULE_FIELDS: readonly RuleField[] = ['pattern', 'category', 'claim_type', 'merchant', 'transfer_to_account'];
+const RULE_FIELDS: readonly RuleField[] = [
+  'pattern',
+  'category',
+  'claim_type',
+  'merchant',
+  'transfer_to_account',
+  'amount_min',
+  'amount_max',
+];
 
 export interface RuleProblem {
   message: string;
@@ -139,9 +191,15 @@ export interface RulesProblems {
 export function validateRulesForm(form: RulesForm): RulesProblems {
   const problems: RulesProblems = { rules: {}, patterns: {} };
   form.rules.forEach((row, index) => {
+    const min = parseAmountBound(row.amount_min);
+    const max = parseAmountBound(row.amount_max);
     if (!row.pattern.trim()) problems.rules[index] = { message: BLANK_PATTERN_MESSAGE, field: 'pattern' };
     else if (row.is_internal_transfer && !row.transfer_to_account) {
       problems.rules[index] = { message: MISSING_ACCOUNT_MESSAGE, field: 'transfer_to_account' };
+    } else if (min === undefined) problems.rules[index] = { message: AMOUNT_BOUND_MESSAGE, field: 'amount_min' };
+    else if (max === undefined) problems.rules[index] = { message: AMOUNT_BOUND_MESSAGE, field: 'amount_max' };
+    else if (min !== null && max !== null && Number(max) < Number(min)) {
+      problems.rules[index] = { message: AMOUNT_ORDER_MESSAGE, field: 'amount_max' };
     }
   });
   form.patterns.forEach((row, index) => {
@@ -171,6 +229,8 @@ function canonical(rule: Rule): string {
     rule.subcategory ?? null,
     rule.is_internal_transfer,
     rule.transfer_to_account ?? null,
+    rule.amount_min ?? null,
+    rule.amount_max ?? null,
   ]);
 }
 
@@ -203,6 +263,8 @@ function formSnapshot(form: RulesForm): string {
       row.subcategory,
       row.is_internal_transfer,
       row.transfer_to_account,
+      row.amount_min,
+      row.amount_max,
     ]),
     form.patterns.map((row) => row.value),
     form.match_window_days,
@@ -227,7 +289,8 @@ export function matchText(index: number, rule: Rule, names: { primary: string; s
 /**
  * Which control of a rule the server's words are about, after the "rule N:"
  * prefix: "category 'Foo' is not in the configured taxonomy", "unknown claim_type",
- * "transfer_to_account 'acc_x' is not an account", "merchant is longer than …".
+ * "transfer_to_account 'acc_x' is not an account", "merchant is longer than …",
+ * "amount_max must not be less than amount_min".
  * Anything else (an invalid regex, a blank or long pattern) is the pattern's.
  */
 export function ruleFieldFor(message: string): RuleField {
@@ -236,6 +299,8 @@ export function ruleFieldFor(message: string): RuleField {
   if (/^(unknown\s+)?claim_type\b/i.test(text)) return 'claim_type';
   if (/^category\b/i.test(text)) return 'category';
   if (/^merchant\b/i.test(text)) return 'merchant';
+  if (/^amount_min\b/i.test(text)) return 'amount_min';
+  if (/^amount_max\b/i.test(text)) return 'amount_max';
   return 'pattern';
 }
 

@@ -91,6 +91,10 @@ accounts:
 #   is_internal_transfer (optional) mark as a transfer and feed the transfer buffer
 #   transfer_to_account  (optional) account id that receives the money; a mirror
 #                        transaction is created there (used for investment tracking)
+#   amount_min           (optional) smallest amount the rule applies to, ignoring the sign,
+#   amount_max           (optional) largest; both inclusive, e.g. amount_min: "40.00" and
+#                        amount_max: "40.00" for a fixed monthly fee. Lines outside the
+#                        range fall through to merchant memory and the AI.
 # The supplier names below are placeholders: replace them with what your own
 # statements print.
 deterministic_rules:

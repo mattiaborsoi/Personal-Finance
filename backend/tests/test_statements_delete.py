@@ -1,8 +1,8 @@
 """DELETE /api/statements/{id}: an upload goes with everything it brought into the ledger.
 
 Its lines, their split parts and mirror legs, and their transfer-buffer rows are
-deleted; a counterpart matched to one of them waits in the buffer again; periods
-stay; the same file can be uploaded again. Uploads recorded before lines carried
+deleted; a counterpart matched to one of them waits in the buffer again; open
+periods left empty go too; the same file can be uploaded again. Uploads recorded before lines carried
 their upload id fall back to the filename when that is unambiguous.
 """
 
@@ -109,7 +109,7 @@ def test_deleting_an_upload_removes_its_lines_parts_mirrors_and_buffer_rows(
     assert [e["transaction_id"] for e in unmatched] == [received["id"]]
     assert unmatched[0]["match_status"] == "unmatched" and unmatched[0]["resolved_at"] is None
     assert _count(seeded_db, TransferBuffer) == 1
-    # The upload is gone, the periods stay, and a second delete finds nothing.
+    # The upload is gone, the card's months stay, and a second delete finds nothing.
     assert [u["id"] for u in _uploads(client, primary_headers)] == [str(card_id)]
     assert _periods(client, primary_headers) == {"2026-07", "2026-08"}
     assert client.delete(f"/api/statements/{checking_id}", headers=primary_headers).status_code == 404
@@ -143,7 +143,8 @@ def test_deleting_an_upload_is_refused_while_a_period_is_closed(client, primary_
     assert client.delete(f"/api/statements/{upload_id}", headers=primary_headers).status_code == 204
     assert list_txns(client, primary_headers) == []
     assert _uploads(client, primary_headers) == []
-    assert _periods(client, primary_headers) == {"2026-05", "2026-06", "2026-07", "2026-08"}
+    # The months it brought in go with it, except 2026-06: closing it wrote an audit report and a snapshot.
+    assert _periods(client, primary_headers) == {"2026-06"}
 
 
 @requires_db

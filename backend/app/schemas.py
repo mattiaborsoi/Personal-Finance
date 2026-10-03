@@ -194,6 +194,28 @@ class BatchApproveOut(BaseModel):
     items: list[TransactionOut]
 
 
+class AutoApproveRequest(BaseModel):
+    """Approve lines from known merchants in one month (``YYYY-MM``) or, with ``null``, every month."""
+
+    period: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    dry_run: bool = False
+
+
+class AutoApproveItem(BaseModel):
+    id: uuid.UUID
+    cleaned_merchant: str
+    amount: Decimal
+    category: str
+    claim_type: ClaimType
+
+
+class AutoApproveOut(BaseModel):
+    approved: int
+    considered: int
+    skipped: dict[str, int] = Field(default_factory=dict)
+    items: list[AutoApproveItem] = Field(default_factory=list)
+
+
 # --------------------------------------------------------------------------- #
 # Uploads / ingestion
 # --------------------------------------------------------------------------- #
@@ -211,6 +233,8 @@ class UploadResult(BaseModel):
     pending_review: int
     auto_approved: int
     transfers_matched: int
+    # Of ``auto_approved``: lines from merchants always filed one way (app.services.auto_approve).
+    auto_approved_known: int = 0
     warnings: list[str] = Field(default_factory=list)
 
 

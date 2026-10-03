@@ -11,11 +11,13 @@ import {
   buildRulesUpdate,
   hasRulesProblems,
   matchText,
+  parseTryAmount,
   patternsOf,
   problemsForError,
   rulesFormChanged,
   rulesFormFrom,
   rulesOf,
+  TRY_AMOUNT_MESSAGE,
   validateRulesForm,
   WINDOW_MAX,
   WINDOW_MIN,
@@ -53,7 +55,7 @@ import { Notice } from './Notice';
 
 export const RULES_SAVED_MESSAGE = 'Saved. The rules apply to the next upload; lines already imported keep their classification.';
 export const RULES_DESCRIPTION =
-  'Tried in order against the raw statement description; the first match wins, skips the AI and is approved straight away.';
+  'Tried in order against the raw statement description; the first match wins, skips the AI and is approved straight away. An amount range narrows a rule to lines of that size, whichever way the money went.';
 export const CARD_PAYMENTS_DESCRIPTION =
   'A line matching one of these patterns is a card being paid off, so it is paired with the same amount on the other statement and kept out of spending.';
 export const NO_MATCH_MESSAGE = 'No rule matches; the AI or memory would classify it.';
@@ -62,6 +64,7 @@ export const NOT_CARD_PAYMENT_MESSAGE = 'Not a card payment.';
 export const PATTERN_PLACEHOLDER = '(?i)ACME\\s*WATER';
 export const CONFIG_STALE_MESSAGE = 'Saved, but the settings shown elsewhere could not be refreshed';
 export const TRY_HINT = 'Paste a description from a statement to see which rule would file it. Unsaved edits count.';
+export const TRY_AMOUNT_HINT = 'Add the amount to try a rule that has an amount range.';
 export const TRY_BLOCKED_MESSAGE = 'Fix the problems above first: the test uses the rules as they are on screen.';
 /** Beside a target account the config no longer has, so the select shows what is stored rather than a blank. */
 export const UNKNOWN_ACCOUNT_SUFFIX = '(not an account)';
@@ -97,7 +100,7 @@ function RowNote({ id, message, live, colSpan }: RowNoteProps) {
   );
 }
 
-const COLUMNS = 7;
+const COLUMNS = 8;
 
 /**
  * Below `sm` the rules table reflows into one stacked block per rule (the same
@@ -142,6 +145,7 @@ export function RulesPanel() {
   const [serverProblems, setServerProblems] = useState<RulesProblems>({ rules: {}, patterns: {} });
 
   const [tryText, setTryText] = useState('');
+  const [tryAmount, setTryAmount] = useState('');
   const [testing, setTesting] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
   const [result, setResult] = useState<RuleTestResult | null>(null);
@@ -202,7 +206,8 @@ export function RulesPanel() {
   const update = buildRulesUpdate(form, saved);
   const dirty = Object.keys(update).length > 0;
   const busy = saving || testing;
-  const canTest = valid && Boolean(tryText.trim()) && !busy;
+  const testAmount = parseTryAmount(tryAmount);
+  const canTest = valid && Boolean(tryText.trim()) && testAmount !== undefined && !busy;
   const defaultCategory = config.categories[0] ?? '';
   const defaultClaimType: ClaimType = config.claim_types[0] ?? 'personal';
   /** Active accounts; a rule's own target is added when archived, so the select never shows a blank for it. */
@@ -275,7 +280,8 @@ export function RulesPanel() {
     setTestError(null);
     setResult(null);
     try {
-      setResult(await api.testRule({ description: tryText.trim(), rules: rulesOf(form), payment_patterns: patternsOf(form) }));
+      const body = { description: tryText.trim(), rules: rulesOf(form), payment_patterns: patternsOf(form) };
+      setResult(await api.testRule(testAmount ? { ...body, amount: testAmount } : body));
     } catch (err) {
       // The tester validates the unsaved rules as a save would, so a bad regex lands on its row.
       const placed = isApiError(err, 422) ? problemsForError(err, errorMessage(err)) : null;
@@ -342,6 +348,9 @@ export function RulesPanel() {
                       Transfer
                     </th>
                     <th scope="col" className={thBase}>
+                      Amount
+                    </th>
+                    <th scope="col" className={thBase}>
                       <span className="sr-only">Actions</span>
                     </th>
                   </tr>
@@ -370,7 +379,7 @@ export function RulesPanel() {
                             <span className="sm:hidden">Rule </span>
                             {n}
                           </td>
-                          <td className={cx(tdBase, 'min-w-[10rem] 2xl:min-w-[14rem]', stackCell)}>
+                          <td className={cx(tdBase, 'min-w-[9rem] 2xl:min-w-[12rem]', stackCell)}>
                             <StackLabel>Pattern</StackLabel>
                             <input
                               type="text"
@@ -386,7 +395,7 @@ export function RulesPanel() {
                               onChange={(e) => setRule(index, { pattern: e.target.value })}
                             />
                           </td>
-                          <td className={cx(tdBase, 'min-w-[9rem] 2xl:min-w-[11rem]', stackCell)}>
+                          <td className={cx(tdBase, 'min-w-[8rem] 2xl:min-w-[11rem]', stackCell)}>
                             <StackLabel>Category</StackLabel>
                             <CategoryPicker
                               size="base"
@@ -399,7 +408,7 @@ export function RulesPanel() {
                               onChange={(next) => setRule(index, { category: next })}
                             />
                           </td>
-                          <td className={cx(tdBase, 'min-w-[9rem] 2xl:min-w-[11rem]', stackCell)}>
+                          <td className={cx(tdBase, 'min-w-[8rem] 2xl:min-w-[11rem]', stackCell)}>
                             <StackLabel>Claim type</StackLabel>
                             <select
                               className={cx(selectBase, flag('claim_type').invalid && inputInvalid)}
@@ -417,7 +426,7 @@ export function RulesPanel() {
                               ))}
                             </select>
                           </td>
-                          <td className={cx(tdBase, 'min-w-[7rem] 2xl:min-w-[10rem]', stackCell)}>
+                          <td className={cx(tdBase, 'min-w-[6rem] 2xl:min-w-[8rem]', stackCell)}>
                             <StackLabel>Merchant</StackLabel>
                             <input
                               type="text"
@@ -432,10 +441,10 @@ export function RulesPanel() {
                               onChange={(e) => setRule(index, { merchant: e.target.value })}
                             />
                           </td>
-                          <td className={cx(tdBase, 'min-w-[8rem] 2xl:min-w-[12rem]', stackCell)}>
+                          <td className={cx(tdBase, 'min-w-[7rem] 2xl:min-w-[10rem]', stackCell)}>
                             <StackLabel>Transfer</StackLabel>
                             <div className="space-y-2">
-                              <label className="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap text-sm text-ink-2">
+                              <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink-2 2xl:whitespace-nowrap">
                                 <input
                                   type="checkbox"
                                   className={checkboxBase}
@@ -469,6 +478,38 @@ export function RulesPanel() {
                                   )}
                                 </select>
                               )}
+                            </div>
+                          </td>
+                          <td className={cx(tdBase, stackCell)}>
+                            <StackLabel>Amount (optional)</StackLabel>
+                            {/* "From" above "to" so the table fits a laptop screen; side by side on a phone. */}
+                            <div className="grid w-[5.25rem] gap-1.5 max-sm:w-full max-sm:grid-cols-2 2xl:w-[6rem]">
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                className={cx(inputBase, 'px-2.5 tabular', flag('amount_min').invalid && inputInvalid)}
+                                value={row.amount_min}
+                                placeholder="£ from"
+                                autoComplete="off"
+                                disabled={busy}
+                                aria-label={`Smallest amount for rule ${n}`}
+                                aria-invalid={flag('amount_min').invalid}
+                                aria-describedby={flag('amount_min').describedBy}
+                                onChange={(e) => setRule(index, { amount_min: e.target.value })}
+                              />
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                className={cx(inputBase, 'px-2.5 tabular', flag('amount_max').invalid && inputInvalid)}
+                                value={row.amount_max}
+                                placeholder="£ to"
+                                autoComplete="off"
+                                disabled={busy}
+                                aria-label={`Largest amount for rule ${n}`}
+                                aria-invalid={flag('amount_max').invalid}
+                                aria-describedby={flag('amount_max').describedBy}
+                                onChange={(e) => setRule(index, { amount_max: e.target.value })}
+                              />
                             </div>
                           </td>
                           <td className={cx(tdBase, 'text-right max-sm:col-start-2 max-sm:row-start-1 max-sm:block max-sm:py-0')}>
@@ -550,11 +591,48 @@ export function RulesPanel() {
                   }
                 }}
               />
+              <label htmlFor={f('try-amount')} className="sr-only">
+                Amount (optional)
+              </label>
+              <div className="w-40 shrink-0">
+              <input
+                id={f('try-amount')}
+                type="text"
+                inputMode="decimal"
+                className={cx(inputBase, 'tabular', testAmount === undefined && inputInvalid)}
+                placeholder="£ amount, optional"
+                value={tryAmount}
+                autoComplete="off"
+                disabled={saving}
+                readOnly={testing}
+                aria-invalid={testAmount === undefined ? true : undefined}
+                aria-describedby={testAmount === undefined ? f('try-amount-note') : f('try-amount-hint')}
+                onChange={(e) => {
+                  setTryAmount(e.target.value);
+                  setResult(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void test();
+                  }
+                }}
+              />
+              </div>
               <button type="button" className={btnSecondary} disabled={!canTest} onClick={() => void test()}>
                 <FlaskConical className={cx('h-4 w-4', testing && 'animate-pulse')} aria-hidden="true" />
                 {testing ? 'Testing…' : 'Test'}
               </button>
             </div>
+            {testAmount === undefined ? (
+              <p id={f('try-amount-note')} className="mt-2 text-xs text-critical-ink">
+                {TRY_AMOUNT_MESSAGE}
+              </p>
+            ) : (
+              <p id={f('try-amount-hint')} className="mt-2 text-xs text-ink-3">
+                {TRY_AMOUNT_HINT}
+              </p>
+            )}
             <ErrorMessage message={testError} onDismiss={() => setTestError(null)} className="mt-3" />
             {result && (
               <div role="status" aria-label="Test result" className="mt-3 space-y-1.5 text-sm">

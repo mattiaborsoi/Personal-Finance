@@ -1,6 +1,7 @@
 """Deterministic config matcher (pre-processing before any LLM call).
 
-Rules from ``config.yaml`` are tried in order against the raw statement description.
+Rules from ``config.yaml`` are tried in order against the raw statement description
+(and, for a rule with an amount range, the line's absolute amount).
 A match yields the category, claim type, an optional cleaned merchant name and
 transfer flags; matched transactions are ``auto_approved`` and never hit the LLM.
 
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 
 from app.config import AppConfig, DeterministicRule
 
@@ -168,15 +170,20 @@ def _title(token: str) -> str:
     return "-".join(part[:1].upper() + part[1:].lower() for part in token.split("-"))
 
 
-def match_rule(raw_description: str, config: AppConfig) -> RuleMatch | None:
+def match_rule(
+    raw_description: str, config: AppConfig, amount: Decimal | int | float | str | None = None
+) -> RuleMatch | None:
     """Return the first deterministic rule matching ``raw_description`` or ``None``.
 
     Rules are tried in ``config.deterministic_rules`` order; the first match wins.
+    A rule with ``amount_min`` / ``amount_max`` also needs the line's absolute
+    ``amount`` inside that inclusive range, so without an ``amount`` it never
+    matches and the next rule is tried.
     The merchant is the rule's ``merchant`` if set, else the cleaned description.
     A rule that names a ``transfer_to_account`` is always an internal transfer.
     """
     for rule in config.deterministic_rules:
-        if rule.matches(raw_description):
+        if rule.matches(raw_description, amount):
             return RuleMatch(
                 rule=rule,
                 category=rule.category,

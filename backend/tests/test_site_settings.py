@@ -538,7 +538,7 @@ def test_rules_api_and_tester(client, primary_headers, config):
     resp = try_rules(description="CARD PAYMENT TO CORNER SHOP")
     assert resp.status_code == 200, resp.text
     stored_rule = {**CORNER_SHOP_RULE, "merchant": None, "subcategory": None, "is_internal_transfer": False,
-                   "transfer_to_account": None}  # fmt: skip
+                   "transfer_to_account": None, "amount_min": None, "amount_max": None}  # fmt: skip
     assert resp.json() == {"rule_index": 0, "rule": stored_rule, "is_payment": True}
     assert try_rules(description="WAITROSE 1234").json() == {"rule_index": None, "rule": None, "is_payment": False}
     # ...or unsaved edits, validated like a PUT, without saving anything.
