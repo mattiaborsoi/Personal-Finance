@@ -608,7 +608,12 @@ its lines that ended `pending_review` (rule-classified lines keep their own
 behaviour), and the result card says "12 lines from merchants you know were
 approved".
 
-A line's history is every approved line (`manual_approved` or `auto_approved`) of the
+History is per card: a line only learns from approvals on the same account, because
+the same merchant can be personal on one card and shared on another (Pret on your own
+card is your dining, on a shared card it is split by income). A merchant approved
+only on other cards stays pending as `new_on_this_card`.
+
+A line's history is every approved line (`manual_approved` or `auto_approved`) on the same account of the
 same merchant, compared as `upper(trim(cleaned_merchant))`: split parts count, split
 parents, internal transfers, `Uncategorized` lines and categories no longer configured
 do not. Transfers, split lines and lines in closed months are never touched. Then:

@@ -8,6 +8,10 @@ pending, with a reason:
 
 ``new_merchant``
     no approved line of this merchant yet.
+``new_on_this_card``
+    the merchant is known, but only from approvals on other accounts. History is
+    per account: Pret on your own card may be your dining while Pret on a shared
+    card is split by income, so another card's approvals are no guide.
 ``few_approvals``
     only one approved line: not enough to call it known.
 ``other_sign``
@@ -21,7 +25,7 @@ pending, with a reason:
     an internal transfer, a split line, or a line in a closed month: never touched.
 
 History for a line is every ``manual_approved`` or ``auto_approved`` transaction
-whose merchant matches ignoring case and surrounding spaces, leaving out split
+on the same account whose merchant matches ignoring case and surrounding spaces, leaving out split
 parents (their parts carry the merchant and the amounts), internal transfers,
 ``Uncategorized`` lines and lines filed under a category that is no longer
 configured. The line itself never counts.
@@ -49,6 +53,7 @@ from app.models import LedgerPeriod, Transaction
 REASONS: tuple[str, ...] = (
     "approved",
     "new_merchant",
+    "new_on_this_card",
     "few_approvals",
     "mixed_history",
     "unusual_amount",
@@ -157,8 +162,14 @@ def decide(line: Any, history: Iterable[Any], *, closed: bool = False) -> Decisi
     return _keep("mixed_history")
 
 
-def load_history(db: Session, config: AppConfig, merchants: Iterable[str]) -> dict[str, list[Past]]:
-    """Approved lines per merchant key for ``merchants``, in one query."""
+def load_history(
+    db: Session, config: AppConfig, merchants: Iterable[str]
+) -> dict[tuple[str, str], list[Past]]:
+    """Approved lines per (merchant key, account) for ``merchants``, in one query.
+
+    History is kept per card: Pret on your own card may be your dining while Pret on
+    a shared card is split by income, so only approvals on the same account count.
+    """
     keys = {merchant_key(m) for m in merchants} - {""}
     if not keys:
         return {}
@@ -167,6 +178,7 @@ def load_history(db: Session, config: AppConfig, merchants: Iterable[str]) -> di
         select(
             Transaction.id,
             key_expr,
+            Transaction.account_id,
             Transaction.amount,
             Transaction.category,
             Transaction.claim_type,
@@ -178,12 +190,14 @@ def load_history(db: Session, config: AppConfig, merchants: Iterable[str]) -> di
             Transaction.category != UNCATEGORIZED,
         )
     ).all()
-    out: dict[str, list[Past]] = defaultdict(list)
-    for txn_id, key, amount, category, claim_type in rows:
+    out: dict[tuple[str, str], list[Past]] = defaultdict(list)
+    for txn_id, key, account_id, amount, category, claim_type in rows:
         canonical = config.canonical_category(category)
         if canonical is None or canonical == UNCATEGORIZED:
             continue  # a category since removed from Settings is no guide
-        out[key].append(Past(id=txn_id, amount=Decimal(amount), category=canonical, claim_type=claim_type))
+        out[(key, account_id)].append(
+            Past(id=txn_id, amount=Decimal(amount), category=canonical, claim_type=claim_type)
+        )
     return out
 
 
@@ -215,8 +229,13 @@ def evaluate(db: Session, config: AppConfig, lines: Sequence[Transaction]) -> Ou
         return outcome
     closed = _closed_keys(db, lines)
     history = load_history(db, config, (t.cleaned_merchant for t in lines))
+    known_anywhere = {key for key, _ in history}
     for txn in lines:
-        decision = decide(txn, history.get(merchant_key(txn.cleaned_merchant), []), closed=txn.period_key in closed)
+        key = merchant_key(txn.cleaned_merchant)
+        decision = decide(txn, history.get((key, txn.account_id), []), closed=txn.period_key in closed)
+        if decision.reason == "new_merchant" and key in known_anywhere:
+            # Approved on another card only: how it is shared there says nothing about this one.
+            decision = _keep("new_on_this_card")
         if decision.approve:
             outcome.approved.append((txn, decision))
         else:

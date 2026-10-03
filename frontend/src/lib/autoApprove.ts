@@ -4,6 +4,7 @@ import { plural } from './format';
 /** What each reason for keeping a line in the queue is called in the dialog, in the order shown. */
 export const STAY_LABELS: ReadonlyArray<[AutoApproveReason, string]> = [
   ['new_merchant', 'New merchants'],
+  ['new_on_this_card', 'New on this card'],
   ['few_approvals', 'Approved only once'],
   ['mixed_history', 'Filed different ways'],
   ['unusual_amount', 'Unusual amount'],

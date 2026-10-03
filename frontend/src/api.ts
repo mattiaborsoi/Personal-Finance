@@ -312,6 +312,7 @@ export interface ApproveBatchResponse {
 /** Why a line stays in the queue when known merchants are approved. */
 export type AutoApproveReason =
   | 'new_merchant'
+  | 'new_on_this_card'
   | 'few_approvals'
   | 'mixed_history'
   | 'unusual_amount'

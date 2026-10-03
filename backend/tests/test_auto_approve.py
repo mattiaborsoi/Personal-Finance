@@ -315,4 +315,33 @@ def test_second_upload_approves_a_known_merchant(seeded_db, config, embedder, fa
 
 
 def test_reasons_are_listed():
-    assert set(auto_approve.REASONS) >= {"approved", "new_merchant", "closed_period"}
+    assert set(auto_approve.REASONS) >= {"approved", "new_merchant", "new_on_this_card", "closed_period"}
+
+
+@requires_db
+def test_history_is_per_card(client, primary_headers, seeded_db, config):
+    """Pret on Alex's own card is Alex's dining; on the shared card it is split by income."""
+    db = seeded_db
+    own, shared, other = "acc_cc_amex", "acc_checking_hsbc", "acc_cc_virgin"
+    for day in (2, 9, 16):
+        _approved(
+            db, config, "Pret", "-6.50", date(2026, 7, day), account_id=own,
+            category="Dining", claim_type="personal",
+        )
+        _approved(
+            db, config, "Pret", "-7.20", date(2026, 7, day), account_id=shared,
+            category="Dining", claim_type="shared_proportional",
+        )
+    on_own = _pending(db, config, "Pret", "-6.80", date(2026, 8, 3), account_id=own)
+    on_shared = _pending(db, config, "Pret", "-6.90", date(2026, 8, 4), account_id=shared)
+    on_other = _pending(db, config, "Pret", "-6.95", date(2026, 8, 5), account_id=other)
+    db.commit()
+
+    resp = client.post("/api/transactions/auto-approve", headers=primary_headers, json={"period": "2026-08"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["skipped"].get("new_on_this_card") == 1
+    db.expire_all()
+    assert db.get(Transaction, on_own.id).claim_type == "personal"
+    assert db.get(Transaction, on_shared.id).claim_type == "shared_proportional"
+    # Known only from other cards: how it was shared there is no guide here.
+    assert db.get(Transaction, on_other.id).review_status == "pending_review"
