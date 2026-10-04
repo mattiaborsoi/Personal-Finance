@@ -135,7 +135,10 @@ describe('<TransactionsPage />', () => {
       if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
       return undefined;
     });
-    const lastList = () => calls.filter((c) => c.url.startsWith('/api/transactions?')).at(-1)?.url ?? '';
+    const lastList = () => {
+      const lists = calls.filter((c) => c.url.startsWith('/api/transactions?'));
+      return lists[lists.length - 1]?.url ?? '';
+    };
 
     renderWithProviders(<TransactionsPage />, { route: '/transactions' });
     await screen.findByRole('button', { name: 'Ocado' });
