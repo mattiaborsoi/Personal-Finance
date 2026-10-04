@@ -195,8 +195,11 @@ export function ApprovalQueue({ period, closed = false, onChanged, account = '',
   async function markTransfer(tx: TransactionOut, isInternalTransfer: boolean) {
     const updated = await patchRow(tx, { is_internal_transfer: isInternalTransfer });
     if (!updated) return;
-    // The claim type the server chose (a transfer's is personal) replaces any unsaved choice; a category draft still stands.
-    setDrafts((prev) => (prev[tx.id] ? { ...prev, [tx.id]: { ...prev[tx.id], claim_type: undefined } } : prev));
+    // The server files a ticked line under Transfers:Internal (and a transfer's claim type is
+    // personal), so its answer replaces any unsaved category or claim type.
+    setDrafts((prev) =>
+      prev[tx.id] ? { ...prev, [tx.id]: { ...prev[tx.id], category: undefined, claim_type: undefined } } : prev,
+    );
     onChanged?.();
   }
 

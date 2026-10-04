@@ -110,3 +110,28 @@ def test_ingestion_flags_a_line_the_classifier_files_as_an_internal_transfer(
         assert t["is_internal_transfer"] is True
         assert t["claim_type"] == "personal"
 
+
+
+@requires_db
+def test_ticking_the_transfer_box_files_it_as_an_internal_transfer(client, primary_headers, seeded_db, config):
+    txn = _pending(seeded_db, config, category="Fees:Interest", claim_type="personal")
+    url = f"/api/transactions/{txn.id}"
+    body = client.patch(url, headers=primary_headers, json={"is_internal_transfer": True}).json()
+    assert body["is_internal_transfer"] is True and body["category"] == INTERNAL
+
+    # Unticking takes it back out, so approving doesn't tick it again.
+    body = client.patch(url, headers=primary_headers, json={"is_internal_transfer": False}).json()
+    assert body["is_internal_transfer"] is False and body["category"] == "Uncategorized"
+    approved = client.post(f"{url}/approve", headers=primary_headers, json={}).json()
+    assert approved["is_internal_transfer"] is False
+
+
+@requires_db
+def test_a_category_named_in_the_same_request_wins(client, primary_headers, seeded_db, config):
+    txn = _pending(seeded_db, config, category="Uncategorized")
+    body = client.patch(
+        f"/api/transactions/{txn.id}",
+        headers=primary_headers,
+        json={"is_internal_transfer": True, "category": "Transfers:Investment"},
+    ).json()
+    assert body["is_internal_transfer"] is True and body["category"] == "Transfers:Investment"

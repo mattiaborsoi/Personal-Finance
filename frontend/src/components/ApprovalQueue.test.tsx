@@ -185,7 +185,9 @@ describe('<ApprovalQueue />', () => {
     const { calls } = mockFetch(({ method, url }) => {
       if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
       if (method === 'PATCH' && url === `/api/transactions/${ID_UBER}`) {
-        return jsonResponse(transaction({ ...uber, is_internal_transfer: true, claim_type: 'personal' }));
+        return jsonResponse(
+          transaction({ ...uber, is_internal_transfer: true, claim_type: 'personal', category: 'Transfers:Internal' }),
+        );
       }
       return undefined;
     });
@@ -209,15 +211,17 @@ describe('<ApprovalQueue />', () => {
     const { calls } = mockFetch(({ method, url }) => {
       if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
       if (method === 'PATCH' && url === `/api/transactions/${ID_UBER}`) {
-        // The server turns a transfer's claim type into "personal" (nobody is owed for it).
-        return jsonResponse(transaction({ ...uber, is_internal_transfer: true, claim_type: 'personal' }));
+        // The server files a ticked line as an internal transfer, with claim type "personal".
+        return jsonResponse(
+          transaction({ ...uber, is_internal_transfer: true, claim_type: 'personal', category: 'Transfers:Internal' }),
+        );
       }
       return undefined;
     });
 
     renderWithProviders(<ApprovalQueue period="2026-03" onChanged={onChanged} />);
     await screen.findByRole('button', { name: 'Uber' });
-    // An unsaved category choice must survive the toggle.
+    // An unsaved category choice gives way to the server's answer.
     await pickCategory(user, screen.getByLabelText('Category for Uber'), 'Dining');
     await user.click(screen.getByLabelText('Mark Uber as a transfer'));
 
@@ -233,7 +237,7 @@ describe('<ApprovalQueue />', () => {
     expect(screen.getByText('2 transactions pending review')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Split Uber' })).toBeDisabled();
     expect(claimTypeValue(screen.getByLabelText('Claim type for Uber'))).toBe('personal');
-    expect(categoryValue(screen.getByLabelText('Category for Uber'))).toBe('Dining');
+    expect(categoryValue(screen.getByLabelText('Category for Uber'))).toBe('Transfers:Internal');
     expect(onChanged).toHaveBeenCalledTimes(1);
   });
 

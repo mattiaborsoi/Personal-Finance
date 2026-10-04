@@ -204,11 +204,22 @@ def apply_update(db: Session, txn: Transaction, update: TransactionUpdate, confi
         data["is_internal_transfer"] = True
     if data.get("is_internal_transfer") is not None:
         wanted = bool(data["is_internal_transfer"])
+        # The tick and the category travel together (as choosing Transfers:Internal ticks
+        # the box): unless the same request names a category, ticking files the line as an
+        # internal transfer and unticking takes it back out, so approval doesn't re-tick it.
+        category_given = data.get("category") is not None
         if wanted and not txn.is_internal_transfer:
             _flag_as_transfer(db, txn, config)
+            if not category_given and not (txn.category or "").startswith("Transfers:"):
+                internal = config.canonical_category(INTERNAL_TRANSFER_CATEGORY)
+                if internal is not None:
+                    txn.category = internal
+                    txn.subcategory = None
         elif not wanted and txn.is_internal_transfer:
             _unlink(db, txn)
             txn.is_internal_transfer = False
+            if not category_given and txn.category == INTERNAL_TRANSFER_CATEGORY:
+                txn.category = UNCATEGORIZED
     alloc_p, alloc_s = settlement.allocate(Decimal(txn.amount), txn.claim_type, _owner_for(txn, config), config)
     txn.allocated_primary_amount = alloc_p
     txn.allocated_secondary_amount = alloc_s
