@@ -1,6 +1,6 @@
-import { SearchX } from 'lucide-react';
-import type { TransactionOut, TransactionPart, TransactionPatch } from '../api';
-import { cx, thBase } from '../lib/ui';
+import { ArrowDown, ArrowUp, SearchX } from 'lucide-react';
+import type { TransactionOut, TransactionPart, TransactionPatch, TransactionSort } from '../api';
+import { cx, focusRing, thBase } from '../lib/ui';
 import { EmptyState } from './EmptyState';
 import { TransactionRow } from './TransactionRow';
 
@@ -16,6 +16,49 @@ interface Props {
   onUnsplit: (tx: TransactionOut) => Promise<void>;
   onPatchPart: (tx: TransactionOut, part: TransactionPart, patch: TransactionPatch) => Promise<void>;
   onApprove?: (tx: TransactionOut) => Promise<void>;
+  /** The current order; with `onSort` the Transaction and Amount headings sort the list. */
+  sort?: { by: TransactionSort; order: 'asc' | 'desc' };
+  onSort?: (by: TransactionSort) => void;
+}
+
+/** A column heading that sorts: a button inside the th, with aria-sort on the th. */
+function SortHeading({
+  label,
+  by,
+  sort,
+  onSort,
+  align = 'left',
+}: {
+  label: string;
+  by: TransactionSort;
+  sort?: Props['sort'];
+  onSort?: Props['onSort'];
+  align?: 'left' | 'right';
+}) {
+  const active = sort?.by === by;
+  const ariaSort = active ? (sort?.order === 'asc' ? 'ascending' : 'descending') : 'none';
+  const Arrow = sort?.order === 'asc' ? ArrowUp : ArrowDown;
+  return (
+    <th scope="col" className={cx(thBase, align === 'right' && 'text-right')} aria-sort={onSort ? ariaSort : undefined}>
+      {onSort ? (
+        <button
+          type="button"
+          onClick={() => onSort(by)}
+          className={cx(
+            'inline-flex items-center gap-1 rounded uppercase hover:text-ink',
+            active && 'text-ink',
+            focusRing,
+          )}
+          title={`Sort by ${label.toLowerCase()}`}
+        >
+          {label}
+          {active && <Arrow className="h-3 w-3" aria-hidden="true" />}
+        </button>
+      ) : (
+        label
+      )}
+    </th>
+  );
 }
 
 const NONE: ReadonlySet<string> = new Set();
@@ -39,6 +82,8 @@ export function TransactionTable({
   onUnsplit,
   onPatchPart,
   onApprove,
+  sort,
+  onSort,
 }: Props) {
   if (items.length === 0) {
     return (
@@ -54,15 +99,11 @@ export function TransactionTable({
       <table className={tableLayout}>
         <thead className="hidden sm:table-header-group">
           <tr>
-            <th scope="col" className={thBase}>
-              Transaction
-            </th>
+            <SortHeading label="Transaction" by="merchant" sort={sort} onSort={onSort} />
             <th scope="col" className={thBase}>
               Status
             </th>
-            <th scope="col" className={cx(thBase, 'text-right')}>
-              Amount
-            </th>
+            <SortHeading label="Amount" by="amount" sort={sort} onSort={onSort} align="right" />
             <th scope="col" className={thBase}>
               Category
             </th>

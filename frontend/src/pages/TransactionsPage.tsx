@@ -7,6 +7,7 @@ import {
   editErrorMessage,
   type ClaimType,
   type ReviewStatus,
+  type TransactionSort,
   type TransactionOut,
   type TransactionPart,
   type TransactionPatch,
@@ -26,9 +27,30 @@ import { useAsync } from '../hooks/useAsync';
 import { periodLabel } from '../lib/dates';
 import { plural } from '../lib/format';
 import { mergePartUpdate } from '../lib/splits';
+import { cx, selectCompact } from '../lib/ui';
 
 const PAGE_SIZE = 50;
 const STATUSES: ReviewStatus[] = ['pending_review', 'auto_approved', 'manual_approved'];
+const SORTS: TransactionSort[] = ['date', 'amount', 'merchant'];
+
+/** The order a sort starts in: newest, largest and A to Z first. */
+const FIRST_ORDER: Record<TransactionSort, 'asc' | 'desc'> = { date: 'desc', amount: 'desc', merchant: 'asc' };
+
+/** The choices of the phone's "Sort by" menu (the column headings are hidden there). */
+const SORT_CHOICES: Array<{ value: string; label: string }> = [
+  { value: 'date:desc', label: 'Newest first' },
+  { value: 'date:asc', label: 'Oldest first' },
+  { value: 'amount:desc', label: 'Largest amount' },
+  { value: 'amount:asc', label: 'Smallest amount' },
+  { value: 'merchant:asc', label: 'Name, A to Z' },
+  { value: 'merchant:desc', label: 'Name, Z to A' },
+];
+
+function readSort(params: URLSearchParams): { by: TransactionSort; order: 'asc' | 'desc' } {
+  const by = SORTS.includes(params.get('sort') as TransactionSort) ? (params.get('sort') as TransactionSort) : 'date';
+  const raw = params.get('order');
+  return { by, order: raw === 'asc' || raw === 'desc' ? raw : FIRST_ORDER[by] };
+}
 
 function readFilters(params: URLSearchParams): TransactionFilterValues & { offset: number } {
   const status = params.get('status') ?? '';
@@ -48,6 +70,7 @@ function readFilters(params: URLSearchParams): TransactionFilterValues & { offse
 export function TransactionsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = readFilters(searchParams);
+  const sort = readSort(searchParams);
   const periods = useAsync(() => api.listPeriods(), 'periods');
   const list = useAsync(
     () =>
@@ -60,6 +83,8 @@ export function TransactionsPage() {
         q: filters.q || undefined,
         include_transfers: filters.include_transfers,
         unusual: filters.unusual || undefined,
+        sort: sort.by,
+        order: sort.order,
         limit: PAGE_SIZE,
         offset: filters.offset,
       }),
@@ -83,8 +108,33 @@ export function TransactionsPage() {
     if (next.q) params.q = next.q;
     if (!next.include_transfers) params.include_transfers = 'false';
     if (next.unusual) params.unusual = 'true';
+    if (sort.by !== 'date' || sort.order !== 'desc') {
+      params.sort = sort.by;
+      params.order = sort.order;
+    }
     if (offset > 0) params.offset = String(offset);
     setSearchParams(params);
+  }
+
+  /** The order the list is in now, keeping the filters; back to the first page. */
+  function setSort(by: TransactionSort, order: 'asc' | 'desc') {
+    const params = new URLSearchParams(searchParams);
+    params.delete('offset');
+    if (by === 'date' && order === 'desc') {
+      params.delete('sort');
+      params.delete('order');
+    } else {
+      params.set('sort', by);
+      params.set('order', order);
+    }
+    setSearchParams(params);
+  }
+
+  /** A heading click: first order, then the other way, then back to newest first. */
+  function cycleSort(by: TransactionSort) {
+    if (sort.by !== by) setSort(by, FIRST_ORDER[by]);
+    else if (sort.order === FIRST_ORDER[by]) setSort(by, FIRST_ORDER[by] === 'asc' ? 'desc' : 'asc');
+    else setSort('date', 'desc');
   }
 
   function setRowError(id: string, message: string | null) {
@@ -183,7 +233,35 @@ export function TransactionsPage() {
       <Card icon={Filter} title="Filters">
         <TransactionFilters periods={periods.data ?? []} values={filters} onChange={(v) => writeFilters(v, 0)} />
       </Card>
-      <Card flush icon={Receipt} title="Results" actions={list.loading && <LoadingState inline />}>
+      <Card
+        flush
+        icon={Receipt}
+        title="Results"
+        actions={
+          <div className="flex items-center gap-2">
+            {list.loading && <LoadingState inline />}
+            {/* The column headings sort from `sm`; a phone has no headings, so it gets this menu. */}
+            <label htmlFor="t-sort" className="sr-only">
+              Sort by
+            </label>
+            <select
+              id="t-sort"
+              className={cx(selectCompact, 'w-auto sm:hidden')}
+              value={`${sort.by}:${sort.order}`}
+              onChange={(e) => {
+                const [by, order] = e.target.value.split(':') as [TransactionSort, 'asc' | 'desc'];
+                setSort(by, order);
+              }}
+            >
+              {SORT_CHOICES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        }
+      >
         {filteredPeriodClosed && (
           <div className="px-5 pt-4 sm:px-6">
             <Notice tone="neutral" role="status" icon={Lock}>
@@ -215,6 +293,8 @@ export function TransactionsPage() {
               onUnsplit={unsplit}
               onPatchPart={patchPart}
               onApprove={approve}
+              sort={sort}
+              onSort={cycleSort}
             />
             {list.data.total > 0 && (
               <div className="border-t border-hairline px-5 py-3 sm:px-6">

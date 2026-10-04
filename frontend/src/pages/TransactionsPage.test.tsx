@@ -128,6 +128,35 @@ describe('<TransactionsPage />', () => {
     await waitFor(() => expect(calls.some((c) => c.url.includes('claim_type=personal'))).toBe(true));
   });
 
+  it('sorts by amount and by name from the column headings, keeping it in the URL', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse([]);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      return undefined;
+    });
+    const lastList = () => calls.filter((c) => c.url.startsWith('/api/transactions?')).at(-1)?.url ?? '';
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions' });
+    await screen.findByRole('button', { name: 'Ocado' });
+    expect(lastList()).toContain('sort=date&order=desc');
+
+    const amount = screen.getByRole('button', { name: 'Amount' });
+    await user.click(amount);
+    await waitFor(() => expect(lastList()).toContain('sort=amount&order=desc'));
+    expect(screen.getByRole('columnheader', { name: 'Amount' })).toHaveAttribute('aria-sort', 'descending');
+    await user.click(screen.getByRole('button', { name: 'Amount' }));
+    await waitFor(() => expect(lastList()).toContain('sort=amount&order=asc'));
+    // A third click goes back to newest first.
+    await user.click(screen.getByRole('button', { name: 'Amount' }));
+    await waitFor(() => expect(lastList()).toContain('sort=date&order=desc'));
+
+    await user.click(screen.getByRole('button', { name: 'Transaction' }));
+    await waitFor(() => expect(lastList()).toContain('sort=merchant&order=asc'));
+    // The phone menu shows the same order.
+    expect(screen.getByLabelText('Sort by')).toHaveValue('merchant:asc');
+  });
+
   it('approves a waiting line from its row', async () => {
     const user = userEvent.setup();
     const pending = transaction({ id: ID_OCADO, cleaned_merchant: 'Ocado', review_status: 'pending_review' });

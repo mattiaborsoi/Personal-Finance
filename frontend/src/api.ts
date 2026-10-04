@@ -273,6 +273,8 @@ export interface TransactionListResponse {
   total: number;
 }
 
+export type TransactionSort = 'date' | 'amount' | 'merchant';
+
 export interface TransactionQuery {
   period?: string;
   status?: ReviewStatus | '';
@@ -284,6 +286,9 @@ export interface TransactionQuery {
   include_transfers?: boolean;
   /** Only lines filed unlike their merchant usually is (`unusual=true`). */
   unusual?: boolean;
+  /** Date (default), amount (size, ignoring the sign) or merchant name. */
+  sort?: TransactionSort;
+  order?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
 }

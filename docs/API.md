@@ -220,7 +220,7 @@ Errors: **422** when the account cannot be determined (`detail` is `{message, ca
 
 ## Transactions
 
-`GET /api/transactions?period=YYYY-MM&status=pending_review|auto_approved|manual_approved&account_id=&category=&claim_type=&q=&include_transfers=true&unusual=false&limit=100&offset=0`
+`GET /api/transactions?period=YYYY-MM&status=pending_review|auto_approved|manual_approved&account_id=&category=&claim_type=&q=&include_transfers=true&unusual=false&sort=date&order=desc&limit=100&offset=0`
 → `{ items: [TransactionOut], total }` (ordered by date desc, then created_at desc)
 
 TransactionOut:
@@ -233,7 +233,7 @@ classification_confidence, source_file, note, created_at,
 is_split, split_parent_id, parts: [TransactionPart],
 unusual: { usual_category, usual_claim_type, times, total } | null
 ```
-`claim_type` keeps lines with that claim type; a split matches through its parts only (**422** for an unknown claim type).
+`sort` is `date` (default, newest first with `order=desc`), `amount` (by size, ignoring the sign, so a large refund sorts with large spending) or `merchant` (ignoring case); `order` is `asc` or `desc`; ties fall back to newest first. `claim_type` keeps lines with that claim type; a split matches through its parts only (**422** for an unknown claim type).
 
 `unusual` is set when the line is filed unlike this merchant usually is on the same card: at least 4 approved lines of the merchant on that account (the line itself aside) and the line's own category and claim type in at most a fifth of them (`times` of `total`); never on split lines or internal transfers. `unusual=true` lists only those lines; `unusual_count` on `GET /api/periods` counts them per month.
 TransactionPart: `id, split_index, amount, category, subcategory, claim_type, is_claimable, allocated_primary_amount, allocated_secondary_amount, note`

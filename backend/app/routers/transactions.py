@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import and_, exists, func, or_, select
@@ -275,6 +276,8 @@ def list_transactions(
     q: str | None = Query(default=None, description="case-insensitive search in description / merchant / note"),
     include_transfers: bool = Query(default=True),
     unusual_only: bool = Query(default=False, alias="unusual", description="only lines filed unlike usual"),
+    sort: Literal["date", "amount", "merchant"] = Query(default="date", description="date, amount (size) or merchant"),
+    order: Literal["asc", "desc"] = Query(default="desc"),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -321,8 +324,16 @@ def list_transactions(
     if unusual_only:
         stmt = unusual.with_unusual_filter(stmt)
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    newest = (Transaction.transaction_date.desc(), Transaction.created_at.desc(), Transaction.id)
+    key = {
+        "date": Transaction.transaction_date,
+        # Size, whichever way the money went: the biggest spend and the biggest refund sort together.
+        "amount": func.abs(Transaction.amount),
+        "merchant": func.lower(Transaction.cleaned_merchant),
+    }[sort]
+    primary = key.asc() if order == "asc" else key.desc()
     rows = db.scalars(
-        stmt.order_by(Transaction.transaction_date.desc(), Transaction.created_at.desc(), Transaction.id)
+        stmt.order_by(primary, *newest)
         .limit(limit)
         .offset(offset)
     ).all()
