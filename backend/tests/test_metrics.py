@@ -323,12 +323,17 @@ def test_trends_are_oldest_first_with_zeros_for_empty_periods(seeded_db: Session
                      category="Dining", claim_type="personal")
     make_transaction(seeded_db, config, account_id=CHECKING, transaction_date=date(2026, 6, 16), amount="100.00",
                      category="Income:Other", claim_type="personal")
+    # A refund: gross spend stays 10.00, net of refunds is 6.00.
+    make_transaction(seeded_db, config, account_id=CARD, transaction_date=date(2026, 6, 20), amount="4.00",
+                     category="Dining", claim_type="personal")
 
     points = metrics.trends(seeded_db, config, periods=3)
     assert [p.period_key for p in points] == ["2026-06", "2026-07", "2026-08"]
 
     june, july, august = points
-    assert (june.household_burn, june.true_net_expense, june.net_cash_flow) == (D("10.00"), D("10.00"), D("100.00"))
+    assert june.household_burn == D("10.00")
+    assert june.household_net == D("6.00")
+    assert july.household_net == D("0.00")
     assert (july.household_burn, july.true_net_expense, july.net_cash_flow) == (D("0.00"), D("0.00"), D("0.00"))
     assert (august.household_burn, august.true_net_expense, august.net_cash_flow) == (
         D("170.00"),

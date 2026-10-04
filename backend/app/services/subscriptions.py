@@ -12,8 +12,12 @@ internal transfers nor filed under ``Transfers:``, leaving out split parents (th
 parts carry the money); merchants are grouped as ``upper(trim(cleaned_merchant))``.
 
 For each subscription the newest charge is compared with the one before it: a
-different amount is reported as a *price change* in the month of the newest charge
-("Netflix went from £10.99 to £12.99 in September"). A subscription whose first
+difference of at least :data:`MIN_CHANGE` and :data:`MIN_CHANGE_SHARE` of the old
+amount is reported as a *price change* in the month of the newest charge ("Netflix
+went from £10.99 to £12.99 in September"); pennies of exchange-rate drift are not.
+Each one is a ``bill`` when its category's group is in :data:`BILL_GROUPS` (the
+mortgage, council tax, insurance, a card's annual fee) and a ``subscription``
+otherwise (software, streaming, the gym). A subscription whose first
 charge is within the last :data:`NEW_DAYS` days is *new*; one whose next expected
 charge is more than half a cadence overdue is *stopped*. "Now" is the newest
 transaction date in the ledger (``as_of``), not today's date, because statements
@@ -47,6 +51,9 @@ AMOUNT_LOW = Decimal("0.5")
 AMOUNT_HIGH = Decimal("1.5")
 NEW_DAYS = 90
 GAP_SHARE = 2 / 3  # the share of gaps that must sit inside MONTHLY_GAP_DAYS
+MIN_CHANGE = Decimal("1.00")
+MIN_CHANGE_SHARE = Decimal("0.01")
+BILL_GROUPS = frozenset({"Bills", "Housing", "Insurance", "Fees"})
 
 TWO_PLACES = Decimal("0.01")
 
@@ -110,7 +117,8 @@ def detect(charges: list[Charge], as_of: date) -> SubscriptionOut | None:
     else:
         status = "active"
     change = None
-    if last.amount != previous.amount:
+    moved = abs(last.amount - previous.amount)
+    if moved >= MIN_CHANGE and moved >= previous.amount * MIN_CHANGE_SHARE:
         change = SubscriptionChange(
             from_amount=previous.amount, to_amount=last.amount, month=last.day.strftime("%Y-%m")
         )
@@ -118,6 +126,7 @@ def detect(charges: list[Charge], as_of: date) -> SubscriptionOut | None:
     return SubscriptionOut(
         merchant=last.merchant,
         category=last.category,
+        kind="bill" if last.category.split(":", 1)[0] in BILL_GROUPS else "subscription",
         cadence=cadence,
         amount=last.amount,
         monthly_cost=monthly_cost,

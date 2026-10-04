@@ -580,6 +580,8 @@ export interface MetricsOut {
 export interface TrendPoint {
   period_key: string;
   household_burn: Money;
+  /** household_burn less refunds. */
+  household_net: Money;
   true_net_expense: Money;
   net_cash_flow: Money;
 }
@@ -614,6 +616,8 @@ export interface SubscriptionChange {
 export interface SubscriptionOut {
   merchant: string;
   category: string;
+  /** A bill (housing, bills, insurance, fees) or a subscription (everything else). */
+  kind: 'bill' | 'subscription';
   cadence: SubscriptionCadence;
   /** The latest charge, a positive magnitude. */
   amount: Money;

@@ -49,6 +49,29 @@ def test_detect_flags_a_price_rise_in_the_month_it_happened() -> None:
     assert found.next_expected == date(2026, 10, 10)
 
 
+def test_pennies_of_drift_are_not_a_price_change() -> None:
+    days = [date(2026, 6, 1), date(2026, 7, 1), date(2026, 8, 1), date(2026, 9, 1)]
+    as_of = date(2026, 9, 20)
+    # 22p on a phone bill, 4p of exchange rate on software: under £1, so not flagged.
+    assert detect(charges("Phone Co", days, ["32.22", "32.22", "32.22", "32.00"]), as_of=as_of).change is None
+    assert detect(charges("Soft Co", days, ["13.24", "13.24", "13.24", "13.28"]), as_of=as_of).change is None
+    # £1 or more but under 1% of a large bill: not flagged either.
+    big = detect(charges("Lender", days, ["1650.00", "1650.00", "1650.00", "1655.00"]), as_of=as_of)
+    assert big.change is None
+    rise = detect(charges("Lender", days, ["1650.00", "1650.00", "1650.00", "1690.00"]), as_of=as_of)
+    assert rise.change is not None and rise.change.to_amount == D("1690.00")
+
+
+def test_bills_and_subscriptions_are_told_apart_by_category() -> None:
+    days = [date(2026, 6, 1), date(2026, 7, 1), date(2026, 8, 1), date(2026, 9, 1)]
+    as_of = date(2026, 9, 20)
+    amounts = ["50.00"] * 4
+    assert detect(charges("Water Co", days, amounts, "Bills:Water"), as_of=as_of).kind == "bill"
+    assert detect(charges("Lender", days, amounts, "Housing:Mortgage"), as_of=as_of).kind == "bill"
+    assert detect(charges("Gym", days, amounts, "Health:Gym"), as_of=as_of).kind == "subscription"
+    assert detect(charges("Streamer", days, amounts), as_of=as_of).kind == "subscription"
+
+
 def test_detect_new_stopped_and_yearly() -> None:
     days = [date(2026, 7, 1), date(2026, 8, 1), date(2026, 9, 1)]
     new = detect(charges("Gym", days, ["40.00"] * 3), as_of=date(2026, 9, 15))

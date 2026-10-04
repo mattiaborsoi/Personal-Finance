@@ -131,6 +131,7 @@ def trends(db: Session, config: AppConfig, periods: int = 6, ending: str | None 
             TrendPoint(
                 period_key=key,
                 household_burn=m.macro.household_burn,
+                household_net=quantize(m.macro.household_burn - abs(m.macro.refunds)),
                 true_net_expense=m.micro.true_net_expense,
                 net_cash_flow=m.liquidity.net_cash_flow,
             )

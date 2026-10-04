@@ -159,8 +159,18 @@ export interface HeadlineChange {
   previousLabel: string;
 }
 
-export function headlineChange(trend: ReadonlyArray<TrendPoint>, period: string, view: MetricView): HeadlineChange | null {
-  const key = viewDefinition(view).trendKey;
+/** The trend series behind a view: Household follows the net/gross switch, like its headline. */
+export function trendKeyFor(view: MetricView, refunds: RefundsMode = 'net'): ViewDefinition['trendKey'] {
+  return view === 'macro' && refunds === 'net' ? 'household_net' : viewDefinition(view).trendKey;
+}
+
+export function headlineChange(
+  trend: ReadonlyArray<TrendPoint>,
+  period: string,
+  view: MetricView,
+  refunds: RefundsMode = 'net',
+): HeadlineChange | null {
+  const key = trendKeyFor(view, refunds);
   const at = trend.findIndex((p) => p.period_key === period);
   if (at <= 0) return null;
   const current = toNumber(trend[at][key]);

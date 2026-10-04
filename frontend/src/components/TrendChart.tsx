@@ -4,12 +4,14 @@ import type { TrendPoint } from '../api';
 import { useCurrency } from '../config/ConfigContext';
 import { periodShortLabel } from '../lib/dates';
 import { formatMoney, toNumber } from '../lib/money';
-import { trendYDomain, viewDefinition, type MetricView } from '../lib/views';
+import { trendKeyFor, trendYDomain, viewDefinition, type MetricView, type RefundsMode } from '../lib/views';
 import { EmptyState } from './EmptyState';
 
 interface Props {
   data: TrendPoint[];
   view: MetricView;
+  /** Household: plot net of refunds (the default) or gross, as the headline shows. */
+  refunds?: RefundsMode;
   /** Period keys with lines still to review: plotted hollow, since their figure is not final. */
   incomplete?: ReadonlySet<string>;
 }
@@ -74,13 +76,13 @@ interface DotProps {
 }
 
 /** Six-period trend for the active metric view: a single series, so no legend; a crosshair tooltip carries the values. */
-export function TrendChart({ data, view, incomplete }: Props) {
+export function TrendChart({ data, view, refunds = 'net', incomplete }: Props) {
   const symbol = useCurrency();
   const definition = viewDefinition(view);
   const tokens = useTokens([definition.accentToken, 'hairline', 'ink-3', 'surface']);
   const accent = tokens[definition.accentToken];
   const points: Point[] = data.map((p) => {
-    const value = toNumber(p[definition.trendKey]);
+    const value = toNumber(p[trendKeyFor(view, refunds)]);
     return {
       period: p.period_key,
       label: periodShortLabel(p.period_key),

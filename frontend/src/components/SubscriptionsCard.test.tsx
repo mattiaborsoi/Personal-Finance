@@ -9,6 +9,7 @@ function sub(overrides: Partial<SubscriptionOut> = {}): SubscriptionOut {
   return {
     merchant: 'Netflix',
     category: 'Subscriptions:Entertainment',
+    kind: 'subscription',
     cadence: 'monthly',
     amount: '12.99',
     monthly_cost: '12.99',
@@ -41,7 +42,7 @@ describe('<SubscriptionsCard />', () => {
 
     renderWithProviders(<SubscriptionsCard />);
 
-    const card = await screen.findByRole('region', { name: 'Subscriptions' });
+    const card = await screen.findByRole('region', { name: 'Regular payments' });
     expect(card).toHaveTextContent('3 regular payments, about £61.24 a month');
     const items = within(card).getAllByRole('listitem');
     expect(items).toHaveLength(4);
@@ -54,6 +55,30 @@ describe('<SubscriptionsCard />', () => {
     expect(items[2]).toHaveTextContent('£8.25');
     expect(items[3]).toHaveTextContent('Stopped');
     expect(items[3]).toHaveTextContent('last seen 1 Mar 2026');
+  });
+
+  it('puts bills first, each group with its own monthly total', async () => {
+    serve({
+      items: [
+        sub({ merchant: 'Netflix', change: null }),
+        sub({ merchant: 'Lender', kind: 'bill', category: 'Housing:Mortgage', amount: '900.00', monthly_cost: '900.00', change: null }),
+        sub({ merchant: 'Water Co', kind: 'bill', category: 'Bills:Water', amount: '50.00', monthly_cost: '50.00', change: null }),
+      ],
+      total_monthly: '962.99',
+      as_of: '2026-09-20',
+    });
+
+    renderWithProviders(<SubscriptionsCard />);
+
+    const bills = await screen.findByRole('list', { name: 'Bills' });
+    expect(within(bills).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      expect.stringContaining('Lender'),
+      expect.stringContaining('Water Co'),
+    ]);
+    expect(screen.getByRole('region', { name: 'Bills' })).toHaveTextContent('about £950.00 a month');
+    const subscriptions = screen.getByRole('list', { name: 'Subscriptions' });
+    expect(within(subscriptions).getByText('Netflix')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Subscriptions' })).toHaveTextContent('about £12.99 a month');
   });
 
   it('shows the top few with "Show all" for the rest', async () => {

@@ -579,7 +579,7 @@ describe('<SystemPanel /> danger zone', () => {
     const configFetches = calls.filter((c) => c.method === 'GET' && c.url === '/api/config');
     expect(configFetches).toHaveLength(2);
     expect(calls.indexOf(configFetches[1])).toBeGreaterThan(calls.indexOf(resets(calls)[0]));
-    expect(await screen.findByText('Upload a statement to get started, or type a period above.')).toBeInTheDocument();
+    expect(await screen.findByText('Upload a statement to get started.')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Dismiss' }));
     expect(screen.queryByRole('status')).not.toBeInTheDocument();

@@ -62,7 +62,7 @@ export function MetricsSection({ period, view, refreshKey, periods = null, aside
               hint={definition.hint}
               signed={view === 'liquidity'}
               accentClass={definition.accent.bg}
-              change={trends.data ? headlineChange(trends.data, period, view) : null}
+              change={trends.data ? headlineChange(trends.data, period, view, refunds) : null}
               refunds={view === 'macro' ? { mode: refunds, onChange: changeRefunds } : undefined}
               people={view === 'macro' ? metrics.data.macro.by_person : undefined}
             />
@@ -71,7 +71,7 @@ export function MetricsSection({ period, view, refreshKey, periods = null, aside
               {trends.error && <ErrorMessage message={trends.error.message} onRetry={trends.reload} />}
               {trends.data ? (
                 <Suspense fallback={<LoadingState label="Loading chart" />}>
-                  <TrendChart data={trends.data} view={view} incomplete={incomplete} />
+                  <TrendChart data={trends.data} view={view} refunds={refunds} incomplete={incomplete} />
                 </Suspense>
               ) : (
                 !trends.error && <LoadingState />

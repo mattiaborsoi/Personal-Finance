@@ -71,7 +71,7 @@ describe('<DashboardPage />', () => {
     expect(household.compareDocumentPosition(investments) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Run audit' })).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Audit' })).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Subscriptions' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Regular payments' })).toBeInTheDocument();
   });
 
   it('reads the metric view from ?view= and writes a new choice back, keeping the period', async () => {

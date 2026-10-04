@@ -38,6 +38,7 @@ from app.routers import (
 )
 from app.services.accounts import seed_accounts
 from app.services.backups import BackupScheduler, scheduler_wanted
+from app.services.merchant_tidy import tidy_stored_names
 from app.services.periods import PeriodClosedError
 
 log = logging.getLogger(__name__)
@@ -79,6 +80,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_db(get_engine())
     with get_session_factory()() as db:
         changed = seed_accounts(db, config)
+        tidy_stored_names(db)
         db.commit()
     if Path(settings.config_path).is_file():
         source = f"defaults from {settings.config_path}"

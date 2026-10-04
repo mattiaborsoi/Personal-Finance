@@ -708,10 +708,18 @@ within 20 to 45) and there are at least three charges, yearly when the median ga
 350 to 380 days and there are at least two; every charge within half and one and a
 half times the median amount. Lines of any review status count, except internal
 transfers, `Transfers:` categories and split parents. The newest charge is compared
-with the one before it for a price change, a first charge within 90 days makes it
+with the one before it for a price change (at least £1 and 1%, so exchange-rate
+pennies are not one), a first charge within 90 days makes it
 *new*, a next expected charge more than half a cadence overdue makes it *stopped*;
 "now" is the newest transaction date in the ledger. `GET /api/subscriptions` feeds
-the dashboard card.
+the dashboard's Regular payments card, which shows bills (the Bills, Housing,
+Insurance and Fees groups) before subscriptions.
+
+Merchant names drop trailing bank codes (`DD`, `DDR`, `BGC`, `FT`, `STO`, `TFR`,
+`DEB`, `CHG`, `UNP`) and "First Payment" along with the references in front of them,
+so "ACME WATER 900000000000 DDR" becomes "Acme Water". Names stored before this
+are tidied the same way at startup (`app/services/merchant_tidy.py`, transactions and
+merchant memory), so a merchant's old and new lines keep one name.
 
 ### 3g. Unusual lines (`app/services/unusual.py`, no AI)
 

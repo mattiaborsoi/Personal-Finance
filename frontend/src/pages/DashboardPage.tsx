@@ -161,7 +161,7 @@ export function DashboardPage() {
             hint={
               settingUp
                 ? 'Once the steps above are done, each month your statements cover appears here.'
-                : 'Upload a statement to get started, or type a period above.'
+                : 'Upload a statement to get started.'
             }
             action={
               settingUp ? undefined : (

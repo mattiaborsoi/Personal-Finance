@@ -538,6 +538,8 @@ class MetricsOut(BaseModel):
 class TrendPoint(BaseModel):
     period_key: str
     household_burn: Decimal
+    # household_burn less refunds: the Household headline's default "net" figure.
+    household_net: Decimal
     true_net_expense: Decimal
     net_cash_flow: Decimal
 
@@ -575,6 +577,8 @@ class SubscriptionChange(BaseModel):
 class SubscriptionOut(BaseModel):
     merchant: str
     category: str
+    kind: Literal["bill", "subscription"]
+    """A bill (housing, bills, insurance, fees) or a subscription (everything else)."""
     cadence: Literal["monthly", "yearly"]
     amount: Decimal
     """The latest charge, as a positive magnitude."""

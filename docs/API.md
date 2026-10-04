@@ -364,7 +364,7 @@ All money is a string with two decimals, in "secondary owes primary" terms unles
 ```
 `macro.by_category` is gross debits per category plus a `Partner claims` row when the period has claims, so the rows add up exactly to `household_burn`; categories with no debit are left out. `macro.refunds` is the total of credits in spend categories for the period, reported for display and never deducted from the burn. `macro.by_person` lists the primary then the secondary user: `paid` is the gross debits on the accounts billed to them plus the claims they paid, `bears` their net share after the split (refunds netted) plus their side of the claims.
 
-`GET /api/metrics/trends?periods=6&ending=YYYY-MM` → `[ {period_key, household_burn, true_net_expense, net_cash_flow} ]` (oldest first; `periods` 1–36; `ending` is the last month of the window, by default the newest period, **422** when malformed; months with no data are zeros)
+`GET /api/metrics/trends?periods=6&ending=YYYY-MM` → `[ {period_key, household_burn, household_net, true_net_expense, net_cash_flow} ]` (`household_net` is `household_burn` less refunds, the Household headline's default; oldest first; `periods` 1–36; `ending` is the last month of the window, by default the newest period, **422** when malformed; months with no data are zeros)
 
 `GET /api/metrics/investment` → `{ accounts: [{account_id, total_deposits, total_withdrawals, net_invested_capital, realized_gain}], total_deposits, total_withdrawals, net_invested_capital, realized_gain }`
 
@@ -387,7 +387,7 @@ AuditReportOut:
 
 ## Subscriptions
 
-`GET /api/subscriptions` → `{ "items": [ { merchant, category, cadence: "monthly"|"yearly", amount, monthly_cost, charges, first_date, last_date, next_expected, status: "active"|"new"|"stopped", change: { from, to, month } | null } ], "total_monthly", "as_of" }`. Recurring payments found from the ledger without AI (see TECHNICAL.md, "Subscriptions and price rises"): running ones first by monthly cost, stopped ones last; `change` is set when the newest charge differs from the one before it (`month` is the newest charge's); `total_monthly` adds up the ones that have not stopped; `as_of` is the newest transaction date, which "new" and "stopped" are judged against. Primary only.
+`GET /api/subscriptions` → `{ "items": [ { merchant, category, kind: "bill"|"subscription", cadence: "monthly"|"yearly", amount, monthly_cost, charges, first_date, last_date, next_expected, status: "active"|"new"|"stopped", change: { from, to, month } | null } ], "total_monthly", "as_of" }`. Recurring payments found from the ledger without AI (see TECHNICAL.md, "Subscriptions and price rises"): running ones first by monthly cost, stopped ones last; `kind` is `bill` for the Bills, Housing, Insurance and Fees groups and `subscription` otherwise; `change` is set when the newest charge differs from the one before it by at least £1 and 1% (`month` is the newest charge's); `total_monthly` adds up the ones that have not stopped; `as_of` is the newest transaction date, which "new" and "stopped" are judged against. Primary only.
 
 ## Merchant memory
 

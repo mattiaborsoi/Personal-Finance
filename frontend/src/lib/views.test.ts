@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { metrics } from '../test/fixtures';
-import { VIEWS, groupCategories, headlineChange, selectViewFigures, trendYDomain } from './views';
+import { VIEWS, groupCategories, headlineChange, selectViewFigures, trendKeyFor, trendYDomain } from './views';
 
 describe('trendYDomain', () => {
   it('pins the axis to 0–100 when every value is zero or missing, so no £1–£4 ticks appear over nothing', () => {
@@ -28,8 +28,8 @@ describe('views', () => {
 
 describe('headlineChange', () => {
   const trend = [
-    { period_key: '2026-02', household_burn: '1000.00', true_net_expense: '600.00', net_cash_flow: '0.00' },
-    { period_key: '2026-03', household_burn: '1120.00', true_net_expense: '600.00', net_cash_flow: '-50.00' },
+    { period_key: '2026-02', household_burn: '1000.00', household_net: '1000.00', true_net_expense: '600.00', net_cash_flow: '0.00' },
+    { period_key: '2026-03', household_burn: '1120.00', household_net: '1120.00', true_net_expense: '600.00', net_cash_flow: '-50.00' },
   ];
 
   it('compares the month with the one before it in the loaded trend', () => {
@@ -81,5 +81,13 @@ describe('selectViewFigures', () => {
     expect(macro.kind === 'category' && macro.claims).toEqual({ amount: '300.00', count: null });
     expect(micro.kind === 'category' && micro.rows.map((r) => r.category)).toEqual(['Groceries']);
     expect(micro.kind === 'category' && micro.claims).toEqual({ amount: '150.00', count: null });
+  });
+});
+
+describe('trendKeyFor', () => {
+  it('follows the net/gross switch for Household only', () => {
+    expect(trendKeyFor('macro')).toBe('household_net');
+    expect(trendKeyFor('macro', 'gross')).toBe('household_burn');
+    expect(trendKeyFor('micro', 'net')).toBe('true_net_expense');
   });
 });

@@ -68,6 +68,11 @@ _DATE_RE = re.compile(r"^\d{1,2}(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|D
 # digits: 'REF123456', 'AB12C3', 'ORDER1234567'.
 _REF_RE = re.compile(r"^(?=(?:.*\d){2})(?=.*[A-Z])[A-Z0-9\-]{5,}$", re.IGNORECASE)
 
+# Bank narrative codes printed after the payee: direct debit (DD, DDR), bank giro
+# credit (BGC), faster payment (FT), standing order (STO), transfer (TFR), debit (DEB),
+# charge (CHG), unpaid (UNP). They hide the reference number in front of them.
+_BANK_CODES = frozenset({"DDR", "DD", "BGC", "FT", "STO", "TFR", "DEB", "CHG", "UNP"})
+
 # Short all-caps tokens that contain a vowel but are nevertheless initialisms.
 _KNOWN_ACRONYMS = frozenset({"EE", "AA", "UPS", "RAC", "ITV", "TUI", "EON", "AIB", "IHG"})
 _VOWELS = frozenset("AEIOU")
@@ -97,7 +102,8 @@ def clean_merchant_name(raw_description: str) -> str:
        trailing punctuation.
     4. Drop company-form tokens anywhere (``LTD``, ``LIMITED``, ``PLC``...).
     5. Drop trailing noise tokens while more than one token remains: store / card /
-       reference / phone numbers, dates, country and city suffixes, ``CR``/``DR``.
+       reference / phone numbers, dates, country and city suffixes, ``CR``/``DR``,
+       bank codes (``DD``, ``DDR``, ``BGC``, ``FT``...) and ``First Payment``.
     6. Title-case: all-caps tokens become ``Title`` (``'Sainsbury's'``, ``'Co-Op'``);
        short all-caps initialisms of at most three letters with no vowel
        (``'BP'``, ``'M&S'``, ``'TFL'``) are kept as-is, as are a few known
@@ -116,8 +122,7 @@ def clean_merchant_name(raw_description: str) -> str:
 
     tokens = [_normalise_token(t) for t in text.split()]
     tokens = [t for t in tokens if t and t.upper() not in _COMPANY_TOKENS]
-    while len(tokens) > 1 and _is_trailing_noise(tokens[-1]):
-        tokens.pop()
+    tokens = strip_trailing_noise(tokens)
 
     cleaned = " ".join(_case_token(t) for t in tokens).strip(" -*:,./")
     if not cleaned:
@@ -141,10 +146,25 @@ def _normalise_token(token: str) -> str:
     return token.rstrip(".,;:")
 
 
+def strip_trailing_noise(tokens: list[str]) -> list[str]:
+    """Drop trailing references, bank codes and "First Payment" while more than one token remains."""
+    tokens = list(tokens)
+    while len(tokens) > 1:
+        last = tokens[-1].upper()
+        if _is_trailing_noise(tokens[-1]) or last == "FIRST":
+            tokens.pop()
+        elif last == "PAYMENT" and len(tokens) > 2 and tokens[-2].upper() == "FIRST":
+            del tokens[-2:]
+        else:
+            break
+    return tokens
+
+
 def _is_trailing_noise(token: str) -> bool:
     upper = token.upper()
     return (
         upper in _LOCATION_TOKENS
+        or upper in _BANK_CODES
         or bool(_NUMERIC_RE.match(token))
         or bool(_DATE_RE.match(token))
         or bool(_REF_RE.match(token))
