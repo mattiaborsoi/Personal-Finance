@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { fixtureConfig, renderWithProviders } from '../test/utils';
 import { TransactionFilters, type TransactionFilterValues } from './TransactionFilters';
 
-const values: TransactionFilterValues = { period: '', status: '', account_id: '', category: '', q: '', include_transfers: false, unusual: false };
+const values: TransactionFilterValues = { period: '', status: '', account_id: '', category: '', claim_type: '', q: '', include_transfers: false, unusual: false };
 
 describe('<TransactionFilters />', () => {
   it('groups the category filter under "emoji Group" headings, bare names on their own and Uncategorised last', async () => {

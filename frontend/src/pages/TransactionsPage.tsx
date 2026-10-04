@@ -1,9 +1,11 @@
 import { Filter, Lock, Receipt } from 'lucide-react';
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useRefreshReviewBadge } from '../hooks/reviewBadge';
 import {
   api,
   editErrorMessage,
+  type ClaimType,
   type ReviewStatus,
   type TransactionOut,
   type TransactionPart,
@@ -35,6 +37,7 @@ function readFilters(params: URLSearchParams): TransactionFilterValues & { offse
     status: STATUSES.includes(status as ReviewStatus) ? (status as ReviewStatus) : '',
     account_id: params.get('account_id') ?? '',
     category: params.get('category') ?? '',
+    claim_type: params.get('claim_type') ?? '',
     q: params.get('q') ?? '',
     include_transfers: params.get('include_transfers') !== 'false',
     unusual: params.get('unusual') === 'true',
@@ -53,6 +56,7 @@ export function TransactionsPage() {
         status: filters.status || undefined,
         account_id: filters.account_id || undefined,
         category: filters.category || undefined,
+        claim_type: (filters.claim_type || undefined) as ClaimType | undefined,
         q: filters.q || undefined,
         include_transfers: filters.include_transfers,
         unusual: filters.unusual || undefined,
@@ -62,6 +66,7 @@ export function TransactionsPage() {
     `transactions:${searchParams.toString()}`,
   );
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+  const refreshBadge = useRefreshReviewBadge();
   /** The transaction whose split dialog is open. */
   const [splitting, setSplitting] = useState<TransactionOut | null>(null);
 
@@ -74,6 +79,7 @@ export function TransactionsPage() {
     if (next.status) params.status = next.status;
     if (next.account_id) params.account_id = next.account_id;
     if (next.category) params.category = next.category;
+    if (next.claim_type) params.claim_type = next.claim_type;
     if (next.q) params.q = next.q;
     if (!next.include_transfers) params.include_transfers = 'false';
     if (next.unusual) params.unusual = 'true';
@@ -101,6 +107,24 @@ export function TransactionsPage() {
         if (hidden) return { items: prev.items.filter((t) => t.id !== tx.id), total: prev.total - 1 };
         return { ...prev, items: prev.items.map((t) => (t.id === tx.id ? updated : t)) };
       });
+    } catch (err) {
+      setRowError(tx.id, editErrorMessage(err));
+    }
+  }
+
+  /** Approves a waiting line as it stands; it leaves a list filtered to "pending review". */
+  async function approve(tx: TransactionOut) {
+    setRowError(tx.id, null);
+    try {
+      const updated = await api.approveTransaction(tx.id, { remember: true });
+      list.setData((prev) => {
+        if (!prev) return prev;
+        if (filters.status === 'pending_review') {
+          return { items: prev.items.filter((t) => t.id !== tx.id), total: prev.total - 1 };
+        }
+        return { ...prev, items: prev.items.map((t) => (t.id === tx.id ? updated : t)) };
+      });
+      refreshBadge();
     } catch (err) {
       setRowError(tx.id, editErrorMessage(err));
     }
@@ -190,6 +214,7 @@ export function TransactionsPage() {
               onSplit={setSplitting}
               onUnsplit={unsplit}
               onPatchPart={patchPart}
+              onApprove={approve}
             />
             {list.data.total > 0 && (
               <div className="border-t border-hairline px-5 py-3 sm:px-6">

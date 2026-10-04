@@ -111,6 +111,44 @@ describe('<TransactionsPage />', () => {
     expect(values).not.toContain('');
   });
 
+  it('filters by claim type from the URL and the Claim type menu', async () => {
+    const user = userEvent.setup();
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse([]);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: rows, total: 2 });
+      return undefined;
+    });
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions?claim_type=shared_equal' });
+    await screen.findByRole('button', { name: 'Ocado' });
+    expect(screen.getByLabelText('Claim type')).toHaveValue('shared_equal');
+    expect(calls.some((c) => c.url.includes('claim_type=shared_equal'))).toBe(true);
+
+    await user.selectOptions(screen.getByLabelText('Claim type'), 'personal');
+    await waitFor(() => expect(calls.some((c) => c.url.includes('claim_type=personal'))).toBe(true));
+  });
+
+  it('approves a waiting line from its row', async () => {
+    const user = userEvent.setup();
+    const pending = transaction({ id: ID_OCADO, cleaned_merchant: 'Ocado', review_status: 'pending_review' });
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse([]);
+      if (method === 'GET' && url.startsWith('/api/transactions?')) return jsonResponse({ items: [pending], total: 1 });
+      if (method === 'POST' && url === `/api/transactions/${ID_OCADO}/approve`) {
+        return jsonResponse({ ...pending, review_status: 'manual_approved' });
+      }
+      return undefined;
+    });
+
+    renderWithProviders(<TransactionsPage />, { route: '/transactions' });
+    await user.click(await screen.findByRole('button', { name: 'Approve Ocado' }));
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ remember: true });
+    // Approved: the button goes, the status says so.
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Approve Ocado' })).not.toBeInTheDocument());
+  });
+
   it('makes rows in a closed period read-only and says so', async () => {
     mockFetch(({ method, url }) => {
       if (method === 'GET' && url === '/api/periods') return jsonResponse(periods);

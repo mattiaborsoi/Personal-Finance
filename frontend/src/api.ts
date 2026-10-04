@@ -278,6 +278,8 @@ export interface TransactionQuery {
   status?: ReviewStatus | '';
   account_id?: string;
   category?: string;
+  /** Lines (or split parts) with this claim type. */
+  claim_type?: ClaimType | '';
   q?: string;
   include_transfers?: boolean;
   /** Only lines filed unlike their merchant usually is (`unusual=true`). */

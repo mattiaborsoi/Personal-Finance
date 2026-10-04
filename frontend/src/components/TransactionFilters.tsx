@@ -1,10 +1,10 @@
 import { Search } from 'lucide-react';
 import type { FormEvent } from 'react';
 import type { PeriodOut, ReviewStatus } from '../api';
-import { useConfig } from '../config/ConfigContext';
+import { useConfig, useNames } from '../config/ConfigContext';
 import { categoryMenuGroups } from '../lib/categories';
 import { periodLabel } from '../lib/dates';
-import { accountLabel, reviewStatusLabel } from '../lib/format';
+import { accountLabel, claimTypeLabel, reviewStatusLabel } from '../lib/format';
 import { btnSecondary, checkboxBase, cx, inputBase, labelBase, selectBase } from '../lib/ui';
 
 export interface TransactionFilterValues {
@@ -12,6 +12,8 @@ export interface TransactionFilterValues {
   status: ReviewStatus | '';
   account_id: string;
   category: string;
+  /** A claim type, or '' for any. */
+  claim_type: string;
   q: string;
   include_transfers: boolean;
   /** Only lines filed unlike their merchant usually is on that card. */
@@ -28,6 +30,7 @@ const STATUSES: Array<ReviewStatus | ''> = ['', 'pending_review', 'auto_approved
 
 export function TransactionFilters({ periods, values, onChange }: Props) {
   const config = useConfig();
+  const names = useNames();
 
   function set<K extends keyof TransactionFilterValues>(key: K, value: TransactionFilterValues[K]) {
     onChange({ ...values, [key]: value });
@@ -40,7 +43,7 @@ export function TransactionFilters({ periods, values, onChange }: Props) {
   }
 
   return (
-    <form onSubmit={submitSearch} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Filters">
+    <form onSubmit={submitSearch} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5" aria-label="Filters">
       <div>
         <label htmlFor="f-period" className={labelBase}>
           Period
@@ -123,6 +126,24 @@ export function TransactionFilters({ periods, values, onChange }: Props) {
               ))
             ),
           )}
+        </select>
+      </div>
+      <div>
+        <label htmlFor="f-claim" className={labelBase}>
+          Claim type
+        </label>
+        <select
+          id="f-claim"
+          className={cx(selectBase, 'mt-1.5')}
+          value={values.claim_type}
+          onChange={(e) => set('claim_type', e.target.value)}
+        >
+          <option value="">Any claim type</option>
+          {config.claim_types.map((ct) => (
+            <option key={ct} value={ct}>
+              {claimTypeLabel(ct, names)}
+            </option>
+          ))}
         </select>
       </div>
       <div className="sm:col-span-2 lg:col-span-3">

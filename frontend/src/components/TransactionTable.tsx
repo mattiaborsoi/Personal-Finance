@@ -15,6 +15,7 @@ interface Props {
   onSplit: (tx: TransactionOut) => void;
   onUnsplit: (tx: TransactionOut) => Promise<void>;
   onPatchPart: (tx: TransactionOut, part: TransactionPart, patch: TransactionPatch) => Promise<void>;
+  onApprove?: (tx: TransactionOut) => Promise<void>;
 }
 
 const NONE: ReadonlySet<string> = new Set();
@@ -37,6 +38,7 @@ export function TransactionTable({
   onSplit,
   onUnsplit,
   onPatchPart,
+  onApprove,
 }: Props) {
   if (items.length === 0) {
     return (
@@ -88,6 +90,7 @@ export function TransactionTable({
               onSplit={() => onSplit(tx)}
               onUnsplit={() => onUnsplit(tx)}
               onPatchPart={(part, patch) => onPatchPart(tx, part, patch)}
+              onApprove={onApprove ? () => onApprove(tx) : undefined}
             />
           ))}
         </tbody>

@@ -1,4 +1,4 @@
-import { CircleAlert, CornerDownRight, Scissors, Trash2, Ungroup } from 'lucide-react';
+import { Check, CircleAlert, CornerDownRight, Scissors, Trash2, Ungroup } from 'lucide-react';
 import { useState } from 'react';
 import { UNCATEGORIZED, type TransactionOut, type TransactionPart, type TransactionPatch } from '../api';
 import { useConfig } from '../config/ConfigContext';
@@ -26,6 +26,8 @@ interface Props {
   onSplit: () => void;
   onUnsplit: () => Promise<void>;
   onPatchPart: (part: TransactionPart, patch: TransactionPatch) => Promise<void>;
+  /** Approves a line still waiting for review, as it stands. */
+  onApprove?: () => Promise<void>;
   error?: string;
   /** Errors keyed by part id, for the sub-rows of a split transaction. */
   partErrors?: Record<string, string>;
@@ -83,6 +85,7 @@ export function TransactionRow({
   onSplit,
   onUnsplit,
   onPatchPart,
+  onApprove,
   error,
   partErrors = NO_ERRORS,
   readOnly = false,
@@ -92,6 +95,16 @@ export function TransactionRow({
   const [saving, setSaving] = useState(false);
   const [savingPart, setSavingPart] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
+
+  async function approve() {
+    if (!onApprove) return;
+    setSaving(true);
+    try {
+      await onApprove();
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function patch(change: TransactionPatch) {
     setSaving(true);
@@ -226,6 +239,18 @@ export function TransactionRow({
         </td>
         <td className={cx(cell, 'col-start-2 whitespace-nowrap text-right', actionsRow)}>
           <span className="inline-flex items-center justify-end gap-1">
+            {onApprove && tx.review_status === 'pending_review' && (
+              <button
+                type="button"
+                className={cx(btnIcon, 'text-brand hover:text-brand-strong')}
+                aria-label={`Approve ${merchant}`}
+                title={readOnly ? 'This period is closed' : 'Approve as it stands'}
+                disabled={locked}
+                onClick={() => void approve()}
+              >
+                <Check className="h-4 w-4" aria-hidden="true" />
+              </button>
+            )}
             {tx.is_split ? (
               <>
                 <button

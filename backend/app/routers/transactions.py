@@ -4,7 +4,7 @@ import uuid
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth import require_primary
@@ -271,6 +271,7 @@ def list_transactions(
     status_: str | None = Query(default=None, alias="status"),
     account_id: str | None = Query(default=None),
     category: str | None = Query(default=None),
+    claim_type: str | None = Query(default=None, description="lines (or split parts) with this claim type"),
     q: str | None = Query(default=None, description="case-insensitive search in description / merchant / note"),
     include_transfers: bool = Query(default=True),
     unusual_only: bool = Query(default=False, alias="unusual", description="only lines filed unlike usual"),
@@ -295,6 +296,12 @@ def list_transactions(
         part = Transaction.__table__.alias("part")
         in_parts = exists().where(part.c.split_parent_id == Transaction.id, part.c.category == category)
         stmt = stmt.where(or_(Transaction.category == category, in_parts))
+    if claim_type:
+        if claim_type not in CLAIM_TYPES:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid claim_type")
+        part = Transaction.__table__.alias("claim_part")
+        in_parts = exists().where(part.c.split_parent_id == Transaction.id, part.c.claim_type == claim_type)
+        stmt = stmt.where(or_(and_(Transaction.is_split.is_(False), Transaction.claim_type == claim_type), in_parts))
     if q:
         pattern = f"%{_escape_like(q.strip())}%"
         part = Transaction.__table__.alias("note_part")
