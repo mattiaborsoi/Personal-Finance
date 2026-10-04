@@ -18,6 +18,10 @@ describe('<ClosePeriodButton />', () => {
     renderWithProviders(<ClosePeriodButton period={period()} periodKey="2026-03" onChanged={onChanged} />);
 
     await user.click(screen.getByRole('button', { name: 'Close period' }));
+    // The question says what closing does, for the month on show.
+    expect(
+      screen.getByText("Close March 2026? Its lines lock and the month's summary and settlement are recorded. You can reopen it later."),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Confirm' }));
 
     const alert = await screen.findByRole('alert');

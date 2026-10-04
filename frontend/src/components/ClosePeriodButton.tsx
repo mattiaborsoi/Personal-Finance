@@ -1,6 +1,7 @@
 import { Lock, Unlock } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage, isApiError, type PeriodOut } from '../api';
+import { periodLabel } from '../lib/dates';
 import { btnDanger, btnSecondary, btnSmall, cx } from '../lib/ui';
 import { ConfirmButton } from './ConfirmButton';
 import { ErrorMessage } from './ErrorMessage';
@@ -100,7 +101,7 @@ export function ClosePeriodButton({ period, periodKey, onChanged }: Props) {
         </Notice>
       ) : (
         <ConfirmButton
-          confirmLabel="Close this period? The auditor runs first."
+          confirmLabel={`Close ${periodLabel(periodKey)}? Its lines lock and the month's summary and settlement are recorded. You can reopen it later.`}
           onConfirm={() => close(false)}
           tone="secondary"
           small
