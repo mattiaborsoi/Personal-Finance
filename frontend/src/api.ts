@@ -586,6 +586,17 @@ export interface TrendPoint {
   net_cash_flow: Money;
 }
 
+/** A calendar year: its months added up, month by month, and the same months of the year before. */
+export interface YearMetricsOut {
+  year: number;
+  /** Every month of the year added up; `period_key` is the year ("2026"). */
+  totals: MetricsOut;
+  /** January to December, or to the newest month on record in the current year. */
+  months: TrendPoint[];
+  /** The year before over the same months, when it has any month on record. */
+  previous: TrendPoint | null;
+}
+
 export interface InvestmentAccountMetrics {
   account_id: string;
   total_deposits: Money;
@@ -1520,6 +1531,7 @@ export const api = {
 
   // Metrics
   getMetrics: (periodKey: string) => request<MetricsOut>('GET', `/metrics/${enc(periodKey)}`),
+  getYearMetrics: (year: number) => request<YearMetricsOut>('GET', `/metrics/year/${year}`),
   /** `ending` is the last period of the window (YYYY-MM); the server defaults to the newest. */
   getTrends: (periods = 6, ending?: string) =>
     request<TrendPoint[]>('GET', '/metrics/trends', { query: { periods, ending } }),

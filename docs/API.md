@@ -364,6 +364,8 @@ All money is a string with two decimals, in "secondary owes primary" terms unles
 ```
 `macro.by_category` is gross debits per category plus a `Partner claims` row when the period has claims, so the rows add up exactly to `household_burn`; categories with no debit are left out. `macro.refunds` is the total of credits in spend categories for the period, reported for display and never deducted from the burn. `macro.by_person` lists the primary then the secondary user: `paid` is the gross debits on the accounts billed to them plus the claims they paid, `bears` their net share after the split (refunds netted) plus their side of the claims.
 
+`GET /api/metrics/year/{year}` → `{ year, totals, months, previous }`: `totals` is a metrics body (as above, `period_key` the year) with every month of the year added up; `months` the year's trend points from January to December, or to the newest month on record when that falls in the year; `previous` the year before added up over the same months (a trend point, `period_key` the year), or `null` when it has no month on record. **422** outside 2000–2100. The dashboard's Year view.
+
 `GET /api/metrics/trends?periods=6&ending=YYYY-MM` → `[ {period_key, household_burn, household_net, true_net_expense, net_cash_flow} ]` (`household_net` is `household_burn` less refunds, the Household headline's default; oldest first; `periods` 1–36; `ending` is the last month of the window, by default the newest period, **422** when malformed; months with no data are zeros)
 
 `GET /api/metrics/investment` → `{ accounts: [{account_id, total_deposits, total_withdrawals, net_invested_capital, realized_gain}], total_deposits, total_withdrawals, net_invested_capital, realized_gain }`

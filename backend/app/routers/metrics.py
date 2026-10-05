@@ -7,7 +7,7 @@ from app.auth import require_primary
 from app.config import AppConfig
 from app.database import get_db
 from app.deps import get_effective_config
-from app.schemas import InvestmentSummary, MetricsOut, TrendPoint
+from app.schemas import InvestmentSummary, MetricsOut, TrendPoint, YearMetricsOut
 from app.services import metrics
 from app.services.periods import PERIOD_KEY_RE
 
@@ -25,6 +25,15 @@ def get_trends(
     if ending and not PERIOD_KEY_RE.match(ending):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "ending must be YYYY-MM")
     return metrics.trends(db, config, periods=periods, ending=ending)
+
+
+@router.get("/year/{year}", response_model=YearMetricsOut)
+def get_year(
+    year: int, db: Session = Depends(get_db), config: AppConfig = Depends(get_effective_config)
+) -> YearMetricsOut:
+    if not 2000 <= year <= 2100:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "year must be between 2000 and 2100")
+    return metrics.year_metrics(db, config, year)
 
 
 @router.get("/investment", response_model=InvestmentSummary)

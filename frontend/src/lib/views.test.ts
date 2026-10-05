@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { metrics } from '../test/fixtures';
-import { VIEWS, groupCategories, headlineChange, selectViewFigures, trendKeyFor, trendYDomain } from './views';
+import { VIEWS, groupCategories, headlineChange, selectViewFigures, trendKeyFor, trendYDomain, yearChange } from './views';
 
 describe('trendYDomain', () => {
   it('pins the axis to 0–100 when every value is zero or missing, so no £1–£4 ticks appear over nothing', () => {
@@ -89,5 +89,25 @@ describe('trendKeyFor', () => {
     expect(trendKeyFor('macro')).toBe('household_net');
     expect(trendKeyFor('macro', 'gross')).toBe('household_burn');
     expect(trendKeyFor('micro', 'net')).toBe('true_net_expense');
+  });
+});
+
+describe('yearChange', () => {
+  const point = (period_key: string, v: string) => ({
+    period_key, household_burn: v, household_net: v, true_net_expense: v, net_cash_flow: v,
+  });
+  const totals = {} as never;
+
+  it('compares a whole year with the year before', () => {
+    const months = Array.from({ length: 12 }, (_, i) => point(`2025-${String(i + 1).padStart(2, '0')}`, '10.00'));
+    const change = yearChange({ year: 2025, totals, months, previous: point('2024', '100.00') }, 'macro');
+    expect(change).toEqual({ delta: 20, fraction: 0.2, previousLabel: '2024' });
+  });
+
+  it('names the months for part of a year, and is null without a year before', () => {
+    expect(yearChange({ year: 2026, totals, months: [point('2026-01', '5.00')], previous: point('2025', '5.00') }, 'macro')?.previousLabel).toBe(
+      'January 2025',
+    );
+    expect(yearChange({ year: 2026, totals, months: [point('2026-01', '5.00')], previous: null }, 'macro')).toBeNull();
   });
 });

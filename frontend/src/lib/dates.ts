@@ -147,3 +147,8 @@ export function timeAgo(iso: string | null | undefined, now: Date = new Date()):
   if (days <= 30) return unit(days, 'day');
   return `on ${formatDate(iso)}`;
 }
+
+/** The years with any month in `periods`, newest first. */
+export function yearsOf(periods: ReadonlyArray<{ period_key: string }>): number[] {
+  return [...new Set(periods.map((p) => Number(p.period_key.slice(0, 4))))].sort((a, b) => b - a);
+}

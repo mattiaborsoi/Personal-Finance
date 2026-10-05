@@ -80,6 +80,7 @@ from app.schemas import (
     MicroMetrics,
     PersonSpend,
     TrendPoint,
+    YearMetricsOut,
 )
 from app.services.periods import period_bounds, period_key_for, previous_period_key
 
@@ -124,19 +125,103 @@ def trends(db: Session, config: AppConfig, periods: int = 6, ending: str | None 
     keys = [ending] + [previous_period_key(ending, steps) for steps in range(1, periods)]
     keys.reverse()
 
-    points: list[TrendPoint] = []
-    for key in keys:
-        m = period_metrics(db, config, key)
-        points.append(
-            TrendPoint(
-                period_key=key,
-                household_burn=m.macro.household_burn,
-                household_net=quantize(m.macro.household_burn - abs(m.macro.refunds)),
-                true_net_expense=m.micro.true_net_expense,
-                net_cash_flow=m.liquidity.net_cash_flow,
-            )
+    return [_trend_point(key, period_metrics(db, config, key)) for key in keys]
+
+
+def _trend_point(key: str, m: MetricsOut) -> TrendPoint:
+    return TrendPoint(
+        period_key=key,
+        household_burn=m.macro.household_burn,
+        household_net=quantize(m.macro.household_burn - abs(m.macro.refunds)),
+        true_net_expense=m.micro.true_net_expense,
+        net_cash_flow=m.liquidity.net_cash_flow,
+    )
+
+
+def year_metrics(db: Session, config: AppConfig, year: int) -> YearMetricsOut:
+    """A calendar year as the sum of its months (see :class:`YearMetricsOut`).
+
+    The months run from January to December, stopping at the newest month on record
+    when that falls inside ``year``, so the months still to come do not plot as zeros.
+    The year before is added up over the same months (January to August against
+    January to August), when ``ledger_periods`` has any of its months.
+    """
+    db.flush()
+    latest = _latest_period_key(db)
+    last_month = 12
+    if latest and int(latest[:4]) == year:
+        last_month = int(latest[5:7])
+    monthly = [(f"{year}-{m:02d}", period_metrics(db, config, f"{year}-{m:02d}")) for m in range(1, last_month + 1)]
+    previous = None
+    prior = str(year - 1)
+    if db.scalar(select(func.count()).select_from(LedgerPeriod).where(LedgerPeriod.period_key.like(f"{prior}-%"))):
+        before = sum_metrics(
+            prior, [period_metrics(db, config, f"{prior}-{m:02d}") for m in range(1, last_month + 1)]
         )
-    return points
+        previous = _trend_point(prior, before)
+    return YearMetricsOut(
+        year=year,
+        totals=sum_metrics(str(year), [m for _, m in monthly]),
+        months=[_trend_point(key, m) for key, m in monthly],
+        previous=previous,
+    )
+
+
+def sum_metrics(key: str, items: Iterable[MetricsOut]) -> MetricsOut:
+    """Several periods' metrics added up: every figure is a sum, lists are merged by key."""
+    items = list(items)
+
+    def total(get) -> Decimal:
+        return quantize(sum((get(m) for m in items), ZERO))
+
+    def categories(get) -> list[CategoryAmount]:
+        sums: dict[str, Decimal] = {}
+        for m in items:
+            for row in get(m):
+                sums[row.category] = sums.get(row.category, ZERO) + row.amount
+        return _sorted_categories(CategoryAmount(category=c, amount=quantize(a)) for c, a in sums.items())
+
+    people: dict[str, PersonSpend] = {}
+    for m in items:
+        for p in m.macro.by_person:
+            seen = people.get(p.user_id)
+            people[p.user_id] = (
+                p.model_copy()
+                if seen is None
+                else seen.model_copy(update={"paid": seen.paid + p.paid, "bears": seen.bears + p.bears})
+            )
+    accounts: dict[str, dict] = {}
+    for m in items:
+        for row in m.liquidity.by_account:
+            seen = accounts.setdefault(row["account_id"], {**row, "credits": ZERO, "debits": ZERO, "net": ZERO})
+            for field in ("credits", "debits", "net"):
+                seen[field] = quantize(seen[field] + Decimal(row[field]))
+    return MetricsOut(
+        period_key=key,
+        macro=MacroMetrics(
+            household_burn=total(lambda m: m.macro.household_burn),
+            primary_accounts_burn=total(lambda m: m.macro.primary_accounts_burn),
+            partner_claims_burn=total(lambda m: m.macro.partner_claims_burn),
+            partner_claims_count=sum(m.macro.partner_claims_count for m in items),
+            refunds=total(lambda m: m.macro.refunds),
+            by_category=categories(lambda m: m.macro.by_category),
+            by_person=[
+                p.model_copy(update={"paid": quantize(p.paid), "bears": quantize(p.bears)}) for p in people.values()
+            ],
+        ),
+        micro=MicroMetrics(
+            true_net_expense=total(lambda m: m.micro.true_net_expense),
+            from_transactions=total(lambda m: m.micro.from_transactions),
+            from_partner_claims=total(lambda m: m.micro.from_partner_claims),
+            by_category=categories(lambda m: m.micro.by_category),
+        ),
+        liquidity=LiquidityMetrics(
+            credits=total(lambda m: m.liquidity.credits),
+            debits=total(lambda m: m.liquidity.debits),
+            net_cash_flow=total(lambda m: m.liquidity.net_cash_flow),
+            by_account=list(accounts.values()),
+        ),
+    )
 
 
 def investment_summary(db: Session, config: AppConfig) -> InvestmentSummary:

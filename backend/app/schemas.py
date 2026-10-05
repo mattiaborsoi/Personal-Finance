@@ -544,6 +544,18 @@ class TrendPoint(BaseModel):
     net_cash_flow: Decimal
 
 
+class YearMetricsOut(BaseModel):
+    """A calendar year: its months added up, month by month, and the year before in total."""
+
+    year: int
+    totals: MetricsOut
+    """Every month of the year added up (``period_key`` is the year, "2026")."""
+    months: list[TrendPoint]
+    """January to December, or to the newest month on record when that falls in this year."""
+    previous: TrendPoint | None = None
+    """The year before over the same months (``period_key`` "2025"), when it has any month on record."""
+
+
 class InvestmentAccountSummary(BaseModel):
     account_id: str
     total_deposits: Decimal

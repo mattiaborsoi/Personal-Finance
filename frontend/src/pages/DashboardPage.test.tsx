@@ -6,7 +6,7 @@ import { writeSession, type PeriodOut } from '../api';
 import { AuthProvider } from '../auth/AuthProvider';
 import { ConfigContext } from '../config/ConfigContext';
 import { currentPeriodKey, monthName, periodLabel } from '../lib/dates';
-import { household, period, statement } from '../test/fixtures';
+import { household, metrics, period, statement } from '../test/fixtures';
 import {
   fixtureConfig,
   jsonResponse,
@@ -95,6 +95,48 @@ describe('<DashboardPage />', () => {
     await user.click(within(group).getByRole('button', { name: /My share/ }));
     expect(within(group).getByRole('button', { name: /My share/ })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('search')).toHaveTextContent('?period=2026-07&view=micro');
+  });
+
+  it('switches to the year: its totals and months, the same months of last year, no settlement', async () => {
+    const user = userEvent.setup();
+    const trend = (period_key: string, v: string) => ({
+      period_key, household_burn: v, household_net: v, true_net_expense: v, net_cash_flow: v,
+    });
+    const { calls } = mockFetch(({ method, url }) => {
+      if (method === 'GET' && url === '/api/periods') return jsonResponse(periodsWith(0));
+      if (method === 'GET' && url === '/api/metrics/year/2026') {
+        return jsonResponse({
+          year: 2026,
+          totals: metrics({ period_key: '2026' }),
+          months: Array.from({ length: 7 }, (_, i) => trend(`2026-0${i + 1}`, '100.00')),
+          previous: trend('2025', '500.00'),
+        });
+      }
+      return undefined;
+    });
+    function Search() {
+      return <output data-testid="search">{useLocation().search}</output>;
+    }
+
+    renderWithProviders(
+      <>
+        <DashboardPage />
+        <Search />
+      </>,
+      { route: '/?period=2026-07' },
+    );
+    await screen.findByRole('region', { name: 'Settlement' });
+    await user.click(within(screen.getByRole('group', { name: 'Month or year' })).getByRole('button', { name: 'Year' }));
+
+    expect(screen.getByTestId('search')).toHaveTextContent('?period=2026-07&scope=year');
+    expect(await screen.findByText('2026 by month')).toBeInTheDocument();
+    expect(screen.getByLabelText('Year')).toHaveValue('2026');
+    expect(screen.queryByRole('region', { name: 'Settlement' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Run audit' })).not.toBeInTheDocument();
+    expect(calls.some((c) => c.url === '/api/metrics/year/2026')).toBe(true);
+    // 7 months at 100 against 500 over the same months of 2025.
+    expect(screen.getByTestId('headline-change')).toHaveTextContent('up £200.00 (40%) on January to July 2025');
+    expect(screen.getByText('All of 2026')).toBeInTheDocument();
   });
 });
 

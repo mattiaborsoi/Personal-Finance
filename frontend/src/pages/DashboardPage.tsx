@@ -22,13 +22,13 @@ import { ViewToggleBar } from '../components/ViewToggleBar';
 import { useSharePeriods } from '../hooks/reviewBadge';
 import { useAsync } from '../hooks/useAsync';
 import { useSetupSteps } from '../hooks/useSetupSteps';
-import { defaultPeriodKey, isPeriodKey, periodLabel } from '../lib/dates';
+import { defaultPeriodKey, isPeriodKey, periodLabel, yearsOf } from '../lib/dates';
 import { formatCount } from '../lib/money';
 
 import { readNotice } from '../lib/navNotice';
 import { pendingMonths, reviewPath } from '../lib/review';
 import { setupIncomplete } from '../lib/setup';
-import { btnPrimary, btnSecondary, btnSmall, cx, linkBase } from '../lib/ui';
+import { btnPrimary, btnSecondary, btnSmall, cx, focusRing, linkBase, selectBase } from '../lib/ui';
 import { readStoredView, storeView, type MetricView } from '../lib/views';
 
 /**
@@ -42,6 +42,31 @@ export function pendingElsewhereNote(periods: ReadonlyArray<PeriodOut> | null, p
   const allEarlier = period !== null && others.every((m) => m.period < period);
   const where = `${others.length} ${allEarlier ? 'earlier' : 'other'} ${others.length === 1 ? 'month' : 'months'}`;
   return `${formatCount(count)} ${count === 1 ? 'line' : 'lines'} still to review in ${where}`;
+}
+
+type Scope = 'month' | 'year';
+
+/** Month / Year switch for the dashboard. */
+function ScopeToggle({ scope, onChange }: { scope: Scope; onChange: (scope: Scope) => void }) {
+  return (
+    <div role="group" aria-label="Month or year" className="inline-flex rounded-xl border border-hairline bg-surface p-1 shadow-card">
+      {(['month', 'year'] as const).map((s) => (
+        <button
+          key={s}
+          type="button"
+          aria-pressed={scope === s}
+          onClick={() => onChange(s)}
+          className={cx(
+            'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+            focusRing,
+            scope === s ? 'bg-surface-3 text-ink shadow-sm' : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
+          )}
+        >
+          {s === 'month' ? 'Month' : 'Year'}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export function DashboardPage() {
@@ -65,6 +90,9 @@ export function DashboardPage() {
   const period =
     requested && isPeriodKey(requested) ? requested : periods.data ? defaultPeriodKey(periods.data) : null;
   const periodInfo = periods.data?.find((p) => p.period_key === period) ?? null;
+  // ?scope=year shows the calendar year of the month on show; the month stays in the URL for the way back.
+  const scope: Scope = searchParams.get('scope') === 'year' ? 'year' : 'month';
+  const year = scope === 'year' && period ? Number(period.slice(0, 4)) : null;
   const closed = periodInfo?.is_closed ?? false;
   const elsewhere = pendingElsewhereNote(periods.data, period);
   const setup = useSetupSteps();
@@ -87,6 +115,21 @@ export function DashboardPage() {
     });
   }
 
+  function changeScope(next: Scope) {
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      if (next === 'year') params.set('scope', 'year');
+      else params.delete('scope');
+      return params;
+    });
+  }
+
+  /** A year's newest month on record, so Month goes back to somewhere with data. */
+  function changeYear(next: number) {
+    const months = (periods.data ?? []).map((p) => p.period_key).filter((k) => k.startsWith(`${next}-`)).sort();
+    changePeriod(months[months.length - 1] ?? `${next}-12`);
+  }
+
   function changePeriod(next: string) {
     setSearchParams((prev) => {
       const params = new URLSearchParams(prev);
@@ -101,9 +144,12 @@ export function DashboardPage() {
     <div className="min-w-0 space-y-6">
       <PageHeader
         title="Dashboard"
-        description={period ? periodLabel(period) : undefined}
+        description={year ? String(year) : period ? periodLabel(period) : undefined}
         actions={
-          period && (
+          year ? (
+            <UnmatchedTransfersLink refreshKey={refreshKey} />
+          ) : (
+            period && (
             <>
               {closed && (
                 <Badge tone="neutral" dot>
@@ -114,6 +160,7 @@ export function DashboardPage() {
               <RunAuditButton period={period} audit={audit} />
               <ClosePeriodButton period={periodInfo} periodKey={period} onChanged={onPeriodChanged} />
             </>
+            )
           )
         }
       />
@@ -139,7 +186,30 @@ export function DashboardPage() {
 
       {periods.data && (
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <PeriodSelector periods={periods.data} value={period} onChange={changePeriod} />
+          <div className="flex flex-wrap items-center gap-2">
+            {period && <ScopeToggle scope={scope} onChange={changeScope} />}
+            {year ? (
+              <>
+                <label htmlFor="year-select" className="sr-only">
+                  Year
+                </label>
+                <select
+                  id="year-select"
+                  className={cx(selectBase, 'w-auto min-w-[8rem] font-medium shadow-card')}
+                  value={year}
+                  onChange={(e) => changeYear(Number(e.target.value))}
+                >
+                  {yearsOf(periods.data).map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
+              </>
+            ) : (
+              <PeriodSelector periods={periods.data} value={period} onChange={changePeriod} />
+            )}
+          </div>
           <ViewToggleBar view={view} onChange={changeView} />
         </div>
       )}
@@ -177,15 +247,19 @@ export function DashboardPage() {
 
       {period && (
         <>
-          <SettlementBanner period={period} periodInfo={periodInfo} refreshKey={refreshKey} onChanged={bump} />
+          {/* The settlement and the audit are a month's business; the year shows spending only. */}
+          {!year && (
+            <SettlementBanner period={period} periodInfo={periodInfo} refreshKey={refreshKey} onChanged={bump} />
+          )}
           <MetricsSection
+            year={year}
             period={period}
             view={view}
             refreshKey={refreshKey}
             periods={periods.data}
             aside={<SubscriptionsCard refreshKey={refreshKey} />}
           />
-          <AuditCard audit={audit} />
+          {!year && <AuditCard audit={audit} />}
           <InvestmentCard refreshKey={refreshKey} />
         </>
       )}

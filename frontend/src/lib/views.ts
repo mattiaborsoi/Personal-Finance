@@ -1,4 +1,4 @@
-import { PARTNER_CLAIMS_CATEGORY, type AccountFlow, type CategoryAmount, type MetricsOut, type Money, type TrendPoint } from '../api';
+import { PARTNER_CLAIMS_CATEGORY, type AccountFlow, type CategoryAmount, type MetricsOut, type Money, type TrendPoint, type YearMetricsOut } from '../api';
 import { periodLabel } from './dates';
 import { toNumber } from './money';
 
@@ -162,6 +162,27 @@ export interface HeadlineChange {
 /** The trend series behind a view: Household follows the net/gross switch, like its headline. */
 export function trendKeyFor(view: MetricView, refunds: RefundsMode = 'net'): ViewDefinition['trendKey'] {
   return view === 'macro' && refunds === 'net' ? 'household_net' : viewDefinition(view).trendKey;
+}
+
+/**
+ * The year against the same months of the year before: "on 2025" for a whole year,
+ * "on January to August 2025" for part of one. Null when there is no year before.
+ */
+export function yearChange(data: YearMetricsOut, view: MetricView, refunds: RefundsMode = 'net'): HeadlineChange | null {
+  if (!data.previous || data.months.length === 0) return null;
+  const key = trendKeyFor(view, refunds);
+  const current = data.months.reduce((sum, p) => sum + toNumber(p[key]), 0);
+  const previous = toNumber(data.previous[key]);
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return null;
+  const delta = Math.round((current - previous) * 100) / 100;
+  const prior = data.year - 1;
+  const last = data.months.length;
+  const lastMonth = periodLabel(`${prior}-${String(last).padStart(2, '0')}`);
+  return {
+    delta,
+    fraction: Math.abs(previous) < 0.005 ? null : delta / Math.abs(previous),
+    previousLabel: last === 12 ? String(prior) : last === 1 ? lastMonth : `January to ${lastMonth}`,
+  };
 }
 
 export function headlineChange(

@@ -474,3 +474,67 @@ def test_investment_summary_includes_database_only_accounts_and_sums_per_account
     assert summary.total_withdrawals == D("150.00")
     assert summary.net_invested_capital == D("950.00")
     assert summary.realized_gain == D("50.00")
+
+
+@requires_db
+def test_year_adds_up_its_months_and_stops_at_the_newest(seeded_db: Session, config: AppConfig) -> None:
+    seed_august(seeded_db, config)
+    make_transaction(seeded_db, config, account_id=CARD, transaction_date=date(2026, 6, 15), amount="-10.00",
+                     category="Dining", claim_type="personal")
+    seeded_db.flush()
+
+    year = metrics.year_metrics(seeded_db, config, 2026)
+    june = metrics.period_metrics(seeded_db, config, "2026-06")
+    august = metrics.period_metrics(seeded_db, config, "2026-08")
+
+    # January to August: the newest month on record, not December.
+    assert [p.period_key for p in year.months][0] == "2026-01"
+    assert year.months[-1].period_key == "2026-08"
+    assert year.totals.period_key == "2026"
+    assert year.totals.macro.household_burn == june.macro.household_burn + august.macro.household_burn
+    assert year.totals.micro.true_net_expense == june.micro.true_net_expense + august.micro.true_net_expense
+    assert year.totals.liquidity.net_cash_flow == june.liquidity.net_cash_flow + august.liquidity.net_cash_flow
+    dining = {c.category: c.amount for c in year.totals.macro.by_category}["Dining"]
+    by_month = sum(
+        (c.amount for m in (june, august) for c in m.macro.by_category if c.category == "Dining"), D("0.00")
+    )
+    assert dining == by_month
+    assert [c.amount for c in year.totals.macro.by_category] == sorted(
+        (c.amount for c in year.totals.macro.by_category), reverse=True
+    )
+    for person in year.totals.macro.by_person:
+        months_paid = [p.paid for m in (june, august) for p in m.macro.by_person if p.user_id == person.user_id]
+        assert person.paid == sum(months_paid, D("0.00"))
+    # No 2025 month on record, so no year before to compare with.
+    assert year.previous is None
+
+
+@requires_db
+def test_year_compares_with_the_year_before(seeded_db: Session, config: AppConfig) -> None:
+    make_transaction(seeded_db, config, account_id=CARD, transaction_date=date(2025, 1, 3), amount="-30.00",
+                     category="Dining", claim_type="personal")
+    # After February, so outside the January-to-February comparison.
+    make_transaction(seeded_db, config, account_id=CARD, transaction_date=date(2025, 11, 3), amount="-99.00",
+                     category="Dining", claim_type="personal")
+    make_transaction(seeded_db, config, account_id=CARD, transaction_date=date(2026, 2, 3), amount="-20.00",
+                     category="Dining", claim_type="personal")
+    seeded_db.flush()
+
+    year = metrics.year_metrics(seeded_db, config, 2026)
+    assert year.previous is not None
+    assert (year.previous.period_key, year.previous.household_burn) == ("2025", D("30.00"))
+    assert year.totals.macro.household_burn == D("20.00")
+    # A past year runs to December.
+    assert len(metrics.year_metrics(seeded_db, config, 2025).months) == 12
+
+
+@requires_db
+def test_year_endpoint(client, primary_headers, seeded_db: Session, config: AppConfig) -> None:
+    seed_august(seeded_db, config)
+    seeded_db.commit()
+    resp = client.get("/api/metrics/year/2026", headers=primary_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["year"] == 2026 and body["totals"]["period_key"] == "2026"
+    assert body["months"][-1]["period_key"] == "2026-08"
+    assert client.get("/api/metrics/year/1999", headers=primary_headers).status_code == 422
